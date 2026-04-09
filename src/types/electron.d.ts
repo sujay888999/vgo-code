@@ -1,0 +1,46 @@
+export {}
+
+interface VGODesktopAPI {
+  createSession?: () => void
+  resetSession?: () => void
+  switchSession?: (sessionId: string) => Promise<any>
+  deleteSession?: (sessionId: string) => Promise<any>
+  pickWorkspace?: () => void
+  analyze?: () => void
+  login?: () => void
+  logout?: () => void
+  renameSession?: (name: string) => void
+  submitPrompt?: (text: string) => void
+  stopPrompt?: () => void
+  attachFile?: () => Promise<
+    Array<{ name: string; path: string; size: number; isText: boolean; content?: string }>
+  >
+  removeAttachment?: (index: number) => Promise<{ ok: boolean }>
+  respondPermission?: (payload: { requestId: string; approved: boolean }) => Promise<any>
+  
+  on?: (channel: string, callback: (...args: any[]) => void) => void
+  off?: (channel: string, callback: (...args: any[]) => void) => void
+  
+  getState?: () => any
+  getSettings?: () => any
+  setState?: (state: any) => void
+  setEngine?: (engineId: string) => Promise<any>
+  updateAppearance?: (payload: any) => Promise<any>
+  updateLocalization?: (payload: any) => Promise<any>
+  updateBehavior?: (payload: any) => Promise<any>
+  updateAgentPreferences?: (payload: any) => Promise<any>
+  updateVgoAiProfile?: (payload: any) => Promise<any>
+  updatePermissions?: (payload: any) => Promise<any>
+  updateAccess?: (payload: any) => Promise<any>
+  updateRemote?: (payload: any) => Promise<any>
+  createRemoteProfile?: (payload: any) => Promise<any>
+  updateRemoteProfile?: (profileId: string, payload: any) => Promise<any>
+  deleteRemoteProfile?: (profileId: string) => Promise<any>
+  selectRemoteProfile?: (profileId: string) => Promise<any>
+}
+
+declare global {
+  interface Window {
+    vgoDesktop?: VGODesktopAPI
+  }
+}

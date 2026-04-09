@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-web
+build
+release
+*.log
+test-results/
+*.png
+*.tar.gz
