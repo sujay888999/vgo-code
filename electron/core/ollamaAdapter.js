@@ -173,6 +173,35 @@ function extractTaggedToolCallPayloads(text) {
   return payloads;
 }
 
+function recoverSingleToolCallPayload(text = "") {
+  if (typeof text !== "string") {
+    return [];
+  }
+
+  const directTaggedMatch = text.match(
+    /<vgo_tool_call>\s*(\{[\s\S]*?"name"\s*:\s*"[^"]+"[\s\S]*?\})\s*<\/vgo_tool_call>/i
+  );
+  if (directTaggedMatch?.[1]) {
+    const parsed = safeParseJson(directTaggedMatch[1].trim());
+    const parsedCalls = normalizeToolCalls(parsed?.name ? [parsed] : Array.isArray(parsed?.calls) ? parsed.calls : []);
+    if (parsedCalls.length) {
+      return parsedCalls;
+    }
+  }
+
+  const looseCallMatch = text.match(
+    /"name"\s*:\s*"([^"]+)"[\s\S]*?"arguments"\s*:\s*(\{[\s\S]*\})/i
+  );
+  if (looseCallMatch?.[1] && looseCallMatch?.[2]) {
+    const args = safeParseJson(looseCallMatch[2].trim());
+    if (args && typeof args === "object") {
+      return normalizeToolCalls([{ name: looseCallMatch[1], arguments: args }]);
+    }
+  }
+
+  return [];
+}
+
 function buildSafeSystemPrompt(settings, sessionMeta = {}, activeSkills = []) {
   const appendix = skillRegistry.buildSkillSystemAppendix(activeSkills);
   try {
@@ -578,6 +607,15 @@ function extractToolCalls(message) {
       preview: text.slice(0, 200)
     });
     return taggedCalls;
+  }
+
+  const recoveredSingleCalls = recoverSingleToolCallPayload(text);
+  if (recoveredSingleCalls.length) {
+    logRuntime("tool_calls:recovered_single_call", {
+      count: recoveredSingleCalls.length,
+      preview: text.slice(0, 200)
+    });
+    return recoveredSingleCalls;
   }
   
   if (/<vgo_tool_call>|"calls"\s*:/.test(text)) {
