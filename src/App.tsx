@@ -187,6 +187,32 @@ export function App() {
         })
       }
 
+      const upsertTaskStep = (
+        id: string,
+        step: {
+          title: string
+          detail: string
+          state: 'idle' | 'planning' | 'working' | 'completed' | 'error' | 'permission_requested' | 'permission_granted' | 'permission_denied'
+          requestId?: string
+          tool?: string
+        },
+      ) => {
+        const existing = useAppStore.getState().taskSteps.find((item) => item.id === id)
+        if (existing) {
+          updateTaskStep(id, {
+            ...step,
+            timestamp,
+          })
+          return
+        }
+
+        addTaskStep({
+          id,
+          timestamp,
+          ...step,
+        })
+      }
+
       const progressBlock = buildLiveProgressBlock(eventType, payload)
       const currentLiveText =
         useAppStore.getState().messages.find((message) => message.id === liveMessageId)?.text || ''
@@ -196,11 +222,21 @@ export function App() {
         if (taskCopy) {
           if (status === 'planning' || status === 'thinking' || status === 'continuing' || status === 'tool_running' || status === 'retrying' || status === 'fallback_model') {
             upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
+            upsertTaskStep(status === 'planning' ? 'task-status-planning' : 'task-status-running', {
+              title: taskCopy.title,
+              detail: taskCopy.detail,
+              state: taskCopy.state,
+            })
           }
 
           if (status === 'completed') {
             settleTaskSteps('completed')
             setPromptRunning(false)
+            upsertTaskStep('task-status-final', {
+              title: taskCopy.title,
+              detail: taskCopy.detail,
+              state: taskCopy.state,
+            })
             if (currentLiveText) {
               updateMessage(liveMessageId, { status: 'done', timestamp })
             }
@@ -209,19 +245,16 @@ export function App() {
           if (status === 'error' || status === 'failed') {
             settleTaskSteps('error')
             setPromptRunning(false)
+            upsertTaskStep('task-status-final', {
+              title: taskCopy.title,
+              detail: taskCopy.detail,
+              state: taskCopy.state,
+            })
             upsertLiveMessage(
               appendUniqueBlock(currentLiveText, progressBlock || payload?.message || '任务执行失败'),
               'error',
             )
           }
-
-          addTaskStep({
-            id: `${status || 'task'}-${timestamp}`,
-            title: taskCopy.title,
-            detail: taskCopy.detail,
-            state: taskCopy.state,
-            timestamp,
-          })
         }
       }
 
@@ -256,65 +289,59 @@ export function App() {
 
       if (eventType === 'plan') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
-        addTaskStep({
-          id: `plan-${timestamp}`,
+        upsertTaskStep('task-plan', {
           title: payload.summary || '执行计划',
           detail: Array.isArray(payload.steps) ? payload.steps.join('\n') : '',
           state: 'planning',
-          timestamp,
         })
       }
 
       if (eventType === 'workflow_selected') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
-        addTaskStep({
-          id: `workflow-${timestamp}`,
+        upsertTaskStep('task-workflow', {
           title: payload.label ? `工作流 · ${payload.label}` : '工作流已切换',
           detail: payload.detail || '',
           state: 'planning',
-          timestamp,
         })
       }
 
       if (eventType === 'workflow_probe') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
-        addTaskStep({
-          id: `probe-${timestamp}`,
+        upsertTaskStep('task-probe', {
           title: '前置检查',
           detail: payload.detail || '',
           state: 'working',
-          timestamp,
         })
       }
 
       if (eventType === 'capability_gap') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'error')
-        addTaskStep({
-          id: `gap-${timestamp}`,
+        upsertTaskStep('task-gap', {
           title: '能力缺口',
           detail: payload.detail || '',
           state: 'error',
-          timestamp,
         })
       }
 
       if (eventType === 'skill_suggestions') {
         const skills = Array.isArray(payload.skills) ? payload.skills : []
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
-        addTaskStep({
-          id: `skills-${timestamp}`,
+        upsertTaskStep('task-skills', {
           title: 'Skill 建议',
           detail:
             payload.detail ||
             skills.map((skill) => `${skill.name} · ${skill.path}`).join('\n') ||
             '未找到匹配的本机 skill',
           state: skills.length ? 'completed' : 'error',
-          timestamp,
         })
       }
 
       if (eventType === 'model_response' && payload.text) {
         upsertLiveMessage(payload.text, 'done')
+      }
+
+      if (eventType === 'model_stream_delta' && payload.text) {
+        upsertLiveMessage(payload.text, payload.done ? 'done' : 'loading')
       }
 
       if (eventType === 'tool_result') {

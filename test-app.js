@@ -1,6 +1,7 @@
 const { chromium } = require('playwright')
 
-const APP_PATH = 'E:\\VGO-CODE\\dist\\win-unpacked\\VGO CODE.exe'
+const APP_PATH = process.env.VGO_TEST_APP_PATH || 'E:\\VGO-CODE\\dist\\win-unpacked\\VGO CODE.exe'
+const APP_ARGS = process.env.VGO_TEST_APP_ARGS ? JSON.parse(process.env.VGO_TEST_APP_ARGS) : []
 const DEFAULT_PROMPT = process.env.VGO_TEST_PROMPT || '你好'
 const DEBUG_PORT = process.env.VGO_TEST_DEBUG_PORT || '9222'
 const FINAL_WAIT_MS = Number(process.env.VGO_TEST_FINAL_WAIT_MS || 120000)
@@ -13,6 +14,48 @@ async function clickIfVisible(page, selector, label) {
     return true
   }
   return false
+}
+
+async function getPageScore(page) {
+  try {
+    const url = page.url()
+    if (!url || url.startsWith('chrome-error://')) {
+      return -1
+    }
+    return await page.evaluate(() => {
+      const body = document.body
+      if (!body) return 0
+      const text = (body.innerText || '').trim()
+      const elementCount = body.querySelectorAll('*').length
+      return text.length + elementCount * 2
+    })
+  } catch {
+    return 0
+  }
+}
+
+async function pickBestPage(context, attempts = 10) {
+  let bestPage = null
+  let bestScore = -1
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const pages = context.pages()
+    for (const candidate of pages) {
+      const score = await getPageScore(candidate)
+      if (score > bestScore) {
+        bestScore = score
+        bestPage = candidate
+      }
+    }
+
+    if (bestScore > 20) {
+      return bestPage
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+  }
+
+  return bestPage || context.pages()[0]
 }
 
 async function approvePermissionIfNeeded(page) {
@@ -50,23 +93,28 @@ async function getAssistantState(page) {
   return { count, lastText: text }
 }
 
+async function getErrorCount(page) {
+  const selectors = ['.message-error', '.agent-process-item.error', '.agent-process-item.permission_denied']
+  let total = 0
+  for (const selector of selectors) {
+    total += await page.locator(selector).count().catch(() => 0)
+  }
+  return total
+}
+
 async function waitForTaskCompletion(page) {
   const startedAt = Date.now()
   const baseline = await getAssistantState(page)
+  const baselineErrors = await getErrorCount(page)
 
   while (Date.now() - startedAt < FINAL_WAIT_MS) {
     await approvePermissionIfNeeded(page)
 
     const current = await getAssistantState(page)
     const stopVisible = await page.locator('.stop-button').isVisible().catch(() => false)
-    const errorVisible = await page.locator('.message-error').last().isVisible().catch(() => false)
-    const processErrorVisible = await page
-      .locator('.agent-process-item.error, .agent-process-item.permission_denied')
-      .first()
-      .isVisible()
-      .catch(() => false)
+    const currentErrors = await getErrorCount(page)
 
-    if (errorVisible || processErrorVisible) {
+    if (currentErrors > baselineErrors) {
       return 'error'
     }
 
@@ -90,7 +138,8 @@ async function testApp() {
 
   console.log('Launching app manually first...')
   const { spawn } = require('child_process')
-  const appProcess = spawn(APP_PATH, [`--remote-debugging-port=${DEBUG_PORT}`], {
+  const appProcess = spawn(APP_PATH, [...APP_ARGS, `--remote-debugging-port=${DEBUG_PORT}`], {
+    cwd: process.cwd(),
     detached: true,
     stdio: 'ignore',
   })
@@ -117,8 +166,9 @@ async function testApp() {
     return
   }
 
-  const page = pages[0]
+  const page = await pickBestPage(context)
   console.log('Connected to page')
+  console.log(`Selected page URL: ${page.url()}`)
 
   const timeoutId = setTimeout(() => {
     console.log('Timeout - taking screenshot and exiting')
@@ -149,6 +199,14 @@ async function testApp() {
 
   console.log('Taking initial screenshot...')
   await page.screenshot({ path: 'E:\\VGO-CODE\\test-results\\01-initial.png' })
+
+  console.log('Creating a fresh session for this run...')
+  await page.evaluate(async () => {
+    if (window.vgoDesktop?.createSession) {
+      await window.vgoDesktop.createSession()
+    }
+  })
+  await page.waitForTimeout(1200)
 
   const inputSelectors = [
     'textarea',

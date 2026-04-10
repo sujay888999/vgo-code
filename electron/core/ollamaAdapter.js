@@ -16,7 +16,7 @@ const { discoverRelevantSkills, buildSkillAppendix } = require("./localSkillDisc
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "ollama-engine.log");
 
-const MAX_TOOL_STEPS = 6;
+const MAX_TOOL_STEPS = 12;
 
 function logRuntime(event, payload = {}) {
   appendEngineLog(LOG_FILE, event, payload);
@@ -29,6 +29,94 @@ async function parseJsonResponse(response) {
   } catch {
     return { rawText: text };
   }
+}
+
+async function parseOllamaStreamResponse(response, onChunk) {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return await parseJsonResponse(response);
+  }
+
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let aggregatedContent = "";
+  let aggregatedToolCalls = [];
+  let finalEnvelope = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+
+      finalEnvelope = parsed;
+      const deltaText = String(parsed?.message?.content || "");
+      if (deltaText) {
+        aggregatedContent += deltaText;
+      }
+
+      if (Array.isArray(parsed?.message?.tool_calls) && parsed.message.tool_calls.length) {
+        aggregatedToolCalls = parsed.message.tool_calls;
+      }
+
+      if (typeof onChunk === "function") {
+        onChunk({
+          done: Boolean(parsed?.done),
+          content: aggregatedContent,
+          delta: deltaText,
+          message: parsed?.message || {}
+        });
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    try {
+      const parsed = JSON.parse(buffer.trim());
+      finalEnvelope = parsed;
+      const deltaText = String(parsed?.message?.content || "");
+      if (deltaText) {
+        aggregatedContent += deltaText;
+      }
+      if (Array.isArray(parsed?.message?.tool_calls) && parsed.message.tool_calls.length) {
+        aggregatedToolCalls = parsed.message.tool_calls;
+      }
+      if (typeof onChunk === "function") {
+        onChunk({
+          done: Boolean(parsed?.done),
+          content: aggregatedContent,
+          delta: deltaText,
+          message: parsed?.message || {}
+        });
+      }
+    } catch {}
+  }
+
+  return {
+    ...finalEnvelope,
+    message: {
+      ...(finalEnvelope?.message || {}),
+      content: aggregatedContent,
+      tool_calls: aggregatedToolCalls
+    }
+  };
 }
 
 function toNumber(value) {
@@ -60,84 +148,21 @@ function normalizeToolCalls(calls = []) {
     }));
 }
 
-function extractBalancedJsonBlock(text, startIndex) {
-  if (typeof text !== "string" || startIndex < 0 || startIndex >= text.length) {
-    return null;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let isEscaped = false;
-  let jsonStart = -1;
-
-  for (let index = startIndex; index < text.length; index += 1) {
-    const char = text[index];
-
-    if (jsonStart === -1) {
-      if (char === "{") {
-        jsonStart = index;
-        depth = 1;
-      }
-      continue;
-    }
-
-    if (isEscaped) {
-      isEscaped = false;
-      continue;
-    }
-
-    if (char === "\\") {
-      isEscaped = true;
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) {
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return text.slice(jsonStart, index + 1);
-      }
-    }
-  }
-
-  return null;
-}
-
 function extractTaggedToolCallPayloads(text) {
   if (typeof text !== "string" || !text.includes("<vgo_tool_call>")) {
     return [];
   }
 
   const payloads = [];
-  let searchStart = 0;
+  const taggedPattern = /<vgo_tool_call>\s*([\s\S]*?)\s*<\/vgo_tool_call>/gi;
+  let match = taggedPattern.exec(text);
 
-  while (searchStart < text.length) {
-    const tagStart = text.indexOf("<vgo_tool_call>", searchStart);
-    if (tagStart === -1) {
-      break;
+  while (match) {
+    const payload = String(match[1] || "").trim();
+    if (payload) {
+      payloads.push(payload);
     }
-
-    const jsonBlock = extractBalancedJsonBlock(text, tagStart);
-    if (jsonBlock) {
-      payloads.push(jsonBlock);
-      searchStart = tagStart + jsonBlock.length;
-      continue;
-    }
-
-    searchStart = tagStart + "<vgo_tool_call>".length;
+    match = taggedPattern.exec(text);
   }
 
   return payloads;
@@ -172,7 +197,7 @@ function buildSkillPreflightNudge(skills = []) {
   ].join("\n");
 }
 
-async function sendOllamaRequest({ baseUrl, model, messages, signal }) {
+async function sendOllamaRequest({ baseUrl, model, messages, signal, onChunk }) {
   logRuntime("request:start", { model, baseUrl });
   
   const response = await fetch(`${baseUrl}/api/chat`, {
@@ -182,7 +207,7 @@ async function sendOllamaRequest({ baseUrl, model, messages, signal }) {
     body: JSON.stringify({
       model,
       messages,
-      stream: false,
+      stream: true,
       tools: [
         {
           type: "function",
@@ -388,7 +413,7 @@ async function sendOllamaRequest({ baseUrl, model, messages, signal }) {
     })
   });
 
-  return await parseJsonResponse(response);
+  return await parseOllamaStreamResponse(response, onChunk);
 }
 
 function extractToolCalls(message) {
@@ -517,13 +542,85 @@ function collectToolResults(rawEvents = []) {
     }));
 }
 
-function shouldContinueAutonomously(text = "", rawEvents = []) {
+function extractRequestedFilePaths(prompt = "", workspace = "") {
+  const source = String(prompt || "");
+  const absolutePathMatches =
+    source.match(/[A-Za-z]:\\[A-Za-z0-9._-]+(?:\\[A-Za-z0-9._-]+)*/g) || [];
+  const relativePathMatches =
+    source.match(/(?:src|electron|ui)[\\/][A-Za-z0-9._/\\-]+|package\.json/gi) || [];
+  const matches = [...absolutePathMatches, ...relativePathMatches];
+  const paths = new Set();
+  const normalizedWorkspace = workspace ? path.resolve(workspace).toLowerCase() : "";
+
+  for (const rawMatch of matches) {
+    const cleaned = String(rawMatch || "")
+      .trim()
+      .replace(/[，。、；：,.;:？?！!）)\]】]+$/, "");
+    if (!cleaned) {
+      continue;
+    }
+
+    const resolved = path.isAbsolute(cleaned)
+      ? path.resolve(cleaned)
+      : workspace
+        ? path.resolve(workspace, cleaned.replace(/\//g, path.sep))
+        : cleaned.replace(/\//g, path.sep);
+    const normalizedResolved = resolved.toLowerCase();
+    const basename = path.basename(normalizedResolved);
+    const likelyFile =
+      basename === "package.json" ||
+      /\.(tsx|ts|js|jsx|json|css|md|html)$/i.test(normalizedResolved);
+
+    if (normalizedResolved === normalizedWorkspace || !likelyFile) {
+      continue;
+    }
+
+    paths.add(normalizedResolved);
+  }
+
+  return [...paths];
+}
+
+function collectCompletedReadPaths(rawEvents = []) {
+  const completed = new Set();
+
+  for (const event of rawEvents) {
+    if (event?.type !== "tool_result" || event.tool !== "read_file" || !event.ok) {
+      continue;
+    }
+
+    const summary = String(event.summary || "");
+    const match = summary.match(/^Read\s+(.+?)\s+lines\s+\d+-\d+\./i);
+    if (match?.[1]) {
+      completed.add(path.resolve(match[1]).toLowerCase());
+    }
+  }
+
+  return completed;
+}
+
+function getUnfinishedRequiredReadPaths(prompt = "", rawEvents = [], workspace = "") {
+  const requestedPaths = extractRequestedFilePaths(prompt, workspace);
+  if (!requestedPaths.length) {
+    return [];
+  }
+
+  const completedReadPaths = collectCompletedReadPaths(rawEvents);
+  return requestedPaths.filter((requestedPath) => !completedReadPaths.has(requestedPath));
+}
+
+function hasUnfinishedRequiredReads(prompt = "", rawEvents = [], workspace = "") {
+  return getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace).length > 0;
+}
+
+function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", workspace = "") {
   const normalized = String(text || "").trim();
   if (!normalized) {
     return false;
   }
 
   const hasToolResults = rawEvents.some((event) => event && event.type === "tool_result");
+  const unfinishedRequiredReads = hasUnfinishedRequiredReads(prompt, rawEvents, workspace);
   const continuationPatterns = [
     /下一步/i,
     /下一步行动/i,
@@ -560,7 +657,14 @@ function shouldContinueAutonomously(text = "", rawEvents = []) {
   ];
 
   if (finalPatterns.some((pattern) => pattern.test(normalized))) {
+    if (unfinishedRequiredReads) {
+      return true;
+    }
     return false;
+  }
+
+  if (unfinishedRequiredReads) {
+    return true;
   }
 
   if (continuationPatterns.some((pattern) => pattern.test(normalized))) {
@@ -743,7 +847,25 @@ async function runOllamaPrompt({
         baseUrl,
         model,
         messages,
-        signal
+        signal,
+        onChunk: ({ content, done }) => {
+          const streamedText = modelAdapters.stripCustomerServiceBoilerplate(
+            protocol.sanitizeAssistantText(protocol.tryRecoverMojibake(content || "")),
+            prompt
+          );
+
+          if (!streamedText) {
+            return;
+          }
+
+          emitEvent({
+            type: "model_stream_delta",
+            step: step + 1,
+            model,
+            text: streamedText,
+            done: Boolean(done)
+          });
+        }
       });
 
       if (response.error) {
@@ -784,21 +906,39 @@ async function runOllamaPrompt({
       });
 
       if (!toolCalls.length) {
-        if (shouldContinueAutonomously(latestText, rawEvents)) {
+        if (shouldContinueAutonomously(latestText, rawEvents, prompt, workspace)) {
+          const unfinishedReadPaths = getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace);
+          const nextRequiredPath = unfinishedReadPaths[0] || "";
           logRuntime("model:auto_continue", {
             step,
-            textPreview: latestText.slice(0, 200)
+            textPreview: latestText.slice(0, 200),
+            unfinishedRequiredReads: unfinishedReadPaths.length > 0,
+            nextRequiredPath
           });
 
           messages.push({ role: "assistant", content: messageText });
           messages.push({
             role: "user",
-            content: [
-              "Continue autonomously.",
-              "Do not stop at a partial progress summary.",
-              "If there are unfinished requested files, checks, or steps, keep calling tools until they are done.",
-              "Only give the final answer when the full requested task has actually been completed or a concrete blocker prevents completion."
-            ].join("\n")
+            content:
+              unfinishedReadPaths.length > 0
+                ? [
+                    "Continue autonomously.",
+                    "Do not stop at a partial progress summary.",
+                    "The task is not complete yet because these required files have not been inspected:",
+                    ...unfinishedReadPaths.map((filePath, index) => `${index + 1}. ${filePath}`),
+                    `Call the next required tool now for ${nextRequiredPath}.`,
+                    "Use the exact absolute file paths listed above.",
+                    "Do not switch to a different workspace and do not use relative paths like package.json or src/App.tsx by themselves.",
+                    "Respond with tool calls first. Do not only describe the next action.",
+                    "Only give the final answer after every required file above has been inspected or a concrete blocker prevents completion."
+                  ].join("\n")
+                : [
+                    "Continue autonomously.",
+                    "Do not stop at a partial progress summary.",
+                    "If there are unfinished requested files, checks, or steps, keep calling tools until they are done.",
+                    "Respond with tool calls first when more execution is needed.",
+                    "Only give the final answer when the full requested task has actually been completed or a concrete blocker prevents completion."
+                  ].join("\n")
           });
           continue;
         }

@@ -270,6 +270,75 @@ function setRuntimeEngine(engineId) {
   });
 }
 
+function extractAbsolutePathsFromPrompt(prompt = "") {
+  const text = String(prompt || "");
+  const matches =
+    text.match(/[A-Za-z]:\\[^\s"'“”‘’<>|?*\r\n]+(?:\\[^\s"'“”‘’<>|?*\r\n]+)*/g) || [];
+
+  return [...new Set(matches.map((item) => String(item || "").trim()).filter(Boolean))];
+}
+
+function commonDirectory(paths = []) {
+  if (!paths.length) {
+    return "";
+  }
+
+  const splitPaths = paths.map((item) => path.resolve(item).split(path.sep));
+  const first = splitPaths[0];
+  const shared = [];
+
+  for (let index = 0; index < first.length; index += 1) {
+    const segment = first[index];
+    if (splitPaths.every((parts) => parts[index] === segment)) {
+      shared.push(segment);
+      continue;
+    }
+    break;
+  }
+
+  if (!shared.length) {
+    return "";
+  }
+
+  return shared.join(path.sep) || "";
+}
+
+function deriveTaskWorkspace(prompt = "", currentWorkspace = "", sessionDirectory = "") {
+  const preferredRoots = [sessionDirectory, currentWorkspace]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item) => fs.existsSync(item));
+
+  const absolutePaths = extractAbsolutePathsFromPrompt(prompt)
+    .map((item) => path.resolve(item))
+    .filter((item) => fs.existsSync(item));
+
+  const anchors = absolutePaths.map((item) => {
+    try {
+      return fs.statSync(item).isDirectory() ? item : path.dirname(item);
+    } catch {
+      return "";
+    }
+  }).filter(Boolean);
+
+  if (anchors.length === 1) {
+    return anchors[0];
+  }
+
+  if (anchors.length > 1) {
+    const shared = commonDirectory(anchors);
+    if (shared && fs.existsSync(shared)) {
+      return shared;
+    }
+  }
+
+  if (preferredRoots.length) {
+    return path.resolve(preferredRoots[0]);
+  }
+
+  return path.resolve(currentWorkspace || process.cwd());
+}
+
 function applyRuntimeForProfile(profile = {}) {
   setRuntimeEngine(resolveEngineIdForProfile(profile));
 }
@@ -1780,11 +1849,17 @@ app.whenReady().then(async () => {
 
     store.renameSessionFromFirstPrompt(prompt);
     store.appendHistory("user", prompt);
+    const taskWorkspace = deriveTaskWorkspace(prompt, current.workspace, session.directory || "");
+    store.updateSessionMeta(session.id, {
+      directory: taskWorkspace
+    });
+    session = store.getActiveSession();
     sendAgentEvent({
       sessionId: session.id,
       type: "task_status",
       status: "planning",
-      message: "Agent 正在分析任务并规划执行步骤..."
+      message: "Agent 正在分析任务并规划执行步骤...",
+      taskWorkspace
     });
 
     const compression = maybeCompressActiveSession();
@@ -1795,7 +1870,7 @@ app.whenReady().then(async () => {
     let result;
     try {
       result = await activeEngine().runPrompt({
-        workspace: current.workspace,
+        workspace: taskWorkspace,
         sessionId: session.id,
         conversationId: "",
         prompt,
@@ -1852,7 +1927,8 @@ app.whenReady().then(async () => {
       sessionId: session.id,
       type: "task_status",
       status: result.ok ? "completed" : "failed",
-      message: result.ok ? "Agent 已完成本轮任务。" : "Agent 本轮任务执行失败。"
+      message: result.ok ? "Agent 已完成本轮任务。" : "Agent 本轮任务执行失败。",
+      taskWorkspace
     });
     if (compression?.compressed) {
       store.appendHistory(

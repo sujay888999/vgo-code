@@ -53,7 +53,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
   }, [isLoading, message.text])
 
   useEffect(() => {
-    if (!isStreaming || !message.text || displayedText === message.text) return
+    if (isLoading || !isStreaming || !message.text || displayedText === message.text) return
 
     const timeout = window.setTimeout(() => {
       setDisplayedText((prev) => {
