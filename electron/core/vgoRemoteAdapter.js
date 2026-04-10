@@ -6,7 +6,7 @@ const modelAdapters = require("./modelAdapterRegistry");
 const familyTools = require("./modelFamilyToolAdapters");
 const skillRegistry = require("./skillRegistry");
 
-const MAX_AGENT_STEPS = 6;
+const MAX_AGENT_STEPS = 12;
 const UPSTREAM_RETRYABLE_PATTERN = /Failed to connect to upstream channel/i;
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "vgo-remote.log");
@@ -34,6 +34,50 @@ async function parseJsonResponse(response) {
 function toNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function safeParseJson(value) {
+  if (typeof value !== "string") {
+    return value && typeof value === "object" ? value : null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeToolCalls(calls = []) {
+  return calls
+    .filter((call) => call && typeof call === "object" && call.name)
+    .map((call) => ({
+      name: String(call.name),
+      arguments:
+        call.arguments && typeof call.arguments === "object"
+          ? call.arguments
+          : safeParseJson(call.arguments) || {}
+    }));
+}
+
+function extractTaggedToolCallPayloads(text) {
+  if (typeof text !== "string" || !text.includes("<vgo_tool_call>")) {
+    return [];
+  }
+
+  const payloads = [];
+  const taggedPattern = /<vgo_tool_call>\s*([\s\S]*?)\s*<\/vgo_tool_call>/gi;
+  let match = taggedPattern.exec(text);
+
+  while (match) {
+    const payload = String(match[1] || "").trim();
+    if (payload) {
+      payloads.push(payload);
+    }
+    match = taggedPattern.exec(text);
+  }
+
+  return payloads;
 }
 
 function extractUsage(payload) {
@@ -138,7 +182,40 @@ function extractAssistantRawText(payload) {
   );
 }
 
-function buildMessageHistory(history, systemPrompt) {
+function extractToolCalls(rawText = "") {
+  const fallbackCalls = normalizeToolCalls(protocol.parseToolCalls(rawText));
+  if (fallbackCalls.length) {
+    logRuntime("tool_calls:fallback_from_text", {
+      count: fallbackCalls.length,
+      preview: String(rawText || "").slice(0, 200)
+    });
+    return fallbackCalls;
+  }
+
+  const taggedPayloads = extractTaggedToolCallPayloads(rawText);
+  const taggedCalls = [];
+  for (const payload of taggedPayloads) {
+    const parsed = safeParseJson(payload);
+    const parsedCalls = normalizeToolCalls(
+      Array.isArray(parsed?.calls) ? parsed.calls : parsed?.name ? [parsed] : []
+    );
+    if (parsedCalls.length) {
+      taggedCalls.push(...parsedCalls);
+    }
+  }
+
+  if (taggedCalls.length) {
+    logRuntime("tool_calls:recovered_tagged_calls", {
+      count: taggedCalls.length,
+      preview: String(rawText || "").slice(0, 200)
+    });
+    return taggedCalls;
+  }
+
+  return [];
+}
+
+function buildMessageHistory(history, systemPrompt, currentPrompt = "") {
   const trimmedHistory = (history || [])
     .filter((item) => item && (item.role === "user" || item.role === "assistant"))
     .map((item) => ({
@@ -148,13 +225,24 @@ function buildMessageHistory(history, systemPrompt) {
     .filter((item) => item.content)
     .slice(-20);
 
-  return [
+  const messages = [
     {
       role: "system",
       content: systemPrompt
     },
     ...trimmedHistory
   ];
+
+  const normalizedPrompt = String(currentPrompt || "").trim();
+  const hasUserMessage = messages.some((item) => item.role === "user" && String(item.content || "").trim());
+  if (!hasUserMessage && normalizedPrompt) {
+    messages.push({
+      role: "user",
+      content: normalizedPrompt
+    });
+  }
+
+  return messages;
 }
 
 function buildSkillPreflightNudge(skills = []) {
@@ -266,6 +354,129 @@ function extractToolResultSummaries(rawEvents) {
       ok: event.ok,
       summary: event.summary
     }));
+}
+
+function extractRequestedFilePaths(prompt = "", workspace = "") {
+  const source = String(prompt || "");
+  const absolutePathMatches =
+    source.match(/[A-Za-z]:\\[A-Za-z0-9._-]+(?:\\[A-Za-z0-9._-]+)*/g) || [];
+  const relativePathMatches =
+    source.match(/(?:src|electron|ui)[\\/][A-Za-z0-9._/\\-]+|package\.json/gi) || [];
+  const matches = [...absolutePathMatches, ...relativePathMatches];
+  const paths = new Set();
+  const normalizedWorkspace = workspace ? path.resolve(workspace).toLowerCase() : "";
+
+  for (const rawMatch of matches) {
+    const cleaned = String(rawMatch || "")
+      .trim()
+      .replace(/[，。、；：,.;:？?！!）)\]】]+$/, "");
+    if (!cleaned) {
+      continue;
+    }
+
+    const resolved = path.isAbsolute(cleaned)
+      ? path.resolve(cleaned)
+      : workspace
+        ? path.resolve(workspace, cleaned.replace(/\//g, path.sep))
+        : cleaned.replace(/\//g, path.sep);
+    const normalizedResolved = resolved.toLowerCase();
+    const basename = path.basename(normalizedResolved);
+    const likelyFile =
+      basename === "package.json" ||
+      /\.(tsx|ts|js|jsx|json|css|md|html)$/i.test(normalizedResolved);
+
+    if (normalizedResolved === normalizedWorkspace || !likelyFile) {
+      continue;
+    }
+
+    paths.add(normalizedResolved);
+  }
+
+  return [...paths];
+}
+
+function collectCompletedReadPaths(rawEvents = []) {
+  const completed = new Set();
+
+  for (const event of rawEvents) {
+    if (event?.type !== "tool_result" || event.tool !== "read_file" || !event.ok) {
+      continue;
+    }
+
+    const summary = String(event.summary || "");
+    const match = summary.match(/^Read\s+(.+?)\s+lines\s+\d+-\d+\./i);
+    if (match?.[1]) {
+      completed.add(path.resolve(match[1]).toLowerCase());
+    }
+  }
+
+  return completed;
+}
+
+function getUnfinishedRequiredReadPaths(prompt = "", rawEvents = [], workspace = "") {
+  const requestedPaths = extractRequestedFilePaths(prompt, workspace);
+  if (!requestedPaths.length) {
+    return [];
+  }
+
+  const completedReadPaths = collectCompletedReadPaths(rawEvents);
+  return requestedPaths.filter((requestedPath) => !completedReadPaths.has(requestedPath));
+}
+
+function hasUnfinishedRequiredReads(prompt = "", rawEvents = [], workspace = "") {
+  return getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace).length > 0;
+}
+
+function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", workspace = "") {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const hasToolResults = rawEvents.some((event) => event && event.type === "tool_result");
+  const unfinishedRequiredReads = hasUnfinishedRequiredReads(prompt, rawEvents, workspace);
+  const continuationPatterns = [
+    /下一步/i,
+    /下一步行动/i,
+    /继续/i,
+    /接下来/i,
+    /然后/i,
+    /现在我将/i,
+    /先读取/i,
+    /先检查/i,
+    /先列出/i,
+    /我将读取/i,
+    /我将继续/i,
+    /需要先/i,
+    /需要继续/i
+  ];
+  const finalPatterns = [
+    /最终结论/i,
+    /简短结论/i,
+    /总结/i,
+    /分析如下/i,
+    /优化建议/i,
+    /检查结果汇总/i,
+    /所有要求的文件均已检查完毕/i,
+    /所有请求的文件.*已检查完/i
+  ];
+
+  if (!hasToolResults && continuationPatterns.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+
+  if (finalPatterns.some((pattern) => pattern.test(normalized))) {
+    if (unfinishedRequiredReads) {
+      return true;
+    }
+    return false;
+  }
+
+  if (unfinishedRequiredReads) {
+    return true;
+  }
+
+  return false;
 }
 
 function hasSuccessfulMutatingTool(rawEvents = []) {
@@ -472,7 +683,7 @@ async function runRealVgoPrompt({
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
   const skillWorkflowNudge = skillRegistry.buildSkillWorkflowNudge(activeSkills);
   const systemPrompt = buildSafeSystemPrompt(settings, sessionMeta, activeSkills);
-  const activeHistory = buildMessageHistory(history, systemPrompt);
+  const activeHistory = buildMessageHistory(history, systemPrompt, prompt);
   if (skillPreflightNudge) {
     activeHistory.push({
       role: "user",
@@ -604,7 +815,7 @@ async function runRealVgoPrompt({
       prompt
     );
     const plan = protocol.parsePlanBlock(rawText);
-    const toolCalls = protocol.parseToolCalls(rawText);
+    const toolCalls = extractToolCalls(rawText);
     const toolNudges = familyTools.getToolProtocolTemplates(usedModel);
     const hasPlatformPersona = looksLikePlatformPersona(rawText) || looksLikePlatformPersona(latestText);
 
@@ -636,6 +847,16 @@ async function runRealVgoPrompt({
       text: latestText,
       toolCalls
     });
+
+    if (latestText) {
+      emitEvent(onEvent, rawEvents, {
+        type: "model_stream_delta",
+        step: step + 1,
+        model: usedModel,
+        text: latestText,
+        done: true
+      });
+    }
 
     if (!response.ok) {
       return {
@@ -758,6 +979,43 @@ async function runRealVgoPrompt({
         finalAnswerNudgeSent = true;
         activeHistory.push({ role: "assistant", content: rawText });
         activeHistory.push({ role: "user", content: toolNudges.finalAnswerNudge });
+        continue;
+      }
+
+      if (shouldContinueAutonomously(latestText, rawEvents, prompt, workspace)) {
+        const unfinishedReadPaths = getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace);
+        const nextRequiredPath = unfinishedReadPaths[0] || "";
+        logRuntime("model:auto_continue", {
+          step,
+          textPreview: latestText.slice(0, 200),
+          unfinishedRequiredReads: unfinishedReadPaths.length > 0,
+          nextRequiredPath
+        });
+
+        activeHistory.push({ role: "assistant", content: rawText });
+        activeHistory.push({
+          role: "user",
+          content:
+            unfinishedReadPaths.length > 0
+              ? [
+                  "Continue autonomously.",
+                  "Do not stop at a partial progress summary.",
+                  "The task is not complete yet because these required files have not been inspected:",
+                  ...unfinishedReadPaths.map((filePath, index) => `${index + 1}. ${filePath}`),
+                  `Call the next required tool now for ${nextRequiredPath}.`,
+                  "Use the exact absolute file paths listed above.",
+                  "Do not switch to a different workspace and do not use relative paths like package.json or src/App.tsx by themselves.",
+                  "Respond with tool calls first. Do not only describe the next action.",
+                  "Only give the final answer after every required file above has been inspected or a concrete blocker prevents completion."
+                ].join("\n")
+              : [
+                  "Continue autonomously.",
+                  "Do not stop at a partial progress summary.",
+                  "If there are unfinished requested files, checks, or steps, keep calling tools until they are done.",
+                  "Respond with tool calls first when more execution is needed.",
+                  "Only give the final answer when the full requested task has actually been completed or a concrete blocker prevents completion."
+                ].join("\n")
+        });
         continue;
       }
 
