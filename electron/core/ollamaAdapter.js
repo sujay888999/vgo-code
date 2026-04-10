@@ -60,6 +60,89 @@ function normalizeToolCalls(calls = []) {
     }));
 }
 
+function extractBalancedJsonBlock(text, startIndex) {
+  if (typeof text !== "string" || startIndex < 0 || startIndex >= text.length) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let isEscaped = false;
+  let jsonStart = -1;
+
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (jsonStart === -1) {
+      if (char === "{") {
+        jsonStart = index;
+        depth = 1;
+      }
+      continue;
+    }
+
+    if (isEscaped) {
+      isEscaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      isEscaped = true;
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(jsonStart, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractTaggedToolCallPayloads(text) {
+  if (typeof text !== "string" || !text.includes("<vgo_tool_call>")) {
+    return [];
+  }
+
+  const payloads = [];
+  let searchStart = 0;
+
+  while (searchStart < text.length) {
+    const tagStart = text.indexOf("<vgo_tool_call>", searchStart);
+    if (tagStart === -1) {
+      break;
+    }
+
+    const jsonBlock = extractBalancedJsonBlock(text, tagStart);
+    if (jsonBlock) {
+      payloads.push(jsonBlock);
+      searchStart = tagStart + jsonBlock.length;
+      continue;
+    }
+
+    searchStart = tagStart + "<vgo_tool_call>".length;
+  }
+
+  return payloads;
+}
+
 function buildSafeSystemPrompt(settings, sessionMeta = {}, activeSkills = []) {
   const appendix = skillRegistry.buildSkillSystemAppendix(activeSkills);
   try {
@@ -339,10 +422,24 @@ function extractToolCalls(message) {
     return fallbackCalls;
   }
 
-  const inlineJsonMatch =
-    text.match(/<vgo_tool_call>\s*(\{[\s\S]*\})\s*<\/vgo_tool_call>/i) ||
-    text.match(/<vgo_tool_call>\s*(\{[\s\S]*\})$/i) ||
-    text.match(/(\{\s*"calls"\s*:\s*\[[\s\S]*\]\s*\})/i);
+  const taggedPayloads = extractTaggedToolCallPayloads(text);
+
+  if (taggedPayloads.length) {
+    const parsed = safeParseJson(taggedPayloads[0]);
+    const parsedCalls = normalizeToolCalls(
+      Array.isArray(parsed?.calls) ? parsed.calls : parsed?.name ? [parsed] : []
+    );
+
+    if (parsedCalls.length) {
+      logRuntime("tool_calls:recovered_inline_json", {
+        count: parsedCalls.length,
+        preview: text.slice(0, 200)
+      });
+      return parsedCalls;
+    }
+  }
+
+  const inlineJsonMatch = text.match(/(\{\s*"calls"\s*:\s*\[[\s\S]*\]\s*\})/i);
 
   if (inlineJsonMatch) {
     const parsed = safeParseJson(inlineJsonMatch[1]);
@@ -357,6 +454,25 @@ function extractToolCalls(message) {
       });
       return parsedCalls;
     }
+  }
+
+  const taggedCalls = [];
+  for (const payload of taggedPayloads) {
+    const parsed = safeParseJson(payload);
+    const parsedCalls = normalizeToolCalls(
+      Array.isArray(parsed?.calls) ? parsed.calls : parsed?.name ? [parsed] : []
+    );
+    if (parsedCalls.length) {
+      taggedCalls.push(...parsedCalls);
+    }
+  }
+
+  if (taggedCalls.length) {
+    logRuntime("tool_calls:recovered_tagged_calls", {
+      count: taggedCalls.length,
+      preview: text.slice(0, 200)
+    });
+    return taggedCalls;
   }
   
   if (/<vgo_tool_call>|"calls"\s*:/.test(text)) {

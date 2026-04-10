@@ -3,7 +3,6 @@ import { useAppStore } from '../store/appStore'
 import { MessageList } from './MessageList'
 import { Composer } from './Composer'
 import { TaskPanel } from './TaskPanel'
-import { AgentTracePanel } from './AgentTracePanel'
 import { PermissionCard } from './PermissionCard'
 import { ChevronDown, ChevronUp, PanelRightClose, PanelRightOpen } from 'lucide-react'
 
@@ -168,7 +167,6 @@ export function MainPanel() {
       <div className="content-area">
         <div className="messages-container" ref={scrollRef} onScroll={handleScroll}>
           <MessageList messages={messages} onCopy={copyMessage} copiedId={copiedId} />
-          <AgentTracePanel steps={taskSteps} promptRunning={promptRunning} />
           {pendingPermissionStep && <PermissionCard step={pendingPermissionStep} />}
 
           {messages.length === 0 && (
@@ -185,17 +183,6 @@ export function MainPanel() {
                 </ul>
                 <p className="tip">输入一个任务，或使用下方输入框快速开始。</p>
               </div>
-            </div>
-          )}
-
-          {promptRunning && messages.length === 0 && (
-            <div className="thinking-indicator">
-              <div className="thinking-dots">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
-              <span>思考中...</span>
             </div>
           )}
         </div>

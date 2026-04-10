@@ -43,7 +43,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
 
   useEffect(() => {
     if (isLoading) {
-      setDisplayedText('')
+      setDisplayedText(message.text || '')
       setIsStreaming(true)
       return
     }
@@ -62,7 +62,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
         }
         return prev
       })
-    }, 10)
+    }, 24)
 
     return () => window.clearTimeout(timeout)
   }, [isStreaming, displayedText, message.text])
@@ -76,13 +76,9 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
   const renderContent = () => {
     if (isLoading) {
       return (
-        <div className="message-loading">
-          <div className="loading-dots">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-          <span className="loading-text">思考中…</span>
+        <div className="message-loading message-loading-stream">
+          <span className="loading-text">思考并输出中...</span>
+          <StreamingContent text={displayedText || '正在准备回复...'} isStreaming={true} />
         </div>
       )
     }

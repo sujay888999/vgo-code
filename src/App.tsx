@@ -5,6 +5,68 @@ import { MainPanel } from './components/MainPanel'
 import { SettingsModal } from './components/SettingsModal'
 import { RenameModal } from './components/RenameModal'
 
+const LIVE_MESSAGE_PREFIX = 'live-assistant-'
+
+function buildLiveMessageId(sessionId?: string) {
+  return `${LIVE_MESSAGE_PREFIX}${sessionId || 'active'}`
+}
+
+function appendUniqueBlock(currentText: string, nextBlock: string) {
+  const normalizedCurrent = String(currentText || '').trim()
+  const normalizedNext = String(nextBlock || '').trim()
+
+  if (!normalizedNext) return normalizedCurrent
+  if (!normalizedCurrent) return normalizedNext
+  if (normalizedCurrent.includes(normalizedNext)) return normalizedCurrent
+
+  return `${normalizedCurrent}\n\n${normalizedNext}`.trim()
+}
+
+function buildLiveProgressBlock(eventType: string, payload: any) {
+  if (eventType === 'task_status') {
+    if (payload?.message) return payload.message
+    if (payload?.detail) return payload.detail
+  }
+
+  if (eventType === 'plan') {
+    const steps = Array.isArray(payload?.steps) ? payload.steps.filter(Boolean) : []
+    return [payload?.summary || '执行计划', ...steps.map((step: string) => `- ${step}`)]
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  if (eventType === 'workflow_selected') {
+    return payload?.detail || (payload?.label ? `已切换到 ${payload.label} 工作流` : '')
+  }
+
+  if (eventType === 'workflow_probe') {
+    return payload?.detail || '已完成前置检查'
+  }
+
+  if (eventType === 'tool_result') {
+    const summary = payload?.summary || payload?.output || ''
+    return `${payload?.ok ? '工具已完成' : '工具失败'}: ${payload?.tool || 'unknown'}${summary ? `\n${summary}` : ''}`
+  }
+
+  if (eventType === 'permission_requested') {
+    return `等待授权: ${payload?.tool || 'unknown'}${payload?.detail ? `\n${payload.detail}` : ''}`
+  }
+
+  if (eventType === 'permission_granted') {
+    return `已授权继续执行${payload?.tool ? `: ${payload.tool}` : ''}`
+  }
+
+  if (eventType === 'permission_denied') {
+    return `授权被拒绝${payload?.tool ? `: ${payload.tool}` : ''}`
+  }
+
+  if (eventType === 'capability_gap' || eventType === 'skill_suggestions') {
+    return payload?.detail || ''
+  }
+
+  return ''
+}
+
 function getTaskCopy(status?: string, payload?: any) {
   switch (status) {
     case 'planning':
@@ -60,9 +122,11 @@ export function App() {
   const {
     settingsOverlayOpen,
     renameOverlayOpen,
+    activeSessionId,
     hydrate,
     setPromptRunning,
     addMessage,
+    updateMessage,
     addTaskStep,
     updateTaskStep,
     settleTaskSteps,
@@ -96,18 +160,59 @@ export function App() {
       const eventType = payload.type || payload.event
       const status = payload.status
       const timestamp = Date.now()
+      const liveMessageId = buildLiveMessageId(payload.sessionId || activeSessionId || undefined)
+
+      const upsertLiveMessage = (text: string, nextStatus: 'loading' | 'done' | 'error' = 'loading') => {
+        if (!text.trim()) return
+
+        const existing = useAppStore
+          .getState()
+          .messages.find((message) => message.id === liveMessageId)
+
+        if (existing) {
+          updateMessage(liveMessageId, {
+            text,
+            status: nextStatus,
+            timestamp,
+          })
+          return
+        }
+
+        addMessage({
+          id: liveMessageId,
+          role: 'assistant',
+          text,
+          status: nextStatus,
+          timestamp,
+        })
+      }
+
+      const progressBlock = buildLiveProgressBlock(eventType, payload)
+      const currentLiveText =
+        useAppStore.getState().messages.find((message) => message.id === liveMessageId)?.text || ''
 
       if (eventType === 'task_status') {
         const taskCopy = getTaskCopy(status, payload)
         if (taskCopy) {
+          if (status === 'planning' || status === 'thinking' || status === 'continuing' || status === 'tool_running' || status === 'retrying' || status === 'fallback_model') {
+            upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
+          }
+
           if (status === 'completed') {
             settleTaskSteps('completed')
             setPromptRunning(false)
+            if (currentLiveText) {
+              updateMessage(liveMessageId, { status: 'done', timestamp })
+            }
           }
 
           if (status === 'error' || status === 'failed') {
             settleTaskSteps('error')
             setPromptRunning(false)
+            upsertLiveMessage(
+              appendUniqueBlock(currentLiveText, progressBlock || payload?.message || '任务执行失败'),
+              'error',
+            )
           }
 
           addTaskStep({
@@ -121,6 +226,7 @@ export function App() {
       }
 
       if (eventType === 'permission_requested') {
+        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         addTaskStep({
           id: payload.requestId || `perm-${timestamp}`,
           requestId: payload.requestId,
@@ -133,6 +239,7 @@ export function App() {
       }
 
       if (eventType === 'permission_granted' && payload.requestId) {
+        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         updateTaskStep(payload.requestId, {
           state: 'permission_granted',
           detail: payload.detail || '已授权，继续执行。',
@@ -140,6 +247,7 @@ export function App() {
       }
 
       if (eventType === 'permission_denied' && payload.requestId) {
+        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'error')
         updateTaskStep(payload.requestId, {
           state: 'permission_denied',
           detail: payload.detail || '已拒绝本次操作。',
@@ -147,6 +255,7 @@ export function App() {
       }
 
       if (eventType === 'plan') {
+        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         addTaskStep({
           id: `plan-${timestamp}`,
           title: payload.summary || '执行计划',
@@ -157,6 +266,7 @@ export function App() {
       }
 
       if (eventType === 'workflow_selected') {
+        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         addTaskStep({
           id: `workflow-${timestamp}`,
           title: payload.label ? `工作流 · ${payload.label}` : '工作流已切换',
@@ -167,6 +277,7 @@ export function App() {
       }
 
       if (eventType === 'workflow_probe') {
+        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         addTaskStep({
           id: `probe-${timestamp}`,
           title: '前置检查',
@@ -177,6 +288,7 @@ export function App() {
       }
 
       if (eventType === 'capability_gap') {
+        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'error')
         addTaskStep({
           id: `gap-${timestamp}`,
           title: '能力缺口',
@@ -188,6 +300,7 @@ export function App() {
 
       if (eventType === 'skill_suggestions') {
         const skills = Array.isArray(payload.skills) ? payload.skills : []
+        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         addTaskStep({
           id: `skills-${timestamp}`,
           title: 'Skill 建议',
@@ -201,16 +314,11 @@ export function App() {
       }
 
       if (eventType === 'model_response' && payload.text) {
-        addMessage({
-          id: `msg-${timestamp}`,
-          role: 'assistant',
-          text: payload.text,
-          status: 'done',
-          timestamp,
-        })
+        upsertLiveMessage(payload.text, 'done')
       }
 
       if (eventType === 'tool_result') {
+        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         addTaskStep({
           id: `tool-result-${timestamp}`,
           title: `${payload.tool || '工具'}结果`,
@@ -246,7 +354,7 @@ export function App() {
       window.removeEventListener('vgoAgentEvent', handleAgentEvent)
       window.clearInterval(pollInterval)
     }
-  }, [hydrate, setPromptRunning, addMessage, addTaskStep, updateTaskStep, settleTaskSteps])
+  }, [activeSessionId, hydrate, setPromptRunning, addMessage, updateMessage, addTaskStep, updateTaskStep, settleTaskSteps])
 
   useEffect(() => {
     const handleStateRefresh = (e: Event) => {

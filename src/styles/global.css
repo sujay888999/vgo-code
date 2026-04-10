@@ -1102,6 +1102,19 @@ body.mode-ux-pro-max .message-bubble {
   color: var(--text-muted);
 }
 
+.message-loading-stream {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.message-loading-stream .loading-text {
+  font-size: 0.76rem;
+  color: color-mix(in srgb, var(--text-muted) 92%, transparent);
+}
+
 .loading-dots {
   display: flex;
   gap: 4px;
