@@ -3,6 +3,7 @@ const { chromium } = require('playwright')
 const APP_PATH = 'E:\\VGO-CODE\\dist\\win-unpacked\\VGO CODE.exe'
 const DEFAULT_PROMPT = process.env.VGO_TEST_PROMPT || '你好'
 const DEBUG_PORT = process.env.VGO_TEST_DEBUG_PORT || '9222'
+const FINAL_WAIT_MS = Number(process.env.VGO_TEST_FINAL_WAIT_MS || 120000)
 
 async function clickIfVisible(page, selector, label) {
   const button = page.locator(selector).first()
@@ -29,6 +30,58 @@ async function approvePermissionIfNeeded(page) {
   }
 
   return false
+}
+
+async function getAssistantState(page) {
+  const assistantMessages = page.locator('.message-item.assistant')
+  const count = await assistantMessages.count().catch(() => 0)
+
+  if (count === 0) {
+    return { count: 0, lastText: '' }
+  }
+
+  const lastMessage = assistantMessages.nth(count - 1)
+  const text = (
+    (await lastMessage.locator('.message-content').innerText().catch(() => '')) ||
+    (await lastMessage.innerText().catch(() => '')) ||
+    ''
+  ).trim()
+
+  return { count, lastText: text }
+}
+
+async function waitForTaskCompletion(page) {
+  const startedAt = Date.now()
+  const baseline = await getAssistantState(page)
+
+  while (Date.now() - startedAt < FINAL_WAIT_MS) {
+    await approvePermissionIfNeeded(page)
+
+    const current = await getAssistantState(page)
+    const stopVisible = await page.locator('.stop-button').isVisible().catch(() => false)
+    const errorVisible = await page.locator('.message-error').last().isVisible().catch(() => false)
+    const processErrorVisible = await page
+      .locator('.agent-process-item.error, .agent-process-item.permission_denied')
+      .first()
+      .isVisible()
+      .catch(() => false)
+
+    if (errorVisible || processErrorVisible) {
+      return 'error'
+    }
+
+    if (current.count > baseline.count && current.lastText && !stopVisible) {
+      return 'assistant_reply'
+    }
+
+    if (!stopVisible && current.count > baseline.count) {
+      return 'assistant_shell_complete'
+    }
+
+    await page.waitForTimeout(1200)
+  }
+
+  return 'timeout'
 }
 
 async function testApp() {
@@ -72,7 +125,7 @@ async function testApp() {
     void page.screenshot({ path: 'E:\\VGO-CODE\\test-results\\debug-timeout.png' })
     void browser.close()
     process.exit(0)
-  }, 90000)
+  }, FINAL_WAIT_MS + 30000)
 
   const consoleLogs = []
   const errors = []
@@ -134,10 +187,8 @@ async function testApp() {
   await page.screenshot({ path: 'E:\\VGO-CODE\\test-results\\03-after-send.png' })
 
   console.log('Watching for permission card or response...')
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await approvePermissionIfNeeded(page)
-    await page.waitForTimeout(1000)
-  }
+  const completionState = await waitForTaskCompletion(page)
+  console.log(`Completion state: ${completionState}`)
 
   await page.screenshot({ path: 'E:\\VGO-CODE\\test-results\\04-after-wait.png' })
 

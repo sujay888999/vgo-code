@@ -36,6 +36,30 @@ function toNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function safeParseJson(value) {
+  if (typeof value !== "string") {
+    return value && typeof value === "object" ? value : null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeToolCalls(calls = []) {
+  return calls
+    .filter((call) => call && typeof call === "object" && call.name)
+    .map((call) => ({
+      name: String(call.name),
+      arguments:
+        call.arguments && typeof call.arguments === "object"
+          ? call.arguments
+          : safeParseJson(call.arguments) || {}
+    }));
+}
+
 function buildSafeSystemPrompt(settings, sessionMeta = {}, activeSkills = []) {
   const appendix = skillRegistry.buildSkillSystemAppendix(activeSkills);
   try {
@@ -292,20 +316,21 @@ function extractToolCalls(message) {
       if (toolCall.function) {
         calls.push({
           name: toolCall.function.name,
-          arguments: typeof toolCall.function.arguments === "string" 
-            ? JSON.parse(toolCall.function.arguments) 
-            : toolCall.function.arguments
+          arguments:
+            typeof toolCall.function.arguments === "string"
+              ? safeParseJson(toolCall.function.arguments) || {}
+              : toolCall.function.arguments
         });
       }
     }
   }
 
   if (calls.length) {
-    return calls;
+    return normalizeToolCalls(calls);
   }
 
   const text = extractMessageText(message);
-  const fallbackCalls = protocol.parseToolCalls(text);
+  const fallbackCalls = normalizeToolCalls(protocol.parseToolCalls(text));
   if (fallbackCalls.length) {
     logRuntime("tool_calls:fallback_from_text", {
       count: fallbackCalls.length,
@@ -313,18 +338,54 @@ function extractToolCalls(message) {
     });
     return fallbackCalls;
   }
+
+  const inlineJsonMatch =
+    text.match(/<vgo_tool_call>\s*(\{[\s\S]*\})\s*<\/vgo_tool_call>/i) ||
+    text.match(/<vgo_tool_call>\s*(\{[\s\S]*\})$/i) ||
+    text.match(/(\{\s*"calls"\s*:\s*\[[\s\S]*\]\s*\})/i);
+
+  if (inlineJsonMatch) {
+    const parsed = safeParseJson(inlineJsonMatch[1]);
+    const parsedCalls = normalizeToolCalls(
+      Array.isArray(parsed?.calls) ? parsed.calls : parsed?.name ? [parsed] : []
+    );
+
+    if (parsedCalls.length) {
+      logRuntime("tool_calls:recovered_inline_json", {
+        count: parsedCalls.length,
+        preview: text.slice(0, 200)
+      });
+      return parsedCalls;
+    }
+  }
   
-  return calls;
+  if (/<vgo_tool_call>|"calls"\s*:/.test(text)) {
+    logRuntime("tool_calls:unparsed_payload", {
+      preview: text.slice(0, 400)
+    });
+  }
+
+  return [];
 }
 
 function extractMessageText(message) {
   if (!message) return "";
   if (typeof message.content === "string") return message.content;
+  if (typeof message.text === "string") return message.text;
   if (Array.isArray(message.content)) {
     return message.content
       .filter(item => item.type === "text")
       .map(item => item.text)
       .join("\n");
+  }
+  if (message.content && typeof message.content === "object") {
+    if (typeof message.content.text === "string") return message.content.text;
+    if (Array.isArray(message.content.parts)) {
+      return message.content.parts
+        .map((part) => (typeof part?.text === "string" ? part.text : ""))
+        .filter(Boolean)
+        .join("\n");
+    }
   }
   return String(message.content || "");
 }
