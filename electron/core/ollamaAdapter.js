@@ -517,6 +517,59 @@ function collectToolResults(rawEvents = []) {
     }));
 }
 
+function shouldContinueAutonomously(text = "", rawEvents = []) {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const hasToolResults = rawEvents.some((event) => event && event.type === "tool_result");
+  const continuationPatterns = [
+    /下一步/i,
+    /下一步行动/i,
+    /接下来/i,
+    /继续读取/i,
+    /继续检查/i,
+    /继续分析/i,
+    /将继续/i,
+    /我将继续/i,
+    /根据既定计划/i,
+    /step\s*\d+\s*\/\s*\d+/i
+  ];
+
+  const pendingActionPatterns = [
+    /首先.*需要/i,
+    /现在.*需要/i,
+    /我需要列出/i,
+    /我需要读取/i,
+    /先读取/i,
+    /先检查/i,
+    /先列出/i,
+    /我将首先/i,
+    /我将先/i
+  ];
+
+  const finalPatterns = [
+    /最终结论/i,
+    /总结建议/i,
+    /界面优化建议/i,
+    /已完成全部/i,
+    /任务完成/i,
+    /结论如下/i,
+    /综合来看/i
+  ];
+
+  if (finalPatterns.some((pattern) => pattern.test(normalized))) {
+    return false;
+  }
+
+  if (continuationPatterns.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+
+  return !hasToolResults && pendingActionPatterns.some((pattern) => pattern.test(normalized));
+}
+
 async function runOllamaPrompt({
   sessionId,
   settings,
@@ -731,6 +784,25 @@ async function runOllamaPrompt({
       });
 
       if (!toolCalls.length) {
+        if (shouldContinueAutonomously(latestText, rawEvents)) {
+          logRuntime("model:auto_continue", {
+            step,
+            textPreview: latestText.slice(0, 200)
+          });
+
+          messages.push({ role: "assistant", content: messageText });
+          messages.push({
+            role: "user",
+            content: [
+              "Continue autonomously.",
+              "Do not stop at a partial progress summary.",
+              "If there are unfinished requested files, checks, or steps, keep calling tools until they are done.",
+              "Only give the final answer when the full requested task has actually been completed or a concrete blocker prevents completion."
+            ].join("\n")
+          });
+          continue;
+        }
+
         const hadToolResults = rawEvents.some((event) => event.type === "tool_result");
         const finalText =
           latestText ||
