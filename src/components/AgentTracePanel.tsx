@@ -61,28 +61,33 @@ export function AgentTracePanel({ steps, promptRunning }: AgentTracePanelProps) 
         'error',
       ].includes(step.state),
     )
-    .slice(-6)
+    .slice(-8)
 
   if (!promptRunning && !visible.length) return null
 
   return (
-    <section className="agent-process-stream" aria-label="Agent 过程流">
+    <section className="agent-process-stream" aria-label="Codex 思考过程">
       <div className="agent-process-head">
-        <span className="agent-process-title">Codex Process</span>
+        <div className="agent-process-head-copy">
+          <span className="agent-process-title">Codex Process</span>
+          <span className="agent-process-caption">思考与执行过程可见</span>
+        </div>
         <span className="agent-process-subtitle">{promptRunning ? '运行中' : '最近活动'}</span>
       </div>
-      {visible.map((step) => (
-        <div key={step.id} className={`agent-process-item ${step.state}`}>
-          <div className="agent-process-leading">{getIcon(step)}</div>
-          <div className="agent-process-main">
-            <div className="agent-process-line">
-              <span className="agent-process-name">{step.title}</span>
-              <span className="agent-process-time">{formatTime(step.timestamp)}</span>
+      <div className="agent-process-list">
+        {visible.map((step) => (
+          <div key={step.id} className={`agent-process-item ${step.state}`}>
+            <div className="agent-process-leading">{getIcon(step)}</div>
+            <div className="agent-process-main">
+              <div className="agent-process-line">
+                <span className="agent-process-name">{step.title}</span>
+                <span className="agent-process-time">{formatTime(step.timestamp)}</span>
+              </div>
+              {step.detail && <div className="agent-process-detail">{step.detail}</div>}
             </div>
-            {step.detail && <div className="agent-process-detail">{step.detail}</div>}
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </section>
   )
 }
