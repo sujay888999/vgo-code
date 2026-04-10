@@ -142,14 +142,34 @@ function safeParseJson(value) {
 }
 
 function normalizeToolCalls(calls = []) {
+  const coerceToolArguments = (name, rawArguments) => {
+    if (rawArguments && typeof rawArguments === "object") {
+      return rawArguments;
+    }
+
+    if (typeof rawArguments === "string") {
+      const trimmed = rawArguments.trim();
+      const parsed = safeParseJson(trimmed);
+      if (parsed && typeof parsed === "object") {
+        return parsed;
+      }
+
+      if (trimmed) {
+        const normalizedName = String(name || "").toLowerCase();
+        if (["read_file", "list_dir", "open_path", "search_code"].includes(normalizedName)) {
+          return { path: trimmed };
+        }
+      }
+    }
+
+    return {};
+  };
+
   return calls
     .filter((call) => call && typeof call === "object" && call.name)
     .map((call) => ({
       name: String(call.name),
-      arguments:
-        call.arguments && typeof call.arguments === "object"
-          ? call.arguments
-          : safeParseJson(call.arguments) || {}
+      arguments: coerceToolArguments(call.name, call.arguments)
     }));
 }
 
@@ -197,6 +217,30 @@ function recoverSingleToolCallPayload(text = "") {
     if (args && typeof args === "object") {
       return normalizeToolCalls([{ name: looseCallMatch[1], arguments: args }]);
     }
+  }
+
+  const loosePathCallMatch = text.match(
+    /"name"\s*:\s*"([^"]+)"[\s\S]*?"path"\s*:\s*"([^"]+)"/i
+  );
+  if (loosePathCallMatch?.[1] && loosePathCallMatch?.[2]) {
+    return normalizeToolCalls([
+      {
+        name: loosePathCallMatch[1],
+        arguments: { path: loosePathCallMatch[2] }
+      }
+    ]);
+  }
+
+  const looseStringArgumentMatch = text.match(
+    /"name"\s*:\s*"([^"]+)"[\s\S]*?"arguments"\s*:\s*"([^"]+)"/i
+  );
+  if (looseStringArgumentMatch?.[1] && looseStringArgumentMatch?.[2]) {
+    return normalizeToolCalls([
+      {
+        name: looseStringArgumentMatch[1],
+        arguments: looseStringArgumentMatch[2]
+      }
+    ]);
   }
 
   return [];
@@ -662,13 +706,47 @@ function collectToolResults(rawEvents = []) {
 
 function extractRequestedFilePaths(prompt = "", workspace = "") {
   const source = String(prompt || "");
-  const absolutePathMatches =
-    source.match(/[A-Za-z]:\\[A-Za-z0-9._-]+(?:\\[A-Za-z0-9._-]+)*/g) || [];
-  const relativePathMatches =
-    source.match(/(?:src|electron|ui)[\\/][A-Za-z0-9._/\\-]+|package\.json/gi) || [];
-  const matches = [...absolutePathMatches, ...relativePathMatches];
+  const absolutePattern = /[A-Za-z]:\\[A-Za-z0-9._-]+(?:\\[A-Za-z0-9._-]+)*/g;
+  const absoluteMatches = [...source.matchAll(absolutePattern)];
+  const absolutePathMatches = absoluteMatches.map((match) => match[0]);
+  const absoluteMatchRanges = absoluteMatches.map((match) => {
+    const start = match.index ?? 0;
+    return [start, start + String(match[0] || "").length];
+  });
+  const relativePattern = /(?:src|electron|ui)[\\/][A-Za-z0-9._/\\-]+|package\.json/gi;
+  const relativePathMatches = [];
+
+  for (const match of source.matchAll(relativePattern)) {
+    const relativePath = String(match[0] || "");
+    const start = match.index ?? 0;
+    const end = start + relativePath.length;
+    const isInsideAbsolutePath = absoluteMatchRanges.some(
+      ([absoluteStart, absoluteEnd]) => start >= absoluteStart && end <= absoluteEnd
+    );
+    if (!isInsideAbsolutePath) {
+      relativePathMatches.push(relativePath);
+    }
+  }
+
+  const matches =
+    absolutePathMatches.length > 0
+      ? [...absolutePathMatches, ...relativePathMatches]
+      : [...absolutePathMatches, ...relativePathMatches];
   const paths = new Set();
   const normalizedWorkspace = workspace ? path.resolve(workspace).toLowerCase() : "";
+  const inferredProjectRoot = (() => {
+    for (const absolutePath of absolutePathMatches) {
+      const normalizedAbsolute = path.resolve(absolutePath);
+      const markerMatch = normalizedAbsolute.match(/^(.*?)(?:\\(?:src|electron|ui)\\|\\package\.json$)/i);
+      if (markerMatch?.[1]) {
+        return path.resolve(markerMatch[1]);
+      }
+      if (/\\package\.json$/i.test(normalizedAbsolute)) {
+        return path.dirname(normalizedAbsolute);
+      }
+    }
+    return "";
+  })();
 
   for (const rawMatch of matches) {
     const cleaned = String(rawMatch || "")
@@ -680,9 +758,11 @@ function extractRequestedFilePaths(prompt = "", workspace = "") {
 
     const resolved = path.isAbsolute(cleaned)
       ? path.resolve(cleaned)
-      : workspace
-        ? path.resolve(workspace, cleaned.replace(/\//g, path.sep))
-        : cleaned.replace(/\//g, path.sep);
+      : inferredProjectRoot
+        ? path.resolve(inferredProjectRoot, cleaned.replace(/\//g, path.sep))
+        : workspace
+          ? path.resolve(workspace, cleaned.replace(/\//g, path.sep))
+          : cleaned.replace(/\//g, path.sep);
     const normalizedResolved = resolved.toLowerCase();
     const basename = path.basename(normalizedResolved);
     const likelyFile =
