@@ -56,6 +56,16 @@ export interface SkillItem {
   enabled: boolean
 }
 
+export interface AttachmentItem {
+  name: string
+  path: string
+  size: number
+  isText: boolean
+  content?: string
+  mediaType?: 'image' | 'audio' | 'video' | 'file'
+  imageBase64?: string
+}
+
 export interface DesktopState {
   settings?: {
     vgoAI?: {
@@ -115,7 +125,7 @@ export interface AppState {
   sessions: Session[]
   messages: Message[]
   taskSteps: TaskStep[]
-  attachments: Array<{ name: string; path: string; size: number; isText: boolean; content?: string }>
+  attachments: AttachmentItem[]
   
   // Settings State
   workspace: string
@@ -186,7 +196,7 @@ export interface AppState {
   addMessage: (message: Message) => void
   updateMessage: (id: string, updates: Partial<Message>) => void
   clearMessages: () => void
-  addAttachments: (files: Array<{ name: string; path: string; size: number; isText: boolean; content?: string }>) => void
+  addAttachments: (files: AttachmentItem[]) => void
   removeAttachmentAt: (index: number) => void
   clearAttachments: () => void
   togglePin: (sessionId: string) => void

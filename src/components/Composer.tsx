@@ -1,10 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useAppStore } from '../store/appStore'
+import { useAppStore, type AttachmentItem } from '../store/appStore'
 import {
   Send,
   Paperclip,
   Square,
   FileText,
+  Image as ImageIcon,
+  Music4,
+  Video,
+  File,
   X,
   Zap,
   Search,
@@ -37,6 +41,40 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function getAttachmentIcon(file: AttachmentItem) {
+  if (file.mediaType === 'image') return <ImageIcon size={12} />
+  if (file.mediaType === 'audio') return <Music4 size={12} />
+  if (file.mediaType === 'video') return <Video size={12} />
+  if (file.isText) return <FileText size={12} />
+  return <File size={12} />
+}
+
+function buildAttachmentContext(items: AttachmentItem[]) {
+  if (!items.length) return ''
+
+  return [
+    '',
+    '[附件信息]',
+    ...items.map((file, index) => {
+      const kindLabel =
+        file.mediaType === 'image'
+          ? '图片'
+          : file.mediaType === 'audio'
+            ? '音频'
+            : file.mediaType === 'video'
+              ? '视频'
+              : file.isText
+                ? '文本'
+                : '文件'
+      const head = `${index + 1}. ${file.name} (${kindLabel}，${formatFileSize(file.size)})`
+      if (file.isText && file.content) {
+        return `${head}\n路径: ${file.path}\n内容:\n${file.content}`
+      }
+      return `${head}\n路径: ${file.path}\n说明: 非文本附件，若模型支持多模态请直接结合附件内容处理。`
+    }),
+  ].join('\n\n')
 }
 
 export function Composer() {
@@ -77,32 +115,20 @@ export function Composer() {
     }
   }
 
-  const buildAttachmentContext = () => {
-    if (!attachments.length) return ''
-
-    return [
-      '',
-      '[附件信息]',
-      ...attachments.map((file, index) => {
-        const head = `${index + 1}. ${file.name} (${formatFileSize(file.size)})`
-        if (file.isText && file.content) {
-          return `${head}\n路径: ${file.path}\n内容:\n${file.content}`
-        }
-        return `${head}\n路径: ${file.path}\n说明: 非文本附件，请按该路径访问或处理。`
-      }),
-    ].join('\n\n')
-  }
-
   const handleSubmit = async () => {
     if (!input.trim() || promptRunning) return
 
-    const promptText = `${input.trim()}${buildAttachmentContext()}`
+    const currentAttachments = [...attachments]
+    const promptText = `${input.trim()}${buildAttachmentContext(currentAttachments)}`
     setInput('')
     setPromptRunning(true)
     setShowTemplates(false)
 
     try {
-      await window.vgoDesktop?.submitPrompt?.(promptText)
+      await window.vgoDesktop?.submitPrompt?.({
+        text: promptText,
+        attachments: currentAttachments,
+      })
       await pollLatestState()
 
       const maxPolls = 60
@@ -211,7 +237,7 @@ export function Composer() {
           </button>
         </div>
 
-<div className="permission-divider" />
+        <div className="permission-divider" />
 
         <div className="permission-group">
           <span className="permission-label">范围:</span>
@@ -279,7 +305,7 @@ export function Composer() {
         <div className="attachments-bar">
           {attachments.map((file, index) => (
             <div key={`${file.path}-${index}`} className="attachment-chip">
-              <FileText size={12} />
+              {getAttachmentIcon(file)}
               <span className="attachment-name" title={file.path}>
                 {file.name}
               </span>

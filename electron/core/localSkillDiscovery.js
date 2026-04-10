@@ -157,6 +157,88 @@ function discoverRelevantSkills({ queries = [], maxResults = 5, settings = {} } 
     .map(({ score: _score, ...skill }) => skill);
 }
 
+function discoverInstallableSkills({ queries = [], maxResults = 5 } = {}) {
+  const roots = getSkillRoots();
+  const skillFiles = roots.flatMap((entry) => walkForSkillFiles(entry.root));
+  const deduped = new Map();
+
+  for (const skillPath of skillFiles) {
+    const summary = summarizeSkill(skillPath, roots);
+    if (summary.source === "codex") {
+      continue;
+    }
+
+    const key = `${summary.name}::${summary.path}`;
+    if (!deduped.has(key)) {
+      deduped.set(key, {
+        id: buildSkillId(summary.path, summary.source),
+        name: summary.name,
+        description: summary.description,
+        path: summary.path,
+        source: summary.source,
+        score: scoreSkill(summary, queries)
+      });
+    }
+  }
+
+  return [...deduped.values()]
+    .filter((skill) => skill.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, maxResults)
+    .map(({ score, ...skill }) => skill);
+}
+
+function installSkillFromSource(sourceSkillPath = "", preferredName = "") {
+  const sourcePath = String(sourceSkillPath || "").trim();
+  if (!sourcePath || !fs.existsSync(sourcePath)) {
+    return {
+      ok: false,
+      error: "missing_source_skill",
+      summary: "Source skill path does not exist."
+    };
+  }
+
+  const skillDir = path.dirname(sourcePath);
+  const codexRoot = path.join(os.homedir(), ".codex", "skills");
+  const baseName = slugify(preferredName || path.basename(skillDir) || "skill") || "skill";
+  let targetDir = path.join(codexRoot, baseName);
+  let suffix = 2;
+
+  while (fs.existsSync(targetDir) && path.resolve(targetDir) !== path.resolve(skillDir)) {
+    targetDir = path.join(codexRoot, `${baseName}-${suffix}`);
+    suffix += 1;
+  }
+
+  fs.mkdirSync(codexRoot, { recursive: true });
+
+  if (!fs.existsSync(targetDir)) {
+    fs.cpSync(skillDir, targetDir, { recursive: true });
+  }
+
+  const installedSkillPath = path.join(targetDir, "SKILL.md");
+  if (!fs.existsSync(installedSkillPath)) {
+    return {
+      ok: false,
+      error: "install_missing_skill_file",
+      summary: "Installed skill is missing SKILL.md."
+    };
+  }
+
+  const summary = summarizeSkill(installedSkillPath, [{ kind: "codex", root: codexRoot }]);
+  return {
+    ok: true,
+    summary: `Installed skill ${summary.name} to ${installedSkillPath}.`,
+    skill: {
+      id: buildSkillId(installedSkillPath, "codex"),
+      name: summary.name,
+      description: summary.description,
+      path: installedSkillPath,
+      source: "codex",
+      enabled: true
+    }
+  };
+}
+
 function buildSkillAppendix(skills = []) {
   if (!skills.length) {
     return "";
@@ -179,5 +261,7 @@ function buildSkillAppendix(skills = []) {
 module.exports = {
   listInstalledSkills,
   discoverRelevantSkills,
+  discoverInstallableSkills,
+  installSkillFromSource,
   buildSkillAppendix
 };

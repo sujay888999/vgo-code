@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
   updateSession: (sessionId, meta) => ipcRenderer.invoke("chat:updateSession", { sessionId, ...meta }),
   
   // Chat
-  submitPrompt: (text) => ipcRenderer.invoke("chat:send", text),
+  submitPrompt: (payload) => ipcRenderer.invoke("chat:send", payload),
   stopPrompt: () => ipcRenderer.invoke("chat:abort"),
   
   // Workspace
@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
   // Runtime
   setEngine: (engineId) => ipcRenderer.invoke("runtime:setEngine", engineId),
   installWhisper: () => ipcRenderer.invoke("runtime:installWhisper"),
+  installSkill: (payload) => ipcRenderer.invoke("runtime:installSkill", payload),
   
   // Events
   on: (channel, callback) => {

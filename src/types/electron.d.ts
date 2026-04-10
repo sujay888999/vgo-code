@@ -1,5 +1,15 @@
 export {}
 
+interface AttachmentItem {
+  name: string
+  path: string
+  size: number
+  isText: boolean
+  content?: string
+  mediaType?: 'image' | 'audio' | 'video' | 'file'
+  imageBase64?: string
+}
+
 interface VGODesktopAPI {
   createSession?: () => void
   resetSession?: () => void
@@ -10,11 +20,9 @@ interface VGODesktopAPI {
   login?: () => void
   logout?: () => void
   renameSession?: (name: string) => void
-  submitPrompt?: (text: string) => void
+  submitPrompt?: (payload: { text: string; attachments?: AttachmentItem[] } | string) => void
   stopPrompt?: () => void
-  attachFile?: () => Promise<
-    Array<{ name: string; path: string; size: number; isText: boolean; content?: string }>
-  >
+  attachFile?: () => Promise<AttachmentItem[]>
   removeAttachment?: (index: number) => Promise<{ ok: boolean }>
   respondPermission?: (payload: { requestId: string; approved: boolean }) => Promise<any>
   
@@ -37,6 +45,7 @@ interface VGODesktopAPI {
   updateRemoteProfile?: (profileId: string, payload: any) => Promise<any>
   deleteRemoteProfile?: (profileId: string) => Promise<any>
   selectRemoteProfile?: (profileId: string) => Promise<any>
+  installSkill?: (payload: { sourcePath: string; name?: string }) => Promise<any>
 }
 
 declare global {

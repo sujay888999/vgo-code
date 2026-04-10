@@ -16,7 +16,7 @@ const { analyzeWorkspace } = require("./core/workspaceTools");
 const { loadSettings, saveSettings } = require("./core/settings");
 const { startMockServer } = require("./core/vgoMockServer");
 const { normalizeEngineLogFile } = require("./core/engineLog");
-const { listInstalledSkills } = require("./core/localSkillDiscovery");
+const { listInstalledSkills, installSkillFromSource } = require("./core/localSkillDiscovery");
 
 const store = createStore();
 let settings = loadSettings();
@@ -429,6 +429,12 @@ function formatAgentEvent(event) {
     ].join("\n");
   }
 
+  if (event.type === "skill_installed") {
+    return event.ok
+      ? `Skill 已安装并启用\n${event.detail || "已完成本机 skill 安装。"}`
+      : `Skill 安装失败\n${event.detail || "本机 skill 安装未成功。"}`
+  }
+
   if (event.type === "model_response" && Array.isArray(event.toolCalls) && event.toolCalls.length) {
     const labels = event.toolCalls.map((call) => {
       const name = call?.name || "unknown_tool";
@@ -453,6 +459,8 @@ async function requestToolPermission(call = {}, notify = () => {}) {
   const detail =
     call.name === "skill_discovery"
       ? `工作流：${args.workflow || "未识别"}\n查询：${args.query || "(empty)"}\n原因：${args.reason || "需要补充执行技能能力"}`
+      : call.name === "skill_install"
+      ? `Skill：${args.name || "未命名"}\n来源：${args.sourcePath || "(empty)"}\n原因：${args.reason || "需要安装本机 skill 以继续完成任务"}`
       :
     call.name === "run_command"
       ? `命令：${args.command || "(empty)"}\n目录：${args.cwd || "."}`
@@ -1490,12 +1498,28 @@ function readAttachmentPreview(filePath) {
   const stat = fs.statSync(filePath);
   const ext = path.extname(filePath).toLowerCase();
   const isText = TEXT_EXTENSIONS.has(ext) && stat.size <= 256 * 1024;
+  const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"]);
+  const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".flac", ".ogg"]);
+  const videoExtensions = new Set([".mp4", ".mov", ".mkv", ".avi", ".webm"]);
+  const imageBase64 =
+    imageExtensions.has(ext) && stat.size <= 10 * 1024 * 1024
+      ? fs.readFileSync(filePath).toString("base64")
+      : "";
+  const mediaType = imageExtensions.has(ext)
+    ? "image"
+    : audioExtensions.has(ext)
+      ? "audio"
+      : videoExtensions.has(ext)
+        ? "video"
+        : "file";
 
   return {
     name: path.basename(filePath),
     path: filePath,
     size: stat.size,
     isText,
+    mediaType,
+    imageBase64,
     content: isText ? fs.readFileSync(filePath, "utf8") : ""
   };
 }
@@ -1549,6 +1573,11 @@ app.whenReady().then(async () => {
     normalizeEngineLogFile(path.join(process.cwd(), "logs", "ollama-engine.log"))
   );
   ipcMain.handle("runtime:installWhisper", () => installWhisperRuntime());
+  ipcMain.handle("runtime:installSkill", (_event, payload = {}) => {
+    const result = installSkillFromSource(payload.sourcePath, payload.name);
+    sendStateRefresh();
+    return result;
+  });
 
   createWindow();
   createTrayIcon();
@@ -1832,9 +1861,11 @@ app.whenReady().then(async () => {
     return serializeState();
   });
 
-  ipcMain.handle("chat:send", async (_event, prompt) => {
+  ipcMain.handle("chat:send", async (_event, payload) => {
     const current = store.getState();
     let session = store.getActiveSession();
+    const prompt = typeof payload === "string" ? payload : String(payload?.text || "");
+    const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
     const selectedModel = getSelectedModelId();
     if (!session) {
       return {
@@ -1847,8 +1878,11 @@ app.whenReady().then(async () => {
       };
     }
 
+    const attachmentSummary = attachments.length
+      ? `\n\n[附件]\n${attachments.map((item, index) => `${index + 1}. ${item.name} | ${item.path}`).join("\n")}`
+      : "";
     store.renameSessionFromFirstPrompt(prompt);
-    store.appendHistory("user", prompt);
+    store.appendHistory("user", `${prompt}${attachmentSummary}`);
     const taskWorkspace = deriveTaskWorkspace(prompt, current.workspace, session.directory || "");
     store.updateSessionMeta(session.id, {
       directory: taskWorkspace
@@ -1875,6 +1909,7 @@ app.whenReady().then(async () => {
         conversationId: "",
         prompt,
         settings,
+        attachments,
         signal: controller.signal,
         requestToolPermission: (call) => requestToolPermission(call, (event) => sendAgentEvent({
           sessionId: session.id,

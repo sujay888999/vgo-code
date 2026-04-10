@@ -11,7 +11,12 @@ const {
   buildWorkflowSystemAppendix,
   buildCapabilityGapSummary
 } = require("./taskWorkflowRegistry");
-const { discoverRelevantSkills, buildSkillAppendix } = require("./localSkillDiscovery");
+const {
+  discoverRelevantSkills,
+  discoverInstallableSkills,
+  installSkillFromSource,
+  buildSkillAppendix
+} = require("./localSkillDiscovery");
 
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "ollama-engine.log");
@@ -416,6 +421,81 @@ async function sendOllamaRequest({ baseUrl, model, messages, signal, onChunk }) 
   return await parseOllamaStreamResponse(response, onChunk);
 }
 
+function buildUserMessageContent(prompt = "", attachments = []) {
+  const imagePayloads = attachments
+    .map((item) => String(item?.imageBase64 || "").trim())
+    .filter(Boolean);
+
+  const nonImageAttachmentLines = attachments
+    .filter((item) => item && item.mediaType && item.mediaType !== "image")
+    .map((item, index) => {
+      const mediaType = item.mediaType || "file";
+      return `${index + 1}. ${item.name} | ${mediaType} | ${item.path}`;
+    });
+
+  const content = [
+    String(prompt || "").trim(),
+    nonImageAttachmentLines.length
+      ? ["", "[Non-image attachments available in this task]", ...nonImageAttachmentLines].join("\n")
+      : ""
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return imagePayloads.length
+    ? {
+        role: "user",
+        content,
+        images: imagePayloads
+      }
+    : {
+        role: "user",
+        content
+      };
+}
+
+function detectSupplementalSkillQueries(prompt = "", workflow = null, workflowProbe = null) {
+  const normalizedPrompt = String(prompt || "").toLowerCase();
+  const queries = new Set();
+
+  if (workflow?.label) {
+    queries.add(workflow.label);
+  }
+
+  for (const query of workflow?.skillQueries || []) {
+    queries.add(query);
+  }
+
+  for (const issue of workflowProbe?.blockingIssues || []) {
+    queries.add(issue);
+  }
+
+  const explicitWebTerms = [
+    "web",
+    "browser",
+    "browse",
+    "search",
+    "crawl",
+    "url",
+    "documentation",
+    "\u8054\u7f51",
+    "\u4e0a\u7f51",
+    "\u7f51\u9875",
+    "\u7f51\u7ad9",
+    "\u641c\u7d22",
+    "\u6293\u53d6",
+    "\u6587\u6863",
+    "\u68c0\u7d22"
+  ];
+
+  if (explicitWebTerms.some((term) => normalizedPrompt.includes(term.toLowerCase()))) {
+    queries.add("web search");
+    queries.add("browser automation");
+    queries.add("web access");
+  }
+
+  return [...queries].filter(Boolean);
+}
 function extractToolCalls(message) {
   const calls = [];
   
@@ -683,6 +763,7 @@ async function runOllamaPrompt({
   requestToolPermission,
   onEvent,
   prompt,
+  attachments = [],
   signal
 }) {
   const remote = settings?.remote || {};
@@ -772,6 +853,144 @@ async function runOllamaPrompt({
               : "已执行本机 skill 扫描，但未找到高相关技能。",
             skills: discoveredSkills
           });
+
+          if (!discoveredSkills.length) {
+            const installableSkills = discoverInstallableSkills({
+              queries: [
+                workflow.label,
+                ...workflow.skillQueries,
+                ...workflowProbe.blockingIssues
+              ]
+            });
+
+            if (installableSkills.length) {
+              const candidate = installableSkills[0];
+              const installApproved = await requestToolPermission({
+                name: "skill_install",
+                arguments: {
+                  name: candidate.name,
+                  sourcePath: candidate.path,
+                  reason: "需要安装本机可用 skill 来补足当前任务缺少的能力。"
+                }
+              });
+
+              if (installApproved) {
+                const installResult = installSkillFromSource(candidate.path, candidate.name);
+                emitEvent({
+                  type: "skill_installed",
+                  workflowId: workflow.id,
+                  detail: installResult.summary,
+                  skill: installResult.skill || null,
+                  ok: installResult.ok !== false
+                });
+
+                discoveredSkills = discoverRelevantSkills({
+                  queries: [
+                    workflow.label,
+                    ...workflow.skillQueries,
+                    ...workflowProbe.blockingIssues
+                  ],
+                  settings
+                });
+
+                emitEvent({
+                  type: "skill_suggestions",
+                  workflowId: workflow.id,
+                  detail: discoveredSkills.length
+                    ? `已安装并启用 ${candidate.name}，当前可用补充 skill 共 ${discoveredSkills.length} 个。`
+                    : installResult.summary,
+                  skills: discoveredSkills
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const supplementalSkillQueries = detectSupplementalSkillQueries(prompt, workflow, workflowProbe);
+  if (
+    supplementalSkillQueries.length &&
+    settings?.agent?.suggestSkillAugmentation !== false &&
+    settings?.agent?.autoSearchSkillsOnApproval !== false &&
+    typeof requestToolPermission === "function"
+  ) {
+    const approved = await requestToolPermission({
+      name: "skill_discovery",
+      arguments: {
+        workflow: workflow.label,
+        query: supplementalSkillQueries.join(", "),
+        reason:
+          workflowProbe?.blockingIssues?.length
+            ? "检测到当前任务存在能力缺口，是否允许扫描本机可用 skills 补充执行策略？"
+            : "检测到当前任务可能需要额外 skill，是否允许扫描并补充可用技能？"
+      }
+    });
+
+    if (approved) {
+      discoveredSkills = discoverRelevantSkills({
+        queries: supplementalSkillQueries,
+        settings
+      });
+
+      emitEvent({
+        type: "skill_suggestions",
+        workflowId: workflow.id,
+        detail: discoveredSkills.length
+          ? `已找到 ${discoveredSkills.length} 个可直接使用的本机 skill。`
+          : "已完成本机 skill 扫描，正在检查可安装技能源。",
+        skills: discoveredSkills
+      });
+
+      const codexSkillNames = new Set(
+        discoveredSkills
+          .filter((skill) => skill.source === "codex")
+          .map((skill) => String(skill.name || "").trim().toLowerCase())
+      );
+      let candidate =
+        discoveredSkills.find(
+          (skill) =>
+            skill.source !== "codex" &&
+            !codexSkillNames.has(String(skill.name || "").trim().toLowerCase())
+        ) ||
+        discoverInstallableSkills({
+          queries: supplementalSkillQueries
+        })[0];
+
+      if (candidate) {
+        const installApproved = await requestToolPermission({
+          name: "skill_install",
+          arguments: {
+            name: candidate.name,
+            sourcePath: candidate.path,
+            reason: "需要安装本机可用 skill 以继续完成当前任务。"
+          }
+        });
+
+        if (installApproved) {
+          const installResult = installSkillFromSource(candidate.path, candidate.name);
+          emitEvent({
+            type: "skill_installed",
+            workflowId: workflow.id,
+            detail: installResult.summary,
+            skill: installResult.skill || null,
+            ok: installResult.ok !== false
+          });
+
+          discoveredSkills = discoverRelevantSkills({
+            queries: supplementalSkillQueries,
+            settings
+          });
+
+          emitEvent({
+            type: "skill_suggestions",
+            workflowId: workflow.id,
+            detail: discoveredSkills.length
+              ? `已安装并启用 ${candidate.name}，当前已可继续使用补充 skill。`
+              : installResult.summary,
+            skills: discoveredSkills
+          });
         }
       }
     }
@@ -819,7 +1038,7 @@ async function runOllamaPrompt({
       role: item.role === "system" ? "assistant" : item.role,
       content: item.text
     })),
-    { role: "user", content: [prompt, skillPreflightNudge].filter(Boolean).join("\n\n") }
+    buildUserMessageContent([prompt, skillPreflightNudge].filter(Boolean).join("\n\n"), attachments)
   ];
 
   for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
