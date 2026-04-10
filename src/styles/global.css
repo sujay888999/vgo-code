@@ -1234,6 +1234,38 @@ body.mode-ux-pro-max .message-bubble {
   gap: 0.25rem;
 }
 
+.agent-thinking-block {
+  margin: 0 0 0.8rem 0;
+  padding: 0.1rem 0 0.2rem 0;
+}
+
+.agent-thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.4rem;
+}
+
+.agent-thinking-title {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text) 86%, var(--text-muted) 14%);
+}
+
+.agent-thinking-list {
+  margin: 0;
+  padding-left: 1.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.agent-thinking-line {
+  font-size: 0.82rem;
+  line-height: 1.75;
+  color: color-mix(in srgb, var(--text) 34%, var(--text-muted) 66%);
+}
+
 .agent-process-item {
   position: relative;
   display: flex;
@@ -1301,7 +1333,7 @@ body.mode-ux-pro-max .agent-process-item {
 .agent-process-name {
   font-size: 0.8125rem;
   font-weight: 500;
-  color: color-mix(in srgb, var(--text) 56%, var(--text-muted) 44%);
+  color: color-mix(in srgb, var(--text) 62%, var(--text-muted) 38%);
 }
 
 .agent-process-time {
@@ -1313,7 +1345,7 @@ body.mode-ux-pro-max .agent-process-item {
 .agent-process-detail {
   font-size: 0.78rem;
   line-height: 1.55;
-  color: color-mix(in srgb, var(--text) 44%, var(--text-muted) 56%);
+  color: color-mix(in srgb, var(--text) 40%, var(--text-muted) 60%);
   white-space: pre-wrap;
   word-break: break-word;
   display: -webkit-box;
