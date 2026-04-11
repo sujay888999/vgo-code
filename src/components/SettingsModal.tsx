@@ -515,9 +515,9 @@ export function SettingsModal() {
                   <p className="hint">
                     这里会自动列出本机已安装的 Skills。以后新安装的 Skill 也会自动出现在这里，并可单独启用或停用。
                   </p>
-                  <div className="remote-profiles">
+                  <div className="remote-profiles skill-list">
                     {skills.map((skill) => (
-                      <div key={skill.id} className={`profile-item ${skill.enabled ? 'active' : ''}`}>
+                      <div key={skill.id} className={`profile-item skill-item ${skill.enabled ? 'active' : ''}`}>
                         <div className="profile-info">
                           <span className="profile-name">{skill.name}</span>
                           <span className="profile-model">
@@ -527,7 +527,7 @@ export function SettingsModal() {
                         </div>
                         <button
                           type="button"
-                          className={skill.enabled ? 'ghost-button' : 'primary-button'}
+                          className={`skill-toggle-button ${skill.enabled ? 'ghost-button' : 'primary-button'}`}
                           onClick={() => void handleToggleSkill(skill.id, !skill.enabled)}
                           disabled={busy}
                         >

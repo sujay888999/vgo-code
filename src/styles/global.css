@@ -2482,6 +2482,30 @@ body.mode-ux-pro-max .settings-modal {
   gap: 0.125rem;
 }
 
+.skill-list {
+  gap: 0.7rem;
+}
+
+.skill-item {
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.skill-item .profile-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-toggle-button {
+  flex: 0 0 auto;
+  min-width: 88px;
+  justify-content: center;
+  align-self: center;
+  white-space: nowrap;
+  text-align: center;
+  writing-mode: horizontal-tb;
+}
+
 .profile-name {
   font-size: 0.875rem;
   font-weight: 500;
