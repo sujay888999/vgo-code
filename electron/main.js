@@ -1775,19 +1775,42 @@ app.whenReady().then(async () => {
     };
 
     if (activeIsRemote) {
-      nextSettings = syncRemoteProfileState(
-        {
-          ...nextSettings.remote,
-          model: nextPreferredModel
-        },
-        {}
-      );
-
       if (requestedDefaultCloudProfile && activeProfile) {
+        const nextProfiles = (settings.remoteProfiles || []).map((profile) =>
+          profile.id === activeProfile.id
+            ? {
+                ...profile,
+                provider: activeProfile.provider || "VGO Remote",
+                baseUrl: activeProfile.baseUrl,
+                ollamaUrl: activeProfile.ollamaUrl || "",
+                model: nextPreferredModel,
+                apiKey: activeProfile.apiKey,
+                systemPrompt: activeProfile.systemPrompt
+              }
+            : profile
+        );
+
         nextSettings = {
           ...nextSettings,
-          activeRemoteProfileId: activeProfile.id
+          activeRemoteProfileId: activeProfile.id,
+          remoteProfiles: nextProfiles,
+          remote: {
+            provider: activeProfile.provider || "VGO Remote",
+            baseUrl: activeProfile.baseUrl,
+            ollamaUrl: activeProfile.ollamaUrl || "",
+            model: nextPreferredModel,
+            apiKey: activeProfile.apiKey,
+            systemPrompt: activeProfile.systemPrompt
+          }
         };
+      } else {
+        nextSettings = syncRemoteProfileState(
+          {
+            ...nextSettings.remote,
+            model: nextPreferredModel
+          },
+          {}
+        );
       }
     }
 

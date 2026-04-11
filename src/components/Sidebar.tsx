@@ -227,9 +227,16 @@ export function Sidebar() {
   const localProfiles = remoteProfiles.filter((p) => p.provider === 'Ollama')
   const cloudModels = modelCatalog
   const activeProfile = remoteProfiles.find((p) => p.id === activeRemoteProfileId) || null
+  const defaultCloudProfile =
+    remoteProfiles.find((p) => p.id === 'default') ||
+    remoteProfiles.find((p) => p.provider !== 'Ollama') ||
+    null
   const cloudEngineSelected =
     runtimeEngineId === 'vgo-remote' &&
     (!activeProfile || activeProfile.id === 'default' || activeProfile.provider === 'VGO Remote')
+  const cloudSelectedModelId = modelCatalog.some((model) => model.id === vgoAIPreferredModel)
+    ? vgoAIPreferredModel
+    : defaultCloudProfile?.model || vgoAIPreferredModel
 
   return (
     <aside className="sidebar">
@@ -340,7 +347,7 @@ export function Sidebar() {
                           )}
                         </div>
                         {cloudModels.map((model) => {
-                          const isActive = cloudEngineSelected && model.id === vgoAIPreferredModel
+                          const isActive = cloudEngineSelected && model.id === cloudSelectedModelId
                           const isSwitching = switchingKey === `cloud-${model.id}`
                           return (
                             <button
