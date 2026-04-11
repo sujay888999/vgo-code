@@ -32,6 +32,7 @@ export function Sidebar() {
     modelCatalog,
     remoteProfiles,
     activeRemoteProfileId,
+    runtimeEngineId,
     setSettingsOverlayOpen,
     setRenameOverlayOpen,
     workspace,
@@ -200,14 +201,14 @@ export function Sidebar() {
 
   const currentModelDisplay = useMemo(() => {
     const activeProfile = remoteProfiles.find((p) => p.id === activeRemoteProfileId)
-    const isDefaultCloudProfile =
-      activeProfile && activeProfile.id === 'default' && activeProfile.provider !== 'Ollama'
+    const isCloudEngineSelected = runtimeEngineId === 'vgo-remote'
+    const isLocalProfile = activeProfile?.provider === 'Ollama'
 
-    if (activeProfile && !isDefaultCloudProfile) {
+    if (activeProfile && (isLocalProfile || !isCloudEngineSelected)) {
       return {
         name: activeProfile.name,
         model: activeProfile.model,
-        isLocal: activeProfile.provider === 'Ollama',
+        isLocal: true,
       }
     }
 
@@ -217,10 +218,12 @@ export function Sidebar() {
       model: vgoAIPreferredModel || '',
       isLocal: false,
     }
-  }, [remoteProfiles, activeRemoteProfileId, modelCatalog, vgoAIPreferredModel])
+  }, [remoteProfiles, activeRemoteProfileId, modelCatalog, vgoAIPreferredModel, runtimeEngineId])
 
   const localProfiles = remoteProfiles.filter((p) => p.provider === 'Ollama')
   const cloudModels = modelCatalog
+  const activeProfile = remoteProfiles.find((p) => p.id === activeRemoteProfileId) || null
+  const cloudEngineSelected = runtimeEngineId === 'vgo-remote' && activeProfile?.provider !== 'Ollama'
 
   return (
     <aside className="sidebar">
@@ -326,14 +329,12 @@ export function Sidebar() {
                       <>
                         <div className="model-list-section-title">
                           <span>云端模型</span>
-                          {(activeRemoteProfileId === null || activeRemoteProfileId === 'default') && (
+                          {cloudEngineSelected && (
                             <span className="active-indicator">使用中</span>
                           )}
                         </div>
                         {cloudModels.map((model) => {
-                          const isActive =
-                            (activeRemoteProfileId === null || activeRemoteProfileId === 'default') &&
-                            model.id === vgoAIPreferredModel
+                          const isActive = cloudEngineSelected && model.id === vgoAIPreferredModel
                           const isSwitching = switchingKey === `cloud-${model.id}`
                           return (
                             <button

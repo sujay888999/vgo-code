@@ -472,6 +472,10 @@ function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", work
     return false;
   }
 
+  if (protocol.looksLikeContinuationIntent(normalized)) {
+    return true;
+  }
+
   if (unfinishedRequiredReads) {
     return true;
   }

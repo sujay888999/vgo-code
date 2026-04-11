@@ -43,12 +43,43 @@ function sanitizeAssistantText(text = "") {
 }
 
 function parseJsonObjectBlock(text = "") {
-  try {
-    const parsed = JSON.parse(String(text || "").trim());
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
+  const source = String(text || "").trim();
+  if (!source) {
     return null;
   }
+
+  const candidates = [
+    source,
+    source.replace(/<\/?[^>\n]+>/g, "").trim()
+  ].filter(Boolean);
+
+  const firstBrace = source.indexOf("{");
+  const lastBrace = source.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(source.slice(firstBrace, lastBrace + 1).replace(/<\/?[^>\n]+>/g, "").trim());
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object") {
+        return parsed;
+      }
+    } catch {}
+  }
+
+  return null;
+}
+
+function looksLikeContinuationIntent(text = "") {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return false;
+  }
+
+  return /(?:\u7ee7\u7eed\u8bfb\u53d6|\u7ee7\u7eed\u68c0\u67e5|\u7ee7\u7eed\u67e5\u770b|\u5148\u68c0\u67e5|\u5148\u8bfb\u53d6|\u5148\u67e5\u770b|\u5148\u5217\u51fa|\u4e0b\u4e00\u6b65|\u63a5\u4e0b\u6765|\u7136\u540e|\u7ee7\u7eed\u5b8c\u6210|\u7ee7\u7eed\u5904\u7406|\u7ee7\u7eed\u5206\u6790|continue|next step|keep going|remaining files?|components?|directory|read|inspect|check|list|scan|open|review|analy[sz]e)/i.test(
+    normalized
+  );
 }
 
 function collectToolCalls(parsed) {
@@ -362,4 +393,6 @@ module.exports = {
   promptRequiresRepair,
   promptRequiresTools,
   looksLikeGenericAcknowledgement
+  ,
+  looksLikeContinuationIntent
 };

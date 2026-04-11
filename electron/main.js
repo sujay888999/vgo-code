@@ -1024,13 +1024,21 @@ function applyRealVgoAiSession({
 }
 
 function savePreferredModelIfChanged(modelId) {
-  if (!modelId || settings.vgoAI.preferredModel === modelId) {
+  if (!modelId) {
     return;
   }
 
   const activeProfile =
     (settings.remoteProfiles || []).find((item) => item.id === settings.activeRemoteProfileId) || null;
   const activeIsRemote = !activeProfile || resolveEngineIdForProfile(activeProfile) !== "ollama";
+  if (!activeIsRemote) {
+    return;
+  }
+
+  if (settings.vgoAI.preferredModel === modelId) {
+    return;
+  }
+
   let nextSettings = {
     ...settings,
     vgoAI: {
