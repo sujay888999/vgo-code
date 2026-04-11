@@ -262,11 +262,16 @@ function transcribeMedia(workspace, args = {}, options = {}) {
     };
   }
 
-  const outputDir = ensureWorkspacePath(
+  const requestedOutputDir = ensureWorkspacePath(
     workspace,
     args.outputDir || path.dirname(mediaPath),
     options
   );
+  const driveRoot = path.parse(requestedOutputDir).root;
+  const outputDir =
+    requestedOutputDir === driveRoot
+      ? path.join(path.resolve(workspace), "test-results", "transcripts")
+      : requestedOutputDir;
   const model = String(args.model || "tiny").trim() || "tiny";
   const language = String(args.language || "zh").trim() || "zh";
   const task = String(args.task || "transcribe").trim() || "transcribe";

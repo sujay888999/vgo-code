@@ -160,6 +160,10 @@ function probeAudioVideoWorkflow(prompt = "", workspace = "") {
   const mediaPath = findMediaPath(prompt, workspace);
   const mediaExists = mediaPath ? fs.existsSync(mediaPath) : false;
   const mediaDir = mediaExists ? path.dirname(mediaPath) : workspace;
+  const recommendedOutputDir =
+    mediaDir && path.parse(mediaDir).root === path.resolve(mediaDir)
+      ? path.join(path.resolve(workspace || mediaDir), "test-results", "transcripts")
+      : mediaDir;
 
   const hasFfmpeg = commandExists("ffmpeg");
   const hasWhisperCli = commandExists("whisper");
@@ -186,9 +190,9 @@ function probeAudioVideoWorkflow(prompt = "", workspace = "") {
 
   const recommendedAsrCommand = mediaExists
     ? hasPythonWhisper
-      ? `transcribe_media path="${mediaPath}" outputDir="${mediaDir}" model="tiny" language="zh"`
+      ? `transcribe_media path="${mediaPath}" outputDir="${recommendedOutputDir}" model="tiny" language="zh"`
       : hasWhisperCli
-        ? `whisper "${mediaPath}" --model base --language zh --task transcribe --output_format txt --output_dir "${mediaDir}"`
+        ? `whisper "${mediaPath}" --model base --language zh --task transcribe --output_format txt --output_dir "${recommendedOutputDir}"`
         : ""
     : "";
 
@@ -196,6 +200,7 @@ function probeAudioVideoWorkflow(prompt = "", workspace = "") {
     mediaPath,
     mediaExists,
     mediaDir,
+    recommendedOutputDir,
     hasFfmpeg,
     hasWhisperCli,
     hasPythonWhisper,

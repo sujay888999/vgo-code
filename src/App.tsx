@@ -243,6 +243,38 @@ export function App() {
         })
       }
 
+      const finalizeLiveMessage = (finalText: string, nextStatus: 'done' | 'error') => {
+        const existing = useAppStore
+          .getState()
+          .messages.find((message) => message.id === liveMessageId)
+        const text = appendUniqueBlock(existing?.text || '', finalText)
+
+        if (!text.trim()) return
+
+        if (existing) {
+          updateMessage(liveMessageId, {
+            text,
+            status: nextStatus,
+            timestamp,
+            kind: 'progress',
+            title: '推理过程',
+            collapsed: true,
+          })
+          return
+        }
+
+        addMessage({
+          id: liveMessageId,
+          role: 'assistant',
+          text,
+          status: nextStatus,
+          timestamp,
+          kind: 'progress',
+          title: '推理过程',
+          collapsed: true,
+        })
+      }
+
       const upsertTaskStep = (
         id: string,
         step: {
@@ -308,7 +340,7 @@ export function App() {
               detail: taskCopy.detail,
               state: taskCopy.state,
             })
-            settleLiveMessage('done')
+            finalizeLiveMessage(progressBlock || payload?.message || '任务已完成', 'done')
           }
 
           if (status === 'error' || status === 'failed') {
@@ -319,10 +351,7 @@ export function App() {
               detail: taskCopy.detail,
               state: taskCopy.state,
             })
-            upsertLiveMessage(
-              appendUniqueBlock(currentLiveText, progressBlock || payload?.message || '任务执行失败'),
-              'error',
-            )
+            finalizeLiveMessage(progressBlock || payload?.message || '任务执行失败', 'error')
           }
         }
       }
@@ -407,12 +436,14 @@ export function App() {
 
       if (eventType === 'model_response' && payload.text) {
         settleLiveMessage('done')
+        setPromptRunning(false)
         upsertFinalMessage(payload.text, 'done')
       }
 
       if (eventType === 'model_stream_delta' && payload.text) {
         if (payload.done) {
           settleLiveMessage('done')
+          setPromptRunning(false)
           upsertFinalMessage(payload.text, 'done')
         } else {
           upsertFinalMessage(payload.text, 'loading')
