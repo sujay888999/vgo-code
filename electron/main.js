@@ -13,7 +13,7 @@ const {
 } = require("./core/contextCompression");
 const { getEngine, listEngines } = require("./core/engineRegistry");
 const { analyzeWorkspace } = require("./core/workspaceTools");
-const { loadSettings, saveSettings } = require("./core/settings");
+const { loadSettings, saveSettings, DEFAULT_PROFILE_ID } = require("./core/settings");
 const { startMockServer } = require("./core/vgoMockServer");
 const { normalizeEngineLogFile } = require("./core/engineLog");
 const { listInstalledSkills, installSkillFromSource } = require("./core/localSkillDiscovery");
@@ -1847,6 +1847,7 @@ app.whenReady().then(async () => {
 
     if (engineId === "vgo-remote") {
       const profile =
+        (settings.remoteProfiles || []).find((item) => item.id === DEFAULT_PROFILE_ID) ||
         (settings.remoteProfiles || []).find((item) => resolveEngineIdForProfile(item) === "vgo-remote") ||
         null;
       if (profile) {

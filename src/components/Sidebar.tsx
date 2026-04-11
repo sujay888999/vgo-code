@@ -108,6 +108,7 @@ export function Sidebar() {
     async (modelId: string) => {
       try {
         setSwitchingKey(`cloud-${modelId}`)
+        await window.vgoDesktop?.selectRemoteProfile?.('default')
         await window.vgoDesktop?.setEngine?.('vgo-remote')
         await window.vgoDesktop?.updateVgoAiProfile?.({ preferredModel: modelId })
         await refreshState()
@@ -223,7 +224,9 @@ export function Sidebar() {
   const localProfiles = remoteProfiles.filter((p) => p.provider === 'Ollama')
   const cloudModels = modelCatalog
   const activeProfile = remoteProfiles.find((p) => p.id === activeRemoteProfileId) || null
-  const cloudEngineSelected = runtimeEngineId === 'vgo-remote' && activeProfile?.provider !== 'Ollama'
+  const cloudEngineSelected =
+    runtimeEngineId === 'vgo-remote' &&
+    (!activeProfile || activeProfile.id === 'default' || activeProfile.provider === 'VGO Remote')
 
   return (
     <aside className="sidebar">
