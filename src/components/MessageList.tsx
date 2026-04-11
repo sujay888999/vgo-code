@@ -1,6 +1,15 @@
 import React, { useEffect, useState } from 'react'
 import type { Message } from '../store/appStore'
-import { Copy, CheckCheck, AlertTriangle, Clock, Bot, User } from 'lucide-react'
+import {
+  Copy,
+  CheckCheck,
+  AlertTriangle,
+  Clock,
+  Bot,
+  User,
+  ChevronDown,
+  ChevronRight,
+} from 'lucide-react'
 
 interface SyntaxModule {
   default: React.ComponentType<any> & {
@@ -38,8 +47,10 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
   const isUser = message.role === 'user'
   const isAssistant = message.role === 'assistant'
   const isLoading = message.status === 'loading'
+  const isProgressMessage = message.kind === 'progress'
   const [displayedText, setDisplayedText] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
+  const [isCollapsed, setIsCollapsed] = useState(Boolean(message.collapsed))
 
   useEffect(() => {
     if (isLoading) {
@@ -51,6 +62,10 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
     setDisplayedText(message.text || '')
     setIsStreaming(false)
   }, [isLoading, message.text])
+
+  useEffect(() => {
+    setIsCollapsed(Boolean(message.collapsed))
+  }, [message.collapsed, message.id])
 
   useEffect(() => {
     if (isLoading || !isStreaming || !message.text || displayedText === message.text) return
@@ -65,7 +80,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
     }, 24)
 
     return () => window.clearTimeout(timeout)
-  }, [isStreaming, displayedText, message.text])
+  }, [isStreaming, displayedText, message.text, isLoading])
 
   const formatTime = (timestamp: number) =>
     new Date(timestamp).toLocaleTimeString('zh-CN', {
@@ -73,32 +88,70 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
       minute: '2-digit',
     })
 
+  const previewLine = (() => {
+    const lines = (displayedText || message.text || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    return lines[lines.length - 1] || '点击展开查看本轮推理过程'
+  })()
+
   const renderContent = () => {
+    if (isProgressMessage && !isLoading && isCollapsed) {
+      return (
+        <button
+          type="button"
+          className="message-progress-toggle"
+          onClick={() => setIsCollapsed(false)}
+        >
+          <span className="message-progress-toggle-meta">
+            <ChevronRight size={14} />
+            <span>{message.title || '推理过程'}</span>
+          </span>
+          <span className="message-progress-toggle-preview">{previewLine}</span>
+        </button>
+      )
+    }
+
     if (isLoading) {
       return (
         <div className="message-loading message-loading-stream">
-          <span className="loading-text">思考并输出中...</span>
+          <span className="loading-text">{message.title || '思考并输出中...'}</span>
           <StreamingContent text={displayedText || '正在准备回复...'} isStreaming={true} />
         </div>
       )
     }
 
     if (isAssistant && displayedText) {
-      return <StreamingContent text={displayedText} isStreaming={isStreaming} />
+      return (
+        <>
+          {isProgressMessage && (
+            <button
+              type="button"
+              className="message-progress-inline-toggle"
+              onClick={() => setIsCollapsed(true)}
+            >
+              <ChevronDown size={14} />
+              <span>{message.title || '推理过程'}</span>
+            </button>
+          )}
+          <StreamingContent text={displayedText} isStreaming={isStreaming} />
+        </>
+      )
     }
 
     return <div className="message-content">{message.text}</div>
   }
 
   return (
-    <div className={`message-item ${message.role} ${message.status || ''}`}>
+    <div className={`message-item ${message.role} ${message.status || ''} ${isProgressMessage ? 'progress-message' : ''}`}>
       <div className="message-avatar">
         {isUser ? <User size={18} /> : <Bot size={18} />}
       </div>
 
       <div className="message-body">
         <div className="message-meta">
-          <span className="message-role">{isUser ? '你' : '助手'}</span>
+          <span className="message-role">{isUser ? '你' : isProgressMessage ? '过程' : '助手'}</span>
           <span className="message-time">
             <Clock size={12} />
             {formatTime(message.timestamp)}

@@ -6,9 +6,14 @@ import { SettingsModal } from './components/SettingsModal'
 import { RenameModal } from './components/RenameModal'
 
 const LIVE_MESSAGE_PREFIX = 'live-assistant-'
+const FINAL_MESSAGE_PREFIX = 'final-assistant-'
 
 function buildLiveMessageId(sessionId?: string) {
   return `${LIVE_MESSAGE_PREFIX}${sessionId || 'active'}`
+}
+
+function buildFinalMessageId(sessionId?: string) {
+  return `${FINAL_MESSAGE_PREFIX}${sessionId || 'active'}`
 }
 
 function appendUniqueBlock(currentText: string, nextBlock: string) {
@@ -161,6 +166,7 @@ export function App() {
       const status = payload.status
       const timestamp = Date.now()
       const liveMessageId = buildLiveMessageId(payload.sessionId || activeSessionId || undefined)
+      const finalMessageId = buildFinalMessageId(payload.sessionId || activeSessionId || undefined)
 
       const upsertLiveMessage = (text: string, nextStatus: 'loading' | 'done' | 'error' = 'loading') => {
         if (!text.trim()) return
@@ -174,6 +180,8 @@ export function App() {
             text,
             status: nextStatus,
             timestamp,
+            kind: 'progress',
+            title: '推理过程',
           })
           return
         }
@@ -184,6 +192,54 @@ export function App() {
           text,
           status: nextStatus,
           timestamp,
+          kind: 'progress',
+          title: '推理过程',
+          collapsed: false,
+        })
+      }
+
+      const upsertFinalMessage = (text: string, nextStatus: 'loading' | 'done' | 'error' = 'done') => {
+        if (!text.trim()) return
+
+        const existing = useAppStore
+          .getState()
+          .messages.find((message) => message.id === finalMessageId)
+
+        if (existing) {
+          updateMessage(finalMessageId, {
+            text,
+            status: nextStatus,
+            timestamp,
+            kind: 'final',
+            title: '最终结果',
+          })
+          return
+        }
+
+        addMessage({
+          id: finalMessageId,
+          role: 'assistant',
+          text,
+          status: nextStatus,
+          timestamp,
+          kind: 'final',
+          title: '最终结果',
+        })
+      }
+
+      const settleLiveMessage = (nextStatus: 'done' | 'error') => {
+        const existing = useAppStore
+          .getState()
+          .messages.find((message) => message.id === liveMessageId)
+
+        if (!existing?.text) return
+
+        updateMessage(liveMessageId, {
+          status: nextStatus,
+          timestamp,
+          kind: 'progress',
+          title: '推理过程',
+          collapsed: true,
         })
       }
 
@@ -237,9 +293,7 @@ export function App() {
               detail: taskCopy.detail,
               state: taskCopy.state,
             })
-            if (currentLiveText) {
-              updateMessage(liveMessageId, { status: 'done', timestamp })
-            }
+            settleLiveMessage('done')
           }
 
           if (status === 'error' || status === 'failed') {
@@ -337,11 +391,17 @@ export function App() {
       }
 
       if (eventType === 'model_response' && payload.text) {
-        upsertLiveMessage(payload.text, 'done')
+        settleLiveMessage('done')
+        upsertFinalMessage(payload.text, 'done')
       }
 
       if (eventType === 'model_stream_delta' && payload.text) {
-        upsertLiveMessage(payload.text, payload.done ? 'done' : 'loading')
+        if (payload.done) {
+          settleLiveMessage('done')
+          upsertFinalMessage(payload.text, 'done')
+        } else {
+          upsertFinalMessage(payload.text, 'loading')
+        }
       }
 
       if (eventType === 'tool_result') {

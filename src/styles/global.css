@@ -1115,6 +1115,62 @@ body.mode-ux-pro-max .message-bubble {
   color: color-mix(in srgb, var(--text-muted) 92%, transparent);
 }
 
+.progress-message .message-avatar {
+  background: color-mix(in srgb, var(--bg-elevated) 82%, var(--primary) 18%);
+  color: color-mix(in srgb, white 70%, var(--primary) 30%);
+}
+
+.progress-message .message-bubble {
+  background: color-mix(in srgb, var(--bg-elevated) 90%, var(--primary) 10%);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, var(--primary) 28%);
+}
+
+.message-progress-toggle,
+.message-progress-inline-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-progress-toggle {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.message-progress-toggle-meta,
+.message-progress-inline-toggle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.message-progress-toggle-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.message-progress-toggle-preview {
+  font-size: 0.86rem;
+  color: color-mix(in srgb, var(--text) 78%, transparent);
+  line-height: 1.5;
+}
+
+.message-progress-inline-toggle {
+  margin-bottom: 0.55rem;
+}
+
+.message-progress-inline-toggle:hover,
+.message-progress-toggle:hover .message-progress-toggle-preview {
+  color: var(--text);
+}
+
 .loading-dots {
   display: flex;
   gap: 4px;

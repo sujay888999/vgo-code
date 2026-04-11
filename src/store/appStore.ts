@@ -6,6 +6,9 @@ export interface Message {
   text: string
   status?: 'done' | 'error' | 'loading'
   timestamp: number
+  kind?: 'default' | 'progress' | 'final'
+  collapsed?: boolean
+  title?: string
 }
 
 export interface Session {
