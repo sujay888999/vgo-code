@@ -276,7 +276,22 @@ export function App() {
       if (eventType === 'task_status') {
         const taskCopy = getTaskCopy(status, payload)
         if (taskCopy) {
-          if (status === 'planning' || status === 'thinking' || status === 'continuing' || status === 'tool_running' || status === 'retrying' || status === 'fallback_model') {
+          if (status === 'planning') {
+            upsertLiveMessage(progressBlock || payload?.message || '正在分析任务...', 'loading')
+            upsertTaskStep('task-status-running', {
+              title: taskCopy.title,
+              detail: taskCopy.detail,
+              state: taskCopy.state,
+            })
+          }
+
+          if (
+            status === 'thinking' ||
+            status === 'continuing' ||
+            status === 'tool_running' ||
+            status === 'retrying' ||
+            status === 'fallback_model'
+          ) {
             upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
             upsertTaskStep(status === 'planning' ? 'task-status-planning' : 'task-status-running', {
               title: taskCopy.title,
