@@ -536,6 +536,67 @@ function hasVerificationAfterLastMutation(rawEvents = []) {
   );
 }
 
+function collectMutatedFilePaths(rawEvents = []) {
+  const mutated = new Set();
+
+  for (const event of rawEvents) {
+    if (event?.type !== "tool_result" || event.tool !== "write_file" || !event.ok) {
+      continue;
+    }
+
+    const summary = String(event.summary || "");
+    const match = summary.match(/^Wrote\s+(.+?)\.$/i);
+    if (match?.[1]) {
+      mutated.add(path.resolve(match[1]).toLowerCase());
+    }
+  }
+
+  return mutated;
+}
+
+function collectVerifiedReadPathsAfterLastMutation(rawEvents = []) {
+  let lastMutationIndex = -1;
+  for (let index = 0; index < rawEvents.length; index += 1) {
+    const event = rawEvents[index];
+    if (
+      event?.type === "tool_result" &&
+      ["write_file", "copy_file", "move_file", "rename_file", "make_dir", "delete_file", "delete_dir"].includes(event.tool) &&
+      event.ok
+    ) {
+      lastMutationIndex = index;
+    }
+  }
+
+  if (lastMutationIndex < 0) {
+    return new Set();
+  }
+
+  const verified = new Set();
+  for (const event of rawEvents.slice(lastMutationIndex + 1)) {
+    if (event?.type !== "tool_result" || event.tool !== "read_file" || !event.ok) {
+      continue;
+    }
+
+    const summary = String(event.summary || "");
+    const match = summary.match(/^Read\s+(.+?)\s+lines\s+\d+-\d+\./i);
+    if (match?.[1]) {
+      verified.add(path.resolve(match[1]).toLowerCase());
+    }
+  }
+
+  return verified;
+}
+
+function getUnverifiedMutatedPaths(rawEvents = []) {
+  const mutated = collectMutatedFilePaths(rawEvents);
+  if (!mutated.size) {
+    return [];
+  }
+
+  const verified = collectVerifiedReadPathsAfterLastMutation(rawEvents);
+  return [...mutated].filter((filePath) => !verified.has(filePath));
+}
+
 function hasPackageManifestMutation(rawEvents = []) {
   return rawEvents.some(
     (event) =>
@@ -905,6 +966,7 @@ async function runRealVgoPrompt({
       const hadToolResults = rawEvents.some((event) => event.type === "tool_result");
       const hadMutatingToolResults = hasSuccessfulMutatingTool(rawEvents);
       const hadVerificationAfterMutation = hasVerificationAfterLastMutation(rawEvents);
+      const unverifiedMutatedPaths = getUnverifiedMutatedPaths(rawEvents);
       const changedPackageManifest = hasPackageManifestMutation(rawEvents);
       const hadDependencyVerification = hasDependencyVerification(rawEvents);
 
@@ -965,7 +1027,12 @@ async function runRealVgoPrompt({
         continue;
       }
 
-      if (isRepairTask && hadMutatingToolResults && !hadVerificationAfterMutation && !verificationNudgeSent) {
+      if (
+        isRepairTask &&
+        hadMutatingToolResults &&
+        (!hadVerificationAfterMutation || unverifiedMutatedPaths.length > 0) &&
+        !verificationNudgeSent
+      ) {
         verificationNudgeSent = true;
         emitVerificationEvent(
           onEvent,
@@ -1043,7 +1110,26 @@ async function runRealVgoPrompt({
         continue;
       }
 
-      if (isRepairTask && hadMutatingToolResults && hadVerificationAfterMutation) {
+      if (isRepairTask && unverifiedMutatedPaths.length > 0) {
+        activeHistory.push({ role: "assistant", content: rawText });
+        activeHistory.push({
+          role: "user",
+          content: [
+            "The repair task is still not complete.",
+            "You already modified files, but these modified files still have not been explicitly re-read after the final write step:",
+            ...unverifiedMutatedPaths.map((filePath, index) => `${index + 1}. ${filePath}`),
+            "Read them now before giving the final answer."
+          ].join("\n")
+        });
+        continue;
+      }
+
+      if (
+        isRepairTask &&
+        hadMutatingToolResults &&
+        hadVerificationAfterMutation &&
+        unverifiedMutatedPaths.length === 0
+      ) {
         const detail =
           changedPackageManifest && hadDependencyVerification
             ? "修复后的文件与依赖状态已完成复检。"
