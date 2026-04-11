@@ -540,6 +540,24 @@ function buildMultimodalGuidance(attachments = []) {
   ].join("\n");
 }
 
+function hasImageAttachments(attachments = []) {
+  return attachments.some((item) => item && item.mediaType === "image" && item.imageBase64);
+}
+
+function buildImageWorkflow() {
+  return {
+    id: "image-analysis",
+    label: "图片分析",
+    steps: [
+      "识别图片附件并优先使用视觉能力",
+      "直接分析图片主体、内容和风格",
+      "仅在用户明确要求时再检查文件元数据"
+    ],
+    capabilityHints: ["vision"],
+    skillQueries: []
+  };
+}
+
 function buildMessageHistory(history = [], systemPrompt = "", currentPrompt = "", attachments = []) {
   const trimmedPrompt = String(currentPrompt || "").trim();
   const normalizedHistory = Array.isArray(history) ? history.slice() : [];
@@ -1028,7 +1046,8 @@ async function runOllamaPrompt({
   const remote = settings?.remote || {};
   const baseUrl = (remote.ollamaUrl || remote.baseUrl || "http://localhost:11434").replace(/\/+$/, "");
   const model = remote.model || "gemma4:latest";
-  const workflow = detectWorkflow(prompt);
+  const imageTask = hasImageAttachments(attachments);
+  const workflow = imageTask ? buildImageWorkflow() : detectWorkflow(prompt);
   const activeSkills = skillRegistry.detectRelevantSkills(prompt);
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
   let workflowProbe = null;
@@ -1169,7 +1188,9 @@ async function runOllamaPrompt({
     }
   }
 
-  const supplementalSkillQueries = detectSupplementalSkillQueries(prompt, workflow, workflowProbe);
+  const supplementalSkillQueries = imageTask
+    ? []
+    : detectSupplementalSkillQueries(prompt, workflow, workflowProbe);
   if (
     supplementalSkillQueries.length &&
     settings?.agent?.suggestSkillAugmentation !== false &&
