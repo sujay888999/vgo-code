@@ -105,14 +105,28 @@ function extractWindowsPaths(prompt = "") {
   return unique(matches.map((item) => item.trim()));
 }
 
+function extractAbsoluteMediaPaths(prompt = "") {
+  const pattern =
+    /[A-Za-z]:\\[^\r\n"'<>|]*?\.(?:mp3|wav|m4a|aac|flac|ogg|mp4|mov|mkv|avi|webm)(?=\s|$|[，。；、,.;)\]])/gi;
+  const matches = String(prompt || "").match(pattern) || [];
+  return unique(matches.map((item) => item.trim()));
+}
+
 function findMediaPath(prompt = "", workspace = "") {
-  const candidates = extractWindowsPaths(prompt);
-  const mediaCandidate = candidates.find((candidate) =>
-    MEDIA_EXTENSIONS.includes(path.extname(candidate).toLowerCase())
-  );
+  const mediaCandidates = extractAbsoluteMediaPaths(prompt);
+  const mediaCandidate = mediaCandidates[0];
 
   if (mediaCandidate) {
     return path.resolve(mediaCandidate);
+  }
+
+  const candidates = extractWindowsPaths(prompt);
+  const genericMediaCandidate = candidates.find((candidate) =>
+    MEDIA_EXTENSIONS.includes(path.extname(candidate).toLowerCase())
+  );
+
+  if (genericMediaCandidate) {
+    return path.resolve(genericMediaCandidate);
   }
 
   const relativeMatch = String(prompt || "").match(/([^\s"']+\.(?:mp3|wav|m4a|aac|flac|ogg|mp4|mov|mkv|avi|webm))/i);

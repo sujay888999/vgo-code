@@ -544,6 +544,19 @@ function hasImageAttachments(attachments = []) {
   return attachments.some((item) => item && item.mediaType === "image" && item.imageBase64);
 }
 
+function hasAudioVideoAttachments(attachments = []) {
+  return attachments.some((item) => {
+    const mediaType = String(item?.mediaType || "").toLowerCase();
+    const itemPath = String(item?.path || "");
+    const extension = path.extname(itemPath).toLowerCase();
+    return (
+      mediaType === "audio" ||
+      mediaType === "video" ||
+      [".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".mp4", ".mov", ".mkv", ".avi", ".webm"].includes(extension)
+    );
+  });
+}
+
 function buildImageWorkflow() {
   return {
     id: "image-analysis",
@@ -1047,7 +1060,20 @@ async function runOllamaPrompt({
   const baseUrl = (remote.ollamaUrl || remote.baseUrl || "http://localhost:11434").replace(/\/+$/, "");
   const model = remote.model || "gemma4:latest";
   const imageTask = hasImageAttachments(attachments);
-  const workflow = imageTask ? buildImageWorkflow() : detectWorkflow(prompt);
+  const audioVideoTask = hasAudioVideoAttachments(attachments);
+  const workflowPrompt = audioVideoTask
+    ? [
+        prompt,
+        ...attachments
+          .map((item) => String(item?.path || "").trim())
+          .filter(Boolean)
+      ].join("\n")
+    : prompt;
+  const workflow = imageTask
+    ? buildImageWorkflow()
+    : audioVideoTask
+      ? detectWorkflow(workflowPrompt)
+      : detectWorkflow(prompt);
   const activeSkills = skillRegistry.detectRelevantSkills(prompt);
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
   let workflowProbe = null;
@@ -1086,7 +1112,7 @@ async function runOllamaPrompt({
       message: "已识别为音视频任务，正在检查媒体文件与转写能力..."
     });
 
-    workflowProbe = probeAudioVideoWorkflow(prompt, workspace);
+    workflowProbe = probeAudioVideoWorkflow(workflowPrompt, workspace);
     emitEvent({
       type: "workflow_probe",
       workflowId: workflow.id,
@@ -1188,7 +1214,7 @@ async function runOllamaPrompt({
     }
   }
 
-  const supplementalSkillQueries = imageTask
+  const supplementalSkillQueries = imageTask || audioVideoTask
     ? []
     : detectSupplementalSkillQueries(prompt, workflow, workflowProbe);
   if (
