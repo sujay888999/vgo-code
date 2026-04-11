@@ -51,6 +51,38 @@ function getAttachmentIcon(file: AttachmentItem) {
   return <File size={12} />
 }
 
+function inferClipboardImageName(file: File) {
+  const extension = file.type.split('/')[1] || 'png'
+  const safeExtension = extension.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png'
+  return `clipboard-image-${Date.now()}.${safeExtension}`
+}
+
+function readClipboardImage(file: File): Promise<AttachmentItem | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onerror = () => resolve(null)
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      const imageBase64 = result.includes(',') ? result.split(',')[1] || '' : ''
+      if (!imageBase64) {
+        resolve(null)
+        return
+      }
+
+      const name = file.name?.trim() || inferClipboardImageName(file)
+      resolve({
+        name,
+        path: `clipboard://${name}`,
+        size: file.size,
+        isText: false,
+        mediaType: 'image',
+        imageBase64,
+      })
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
 function buildAttachmentContext(items: AttachmentItem[]) {
   if (!items.length) return ''
 
@@ -169,6 +201,33 @@ export function Composer() {
     if (event.key === 'Enter' && !event.shiftKey && enterToSend) {
       event.preventDefault()
       void handleSubmit()
+    }
+  }
+
+  const handlePaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const clipboardItems = Array.from(event.clipboardData?.items || [])
+    const imageFiles = clipboardItems
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file))
+
+    if (!imageFiles.length) {
+      return
+    }
+
+    event.preventDefault()
+
+    const plainText = event.clipboardData?.getData('text/plain') || ''
+    if (plainText) {
+      setInput((current) => `${current}${plainText}`)
+    }
+
+    const imageAttachments = (
+      await Promise.all(imageFiles.map((file) => readClipboardImage(file)))
+    ).filter((item): item is AttachmentItem => Boolean(item))
+
+    if (imageAttachments.length) {
+      addAttachments(imageAttachments)
     }
   }
 
@@ -326,6 +385,7 @@ export function Composer() {
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={(event) => void handlePaste(event)}
           disabled={!vgoAILoggedIn}
           rows={1}
         />
