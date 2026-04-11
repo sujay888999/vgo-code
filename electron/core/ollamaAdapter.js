@@ -527,6 +527,14 @@ function buildUserMessageContent(prompt = "", attachments = []) {
       };
 }
 
+function stripAttachmentContext(prompt = "") {
+  const text = String(prompt || "");
+  return text
+    .replace(/\n*\[附件信息\][\s\S]*$/u, "")
+    .replace(/\n*\[Non-image attachments available in this task\][\s\S]*$/u, "")
+    .trim();
+}
+
 function buildMultimodalGuidance(attachments = []) {
   const imageAttachments = attachments.filter((item) => item && item.mediaType === "image" && item.imageBase64);
   if (!imageAttachments.length) {
@@ -534,8 +542,12 @@ function buildMultimodalGuidance(attachments = []) {
   }
 
   return [
+    "当前任务带有图片附件，图片像素已经作为多模态输入随本轮用户消息一起发送给模型。",
+    "请直接基于图片内容进行视觉分析，不要把这次任务误判成“无法访问本地文件系统”。",
+    "如果用户是在让你分析截图、照片、界面或图标，你应当直接描述图中内容、结构、文字和主体。",
     "When image attachments are included, they are already attached as multimodal image inputs in this user message.",
     "Analyze the image content directly with vision capabilities before considering local tools.",
+    "Do not claim that you cannot see images if image attachments are already present in this message.",
     "Do NOT call read_file on .png, .jpg, .jpeg, .webp, .gif, or .bmp attachments unless the user explicitly asks for binary metadata or file structure."
   ].join("\n");
 }
@@ -573,12 +585,18 @@ function buildImageWorkflow() {
 
 function buildMessageHistory(history = [], systemPrompt = "", currentPrompt = "", attachments = []) {
   const trimmedPrompt = String(currentPrompt || "").trim();
+  const normalizedPrompt = stripAttachmentContext(trimmedPrompt);
   const normalizedHistory = Array.isArray(history) ? history.slice() : [];
 
-  if (trimmedPrompt && normalizedHistory.length) {
+  if (normalizedPrompt && normalizedHistory.length) {
     const lastEntry = normalizedHistory[normalizedHistory.length - 1];
     const lastText = String(lastEntry?.text || "").trim();
-    if (lastEntry?.role === "user" && lastText && lastText.startsWith(trimmedPrompt)) {
+    const normalizedLastText = stripAttachmentContext(lastText);
+    if (
+      lastEntry?.role === "user" &&
+      normalizedLastText &&
+      (normalizedLastText.startsWith(normalizedPrompt) || lastText.startsWith(trimmedPrompt))
+    ) {
       normalizedHistory.pop();
     }
   }
@@ -589,7 +607,7 @@ function buildMessageHistory(history = [], systemPrompt = "", currentPrompt = ""
       role: item.role === "system" ? "assistant" : item.role,
       content: item.text
     })),
-    buildUserMessageContent(trimmedPrompt, attachments)
+    buildUserMessageContent(normalizedPrompt || trimmedPrompt, attachments)
   ];
 }
 
@@ -1061,20 +1079,21 @@ async function runOllamaPrompt({
   const model = remote.model || "gemma4:latest";
   const imageTask = hasImageAttachments(attachments);
   const audioVideoTask = hasAudioVideoAttachments(attachments);
+  const normalizedPrompt = imageTask || audioVideoTask ? stripAttachmentContext(prompt) : prompt;
   const workflowPrompt = audioVideoTask
     ? [
-        prompt,
+        normalizedPrompt,
         ...attachments
           .map((item) => String(item?.path || "").trim())
           .filter(Boolean)
       ].join("\n")
-    : prompt;
+    : normalizedPrompt;
   const workflow = imageTask
     ? buildImageWorkflow()
     : audioVideoTask
       ? detectWorkflow(workflowPrompt)
-      : detectWorkflow(prompt);
-  const activeSkills = skillRegistry.detectRelevantSkills(prompt);
+      : detectWorkflow(normalizedPrompt);
+  const activeSkills = skillRegistry.detectRelevantSkills(normalizedPrompt);
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
   let workflowProbe = null;
   let discoveredSkills = [];
@@ -1343,7 +1362,7 @@ async function runOllamaPrompt({
   let messages = buildMessageHistory(
     history,
     systemPrompt,
-    [prompt, skillPreflightNudge].filter(Boolean).join("\n\n"),
+    [normalizedPrompt, skillPreflightNudge].filter(Boolean).join("\n\n"),
     attachments
   );
 
