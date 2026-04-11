@@ -125,6 +125,45 @@ function parseToolCalls(rawText = "") {
     });
   }
 
+  const lineBasedCalls = [];
+  const toolLineMatches = [
+    ...source.matchAll(/(?:^|\n)\s*[-*]?\s*(?:Agent\s*)?(?:正在调用工具[:：]?)?\s*(read_file|list_dir|search_code|write_file|run_command|open_path)\s*\|\s*([^\n]+)/gim)
+  ];
+  for (const match of toolLineMatches) {
+    const name = String(match[1] || "").trim();
+    const argsText = String(match[2] || "").trim();
+    if (!name || !argsText) {
+      continue;
+    }
+
+    const args = {};
+    for (const segment of argsText.split(/\s*\|\s*/)) {
+      const pairMatch = segment.match(/^([a-zA-Z0-9_]+)\s*=\s*(.+)$/);
+      if (!pairMatch) {
+        continue;
+      }
+      const key = pairMatch[1];
+      let value = pairMatch[2].trim();
+      value = value.replace(/^["']|["']$/g, "");
+      if (!value) {
+        continue;
+      }
+
+      if (/^(maxEntries|start|end|limit|timeout_ms)$/i.test(key) && /^-?\d+$/.test(value)) {
+        args[key] = Number(value);
+      } else {
+        args[key] = value;
+      }
+    }
+
+    if (Object.keys(args).length) {
+      lineBasedCalls.push({ name, arguments: args });
+    }
+  }
+  if (lineBasedCalls.length) {
+    return lineBasedCalls;
+  }
+
   return [];
 }
 
