@@ -527,6 +527,41 @@ function buildUserMessageContent(prompt = "", attachments = []) {
       };
 }
 
+function buildMultimodalGuidance(attachments = []) {
+  const imageAttachments = attachments.filter((item) => item && item.mediaType === "image" && item.imageBase64);
+  if (!imageAttachments.length) {
+    return "";
+  }
+
+  return [
+    "When image attachments are included, they are already attached as multimodal image inputs in this user message.",
+    "Analyze the image content directly with vision capabilities before considering local tools.",
+    "Do NOT call read_file on .png, .jpg, .jpeg, .webp, .gif, or .bmp attachments unless the user explicitly asks for binary metadata or file structure."
+  ].join("\n");
+}
+
+function buildMessageHistory(history = [], systemPrompt = "", currentPrompt = "", attachments = []) {
+  const trimmedPrompt = String(currentPrompt || "").trim();
+  const normalizedHistory = Array.isArray(history) ? history.slice() : [];
+
+  if (trimmedPrompt && normalizedHistory.length) {
+    const lastEntry = normalizedHistory[normalizedHistory.length - 1];
+    const lastText = String(lastEntry?.text || "").trim();
+    if (lastEntry?.role === "user" && lastText && lastText.startsWith(trimmedPrompt)) {
+      normalizedHistory.pop();
+    }
+  }
+
+  return [
+    { role: "system", content: systemPrompt },
+    ...normalizedHistory.map((item) => ({
+      role: item.role === "system" ? "assistant" : item.role,
+      content: item.text
+    })),
+    buildUserMessageContent(trimmedPrompt, attachments)
+  ];
+}
+
 function detectSupplementalSkillQueries(prompt = "", workflow = null, workflowProbe = null) {
   const normalizedPrompt = String(prompt || "").toLowerCase();
   const trimmedPrompt = String(prompt || "").trim();
@@ -1224,7 +1259,8 @@ async function runOllamaPrompt({
   const systemPrompt = [
     buildSafeSystemPrompt(settings, sessionMeta, activeSkills),
     buildWorkflowSystemAppendix(workflow, workflowProbe),
-    buildSkillAppendix(discoveredSkills)
+    buildSkillAppendix(discoveredSkills),
+    buildMultimodalGuidance(attachments)
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1257,14 +1293,12 @@ async function runOllamaPrompt({
     };
   }
 
-  let messages = [
-    { role: "system", content: systemPrompt },
-    ...(history || []).map(item => ({
-      role: item.role === "system" ? "assistant" : item.role,
-      content: item.text
-    })),
-    buildUserMessageContent([prompt, skillPreflightNudge].filter(Boolean).join("\n\n"), attachments)
-  ];
+  let messages = buildMessageHistory(
+    history,
+    systemPrompt,
+    [prompt, skillPreflightNudge].filter(Boolean).join("\n\n"),
+    attachments
+  );
 
   for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
     if (signal?.aborted) {
