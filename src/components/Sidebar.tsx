@@ -110,7 +110,10 @@ export function Sidebar() {
         setSwitchingKey(`cloud-${modelId}`)
         await window.vgoDesktop?.selectRemoteProfile?.('default')
         await window.vgoDesktop?.setEngine?.('vgo-remote')
-        await window.vgoDesktop?.updateVgoAiProfile?.({ preferredModel: modelId })
+        await window.vgoDesktop?.updateVgoAiProfile?.({
+          preferredModel: modelId,
+          useDefaultCloudProfile: true,
+        })
         await refreshState()
       } catch (e) {
         console.error('Failed to switch cloud model:', e)

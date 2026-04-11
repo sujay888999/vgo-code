@@ -1753,8 +1753,10 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("settings:updateVgoAiProfile", (_event, payload) => {
     const nextPreferredModel = payload.preferredModel || settings.vgoAI.preferredModel;
-    const activeProfile =
-      (settings.remoteProfiles || []).find((item) => item.id === settings.activeRemoteProfileId) || null;
+    const requestedDefaultCloudProfile = payload.useDefaultCloudProfile === true;
+    const activeProfile = requestedDefaultCloudProfile
+      ? (settings.remoteProfiles || []).find((item) => item.id === DEFAULT_PROFILE_ID) || null
+      : (settings.remoteProfiles || []).find((item) => item.id === settings.activeRemoteProfileId) || null;
     const activeIsRemote = !activeProfile || resolveEngineIdForProfile(activeProfile) !== "ollama";
 
     let nextSettings = {
@@ -1780,6 +1782,13 @@ app.whenReady().then(async () => {
         },
         {}
       );
+
+      if (requestedDefaultCloudProfile && activeProfile) {
+        nextSettings = {
+          ...nextSettings,
+          activeRemoteProfileId: activeProfile.id
+        };
+      }
     }
 
     saveAllSettings(nextSettings);

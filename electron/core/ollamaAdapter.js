@@ -529,7 +529,26 @@ function buildUserMessageContent(prompt = "", attachments = []) {
 
 function detectSupplementalSkillQueries(prompt = "", workflow = null, workflowProbe = null) {
   const normalizedPrompt = String(prompt || "").toLowerCase();
+  const trimmedPrompt = String(prompt || "").trim();
   const queries = new Set();
+
+  const explicitBlockingIssues = Array.isArray(workflowProbe?.blockingIssues)
+    ? workflowProbe.blockingIssues.filter(Boolean)
+    : [];
+
+  const taskIntentPattern =
+    /([a-z]:\\|\/|\.tsx\b|\.ts\b|\.js\b|\.jsx\b|\.json\b|\.md\b|检查|查看|分析|修复|修改|实现|编写|生成|读取|搜索|查找|安装|打开|运行|构建|测试|总结|联网|网页|文档|read|check|analy[sz]e|fix|implement|build|test|search|find|install|open|run|write|create|edit)/i;
+  const smallTalkPattern =
+    /^(你好|您好|hi|hello|hey|在吗|在么|早上好|下午好|晚上好|谢谢|thanks|thank you|收到|好的|ok|okay)[!！?？。\s]*$/i;
+
+  const isTaskLikePrompt =
+    explicitBlockingIssues.length > 0 ||
+    taskIntentPattern.test(trimmedPrompt) ||
+    trimmedPrompt.length >= 24;
+
+  if (!isTaskLikePrompt || smallTalkPattern.test(trimmedPrompt)) {
+    return [];
+  }
 
   if (workflow?.label) {
     queries.add(workflow.label);
@@ -539,7 +558,7 @@ function detectSupplementalSkillQueries(prompt = "", workflow = null, workflowPr
     queries.add(query);
   }
 
-  for (const issue of workflowProbe?.blockingIssues || []) {
+  for (const issue of explicitBlockingIssues) {
     queries.add(issue);
   }
 
