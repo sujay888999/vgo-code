@@ -308,8 +308,12 @@ function formatRemoteServiceError(settings, response, payload) {
   const status = Number(response?.status || 0);
   const rawMessage = String(payload?.message || payload?.error || payload?.rawText || "").trim();
   const balance = Number(settings?.vgoAI?.profile?.balance || 0);
+  const isAdmin = Boolean(settings?.vgoAI?.profile?.isAdmin);
 
   if (status === 400 && /HTTP\s*402/i.test(rawMessage)) {
+    if (isAdmin) {
+      return "当前云端模型调用失败：服务端返回 HTTP 402。当前账号已是管理员，这更像是该模型通道暂不可用、账号权限未正确下发，或云端路由配置异常，请检查服务端模型通道。";
+    }
     if (balance <= 0) {
       return "当前云端模型调用失败：账号可用余额/额度为 0，已被服务端拒绝（HTTP 402）。请先充值或切换到其他可用模型。";
     }
@@ -1407,7 +1411,7 @@ function openLoginShell() {
 module.exports = {
   engineId: "vgo-remote",
   engineLabel: "VGO Remote Engine",
-  providerLabel: "Custom HTTP Provider",
+  providerLabel: "VGO AI Cloud",
   runPrompt,
   runHealthCheck,
   openLoginShell
