@@ -11,11 +11,22 @@ export interface Message {
   title?: string
 }
 
-const TRANSIENT_MESSAGE_PREFIXES = ['live-assistant-', 'final-assistant-']
+const LIVE_TRANSIENT_PREFIX = 'live-assistant-'
+const FINAL_TRANSIENT_PREFIX = 'final-assistant-'
+const TRANSIENT_MESSAGE_PREFIXES = [LIVE_TRANSIENT_PREFIX, FINAL_TRANSIENT_PREFIX]
 
 function isTransientMessage(message?: Partial<Message> | null) {
   const id = String(message?.id || '')
   return TRANSIENT_MESSAGE_PREFIXES.some((prefix) => id.startsWith(prefix))
+}
+
+function isFinalTransientMessage(message?: Partial<Message> | null) {
+  const id = String(message?.id || '')
+  return id.startsWith(FINAL_TRANSIENT_PREFIX)
+}
+
+function normalizeMessageText(text: string) {
+  return String(text || '').replace(/\s+/g, ' ').trim()
 }
 
 export interface Session {
@@ -462,11 +473,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       timestamp: entry.createdAt ? new Date(entry.createdAt).getTime() : Date.now()
     }))
     const transientMessages = current.messages.filter((message) => isTransientMessage(message))
+    const persistedAssistantTexts = new Set(
+      historyMessages
+        .filter((message) => message.role === 'assistant')
+        .map((message) => normalizeMessageText(message.text))
+        .filter(Boolean),
+    )
+    const dedupedTransientMessages = transientMessages.filter((message) => {
+      if (!isFinalTransientMessage(message)) {
+        return true
+      }
+      return !persistedAssistantTexts.has(normalizeMessageText(message.text))
+    })
     const messages =
       state.activeSessionId !== current.activeSessionId
         ? []
         : historyMessages.length > 0
-          ? [...historyMessages, ...transientMessages]
+          ? [...historyMessages, ...dedupedTransientMessages]
           : current.messages
     
     return {
