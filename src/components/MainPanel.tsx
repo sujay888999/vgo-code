@@ -28,6 +28,16 @@ export function MainPanel() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [followOutput, setFollowOutput] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollToBottom = useCallback(() => {
+    const container = scrollRef.current
+    if (!container || !autoScroll) return
+
+    window.requestAnimationFrame(() => {
+      const nextContainer = scrollRef.current
+      if (!nextContainer) return
+      nextContainer.scrollTop = nextContainer.scrollHeight
+    })
+  }, [autoScroll])
 
   useEffect(() => {
     const container = scrollRef.current
@@ -38,14 +48,36 @@ export function MainPanel() {
     const shouldStick = followOutput || distanceFromBottom < 48
 
     if (shouldStick) {
-      container.scrollTop = container.scrollHeight
+      scrollToBottom()
       if (!followOutput) setFollowOutput(true)
     }
-  }, [messages, taskSteps, promptRunning, autoScroll, followOutput])
+  }, [messages, taskSteps, promptRunning, autoScroll, followOutput, scrollToBottom])
 
   useEffect(() => {
-    if (autoScroll) setFollowOutput(true)
-  }, [autoScroll, activeSessionId])
+    const container = scrollRef.current
+    if (!container || !autoScroll) return
+
+    const observer = new ResizeObserver(() => {
+      if (followOutput) {
+        scrollToBottom()
+      }
+    })
+
+    observer.observe(container)
+    const content = container.firstElementChild
+    if (content instanceof HTMLElement) {
+      observer.observe(content)
+    }
+
+    return () => observer.disconnect()
+  }, [autoScroll, followOutput, scrollToBottom])
+
+  useEffect(() => {
+    if (autoScroll) {
+      setFollowOutput(true)
+      scrollToBottom()
+    }
+  }, [autoScroll, activeSessionId, scrollToBottom])
 
   const handleScroll = useCallback(() => {
     const container = scrollRef.current
