@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react'
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { useAppStore } from '../store/appStore'
 import { MessageList } from './MessageList'
 import { Composer } from './Composer'
@@ -18,6 +18,10 @@ export function MainPanel() {
     toggleShowTaskPanel,
     vgoAILoggedIn,
     vgoAIPreferredModel,
+    modelCatalog,
+    remoteProfiles,
+    activeRemoteProfileId,
+    runtimeEngineId,
     runtimeProviderLabel,
     contextStats,
     autoScroll,
@@ -28,6 +32,33 @@ export function MainPanel() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [followOutput, setFollowOutput] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const currentModelBadge = useMemo(() => {
+    const activeProfile = remoteProfiles.find((profile) => profile.id === activeRemoteProfileId) || null
+    const isCloudEngineSelected = runtimeEngineId === 'vgo-remote'
+    const isLocalProfile = activeProfile?.provider === 'Ollama'
+
+    if (activeProfile && (isLocalProfile || !isCloudEngineSelected)) {
+      return {
+        name: activeProfile.model || activeProfile.name || '未选择模型',
+        provider: runtimeProviderLabel || 'Local LLM via Ollama',
+      }
+    }
+
+    const cloudModel = modelCatalog.find((model) => model.id === vgoAIPreferredModel)
+    return {
+      name: cloudModel?.label || vgoAIPreferredModel || '未选择模型',
+      provider: runtimeProviderLabel || 'VGO AI Cloud',
+    }
+  }, [
+    remoteProfiles,
+    activeRemoteProfileId,
+    runtimeEngineId,
+    modelCatalog,
+    vgoAIPreferredModel,
+    runtimeProviderLabel,
+  ])
+
   const scrollToBottom = useCallback(() => {
     const container = scrollRef.current
     if (!container || !autoScroll) return
@@ -159,8 +190,10 @@ export function MainPanel() {
         <div className="header-center">
           {vgoAILoggedIn && (
             <div className="model-badge">
-              <span className="model-name">{vgoAIPreferredModel || '未选择模型'}</span>
-              {runtimeProviderLabel && <span className="provider-name">{runtimeProviderLabel}</span>}
+              <span className="model-name">{currentModelBadge.name}</span>
+              {currentModelBadge.provider && (
+                <span className="provider-name">{currentModelBadge.provider}</span>
+              )}
             </div>
           )}
         </div>
