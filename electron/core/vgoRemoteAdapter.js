@@ -304,6 +304,21 @@ function isRetryableUpstreamFailure(response, payload) {
   return UPSTREAM_RETRYABLE_PATTERN.test(messageText);
 }
 
+function formatRemoteServiceError(settings, response, payload) {
+  const status = Number(response?.status || 0);
+  const rawMessage = String(payload?.message || payload?.error || payload?.rawText || "").trim();
+  const balance = Number(settings?.vgoAI?.profile?.balance || 0);
+
+  if (status === 400 && /HTTP\s*402/i.test(rawMessage)) {
+    if (balance <= 0) {
+      return "当前云端模型调用失败：账号可用余额/额度为 0，已被服务端拒绝（HTTP 402）。请先充值或切换到其他可用模型。";
+    }
+    return "当前云端模型调用失败：服务端返回 HTTP 402，当前账号或模型通道不可用。请稍后重试，或切换到其他云端模型。";
+  }
+
+  return rawMessage || `HTTP ${status || 500}`;
+}
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -755,7 +770,7 @@ async function runRealVgoPrompt({
     });
     payload = nextPayload;
 
-    let messageText = payload?.message || payload?.error || "";
+    let messageText = formatRemoteServiceError(settings, response, payload);
     if (isRetryableUpstreamFailure(response, payload) && !upstreamRetryUsed) {
       upstreamRetryUsed = true;
       emitEvent(onEvent, rawEvents, {
@@ -770,7 +785,7 @@ async function runRealVgoPrompt({
         activeHistory,
         signal
       }));
-      messageText = payload?.message || payload?.error || "";
+      messageText = formatRemoteServiceError(settings, response, payload);
     }
 
     if (isRetryableUpstreamFailure(response, payload) && !upstreamFallbackModelUsed) {
@@ -789,7 +804,7 @@ async function runRealVgoPrompt({
           activeHistory,
           signal
         }));
-        messageText = payload?.message || payload?.error || "";
+        messageText = formatRemoteServiceError(settings, response, payload);
       }
     }
 
@@ -802,6 +817,7 @@ async function runRealVgoPrompt({
         activeHistory,
         signal
       }));
+      messageText = formatRemoteServiceError(settings, response, payload);
     }
 
     const data = payload?.data || payload;
