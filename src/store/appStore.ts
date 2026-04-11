@@ -11,6 +11,13 @@ export interface Message {
   title?: string
 }
 
+const TRANSIENT_MESSAGE_PREFIXES = ['live-assistant-', 'final-assistant-']
+
+function isTransientMessage(message?: Partial<Message> | null) {
+  const id = String(message?.id || '')
+  return TRANSIENT_MESSAGE_PREFIXES.some((prefix) => id.startsWith(prefix))
+}
+
 export interface Session {
   id: string
   title: string
@@ -447,18 +454,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Convert history entries to messages format
     // Backend sends history as array of {id, role, text, status, createdAt}
     const history = state.history || []
-    const messages = history.map((entry: any, index: number) => ({
+    const historyMessages = history.map((entry: any, index: number) => ({
       id: entry.id || `msg-${index}`,
       role: entry.role || 'assistant',
       text: entry.text || '',
       status: entry.status || 'done',
       timestamp: entry.createdAt ? new Date(entry.createdAt).getTime() : Date.now()
     }))
+    const transientMessages = current.messages.filter((message) => isTransientMessage(message))
+    const messages =
+      state.activeSessionId !== current.activeSessionId
+        ? []
+        : historyMessages.length > 0
+          ? [...historyMessages, ...transientMessages]
+          : current.messages
     
     return {
       sessions: state.sessions ?? current.sessions,
       activeSessionId: state.activeSessionId !== undefined && state.activeSessionId !== null ? state.activeSessionId : current.activeSessionId,
-      messages: state.activeSessionId !== current.activeSessionId ? [] : (messages.length > 0 ? messages : current.messages),
+      messages,
       workspace: state.workspace ?? current.workspace,
       theme: appearance.theme ?? current.theme,
       locale: localization.locale ?? current.locale,
