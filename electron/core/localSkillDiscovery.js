@@ -74,6 +74,43 @@ function buildSkillId(skillPath, source) {
   return `${source}:${slugify(skillDir || relative) || slugify(relative) || "skill"}`;
 }
 
+function normalizeSkillName(name = "") {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/-\d+$/g, "")
+    .replace(/\s+\d+$/g, "");
+}
+
+function buildSkillCanonicalKey(summary = {}) {
+  const normalizedName = normalizeSkillName(summary.name || path.basename(path.dirname(summary.path || "")));
+  return normalizedName || buildSkillId(summary.path || "", summary.source || "unknown");
+}
+
+function compareSkillPriority(left, right) {
+  const sourceRank = {
+    codex: 0,
+    agents: 1,
+    plugins: 2,
+    unknown: 3
+  };
+
+  const leftRank = sourceRank[left.source] ?? sourceRank.unknown;
+  const rightRank = sourceRank[right.source] ?? sourceRank.unknown;
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank;
+  }
+
+  const leftDepth = String(left.path || "").split(/[\\/]+/).length;
+  const rightDepth = String(right.path || "").split(/[\\/]+/).length;
+  if (leftDepth !== rightDepth) {
+    return leftDepth - rightDepth;
+  }
+
+  return String(left.path || "").length - String(right.path || "").length;
+}
+
 function summarizeSkill(skillPath, roots = []) {
   const content = readSkillFile(skillPath);
   const lines = content
@@ -111,15 +148,19 @@ function listInstalledSkills(settings = {}) {
 
   for (const skillPath of skillFiles) {
     const summary = summarizeSkill(skillPath, roots);
-    if (!deduped.has(summary.id)) {
-      deduped.set(summary.id, {
+    const key = buildSkillCanonicalKey(summary);
+    const nextEntry = {
         id: summary.id,
         name: summary.name,
         description: summary.description,
         path: summary.path,
         source: summary.source,
         enabled: !disabled.has(summary.id)
-      });
+      };
+
+    const existing = deduped.get(key);
+    if (!existing || compareSkillPriority(nextEntry, existing) < 0) {
+      deduped.set(key, nextEntry);
     }
   }
 
@@ -161,6 +202,11 @@ function discoverInstallableSkills({ queries = [], maxResults = 5 } = {}) {
   const roots = getSkillRoots();
   const skillFiles = roots.flatMap((entry) => walkForSkillFiles(entry.root));
   const deduped = new Map();
+  const installedCanonicalKeys = new Set(
+    listInstalledSkills()
+      .filter((skill) => skill.source === "codex")
+      .map((skill) => buildSkillCanonicalKey(skill))
+  );
 
   for (const skillPath of skillFiles) {
     const summary = summarizeSkill(skillPath, roots);
@@ -168,16 +214,23 @@ function discoverInstallableSkills({ queries = [], maxResults = 5 } = {}) {
       continue;
     }
 
-    const key = `${summary.name}::${summary.path}`;
-    if (!deduped.has(key)) {
-      deduped.set(key, {
+    const canonicalKey = buildSkillCanonicalKey(summary);
+    if (installedCanonicalKeys.has(canonicalKey)) {
+      continue;
+    }
+
+    const candidate = {
         id: buildSkillId(summary.path, summary.source),
         name: summary.name,
         description: summary.description,
         path: summary.path,
         source: summary.source,
         score: scoreSkill(summary, queries)
-      });
+      };
+
+    const existing = deduped.get(canonicalKey);
+    if (!existing || compareSkillPriority(candidate, existing) < 0) {
+      deduped.set(canonicalKey, candidate);
     }
   }
 
@@ -200,6 +253,18 @@ function installSkillFromSource(sourceSkillPath = "", preferredName = "") {
 
   const skillDir = path.dirname(sourcePath);
   const codexRoot = path.join(os.homedir(), ".codex", "skills");
+  const existingInstalled = listInstalledSkills()
+    .filter((skill) => skill.source === "codex")
+    .find((skill) => buildSkillCanonicalKey(skill) === buildSkillCanonicalKey(summarizeSkill(sourcePath, getSkillRoots())));
+
+  if (existingInstalled) {
+    return {
+      ok: true,
+      summary: `Skill ${existingInstalled.name} 已存在，沿用已安装版本。`,
+      skill: existingInstalled
+    };
+  }
+
   const baseName = slugify(preferredName || path.basename(skillDir) || "skill") || "skill";
   let targetDir = path.join(codexRoot, baseName);
   let suffix = 2;
