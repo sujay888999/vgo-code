@@ -3023,3 +3023,144 @@ body.compact .permission-button {
 body.compact .permission-label {
   font-size: 0.75rem;
 }
+
+/* Update Notification */
+.update-notification {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  width: 360px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.update-notification-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+  color: white;
+}
+
+.update-notification-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.update-notification-body {
+  padding: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.update-version-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.update-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.update-version {
+  font-size: 1.1rem;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.update-version-new {
+  color: #10b981;
+}
+
+.update-arrow {
+  font-size: 1.25rem;
+  color: var(--text-secondary);
+}
+
+.update-release-notes {
+  padding: 0 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.update-notes-content {
+  margin-top: 0.35rem;
+  padding: 0.5rem;
+  background: var(--bg-secondary);
+  border-radius: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.update-notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.update-notification-actions .btn {
+  flex: 1;
+  min-width: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.update-notification-actions .btn-primary {
+  background: #3b82f6;
+  color: white;
+  border: none;
+}
+
+.update-notification-actions .btn-primary:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.update-notification-actions .btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.update-notification-actions .btn-secondary:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.update-notification-actions .btn-text {
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  flex: 0.5;
+}
+
+.update-notification-actions .btn-text:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.update-notification-actions .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

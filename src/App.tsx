@@ -1,9 +1,10 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useAppStore } from './store/appStore'
 import { Sidebar } from './components/Sidebar'
 import { MainPanel } from './components/MainPanel'
 import { SettingsModal } from './components/SettingsModal'
 import { RenameModal } from './components/RenameModal'
+import { UpdateNotification } from './components/UpdateNotification'
 
 const LIVE_MESSAGE_PREFIX = 'live-assistant-'
 const FINAL_MESSAGE_PREFIX = 'final-assistant-'
@@ -139,6 +140,17 @@ export function App() {
     compactMode,
     uiMode,
   } = useAppStore()
+  const [updateNotificationOpen, setUpdateNotificationOpen] = useState(false)
+
+  useEffect(() => {
+    const handleUpdateAvailable = () => {
+      setUpdateNotificationOpen(true)
+    }
+    window.addEventListener('vgoUpdateAvailable', handleUpdateAvailable)
+    return () => {
+      window.removeEventListener('vgoUpdateAvailable', handleUpdateAvailable)
+    }
+  }, [])
 
   useEffect(() => {
     const classes = [theme, `mode-${uiMode}`]
@@ -508,6 +520,9 @@ export function App() {
       <MainPanel />
       {settingsOverlayOpen && <SettingsModal />}
       {renameOverlayOpen && <RenameModal />}
+      {updateNotificationOpen && (
+        <UpdateNotification onClose={() => setUpdateNotificationOpen(false)} />
+      )}
     </div>
   )
 }

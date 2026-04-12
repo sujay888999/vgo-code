@@ -17,6 +17,7 @@ const { loadSettings, saveSettings, DEFAULT_PROFILE_ID } = require("./core/setti
 const { startMockServer } = require("./core/vgoMockServer");
 const { normalizeEngineLogFile } = require("./core/engineLog");
 const { listInstalledSkills, installSkillFromSource } = require("./core/localSkillDiscovery");
+const { checkForUpdates, skipVersion, resetSkipVersion, setAutoCheck, getUpdateSettings, initializeAutoCheck } = require("./core/versionChecker");
 
 const store = createStore();
 let settings = loadSettings();
@@ -1653,6 +1654,21 @@ app.whenReady().then(async () => {
   createWindow();
   createTrayIcon();
 
+  setTimeout(async () => {
+    const updateResult = await initializeAutoCheck(app.getVersion(), {
+      updateUrl: "https://api.github.com/repos/vgo-code/vgo-code/releases/latest"
+    });
+    if (updateResult?.updateAvailable && mainWindow) {
+      mainWindow.webContents.send("update:available", {
+        currentVersion: updateResult.currentVersion,
+        latestVersion: updateResult.latestVersion,
+        downloadUrl: updateResult.downloadUrl,
+        releaseNotes: updateResult.releaseNotes,
+        releaseDate: updateResult.releaseDate
+      });
+    }
+  }, 5000);
+
   ipcMain.handle("settings:updateAppearance", (_event, payload = {}) =>
     mergeSettingsSection("appearance", {
       theme: payload.theme || settings.appearance?.theme || "aurora",
@@ -2199,6 +2215,41 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("shell:openPath", (_event, target) => shell.openPath(target));
   ipcMain.handle("shell:openExternal", (_event, target) => shell.openExternal(target));
+
+  ipcMain.handle("update:check", async (_event, payload = {}) => {
+    const appVersion = app.getVersion();
+    const updateUrl = payload.updateUrl || "https://api.github.com/repos/vgo-code/vgo-code/releases/latest";
+    const result = await checkForUpdates(appVersion, { updateUrl, force: payload.force || false });
+    if (result.ok && result.updateAvailable && mainWindow) {
+      mainWindow.webContents.send("update:available", {
+        currentVersion: result.currentVersion,
+        latestVersion: result.latestVersion,
+        downloadUrl: result.downloadUrl,
+        releaseNotes: result.releaseNotes,
+        releaseDate: result.releaseDate
+      });
+    }
+    return result;
+  });
+
+  ipcMain.handle("update:skipVersion", (_event, version) => {
+    skipVersion(version);
+    return { ok: true };
+  });
+
+  ipcMain.handle("update:resetSkip", () => {
+    resetSkipVersion();
+    return { ok: true };
+  });
+
+  ipcMain.handle("update:setAutoCheck", (_event, enabled, intervalHours) => {
+    setAutoCheck(enabled, intervalHours);
+    return { ok: true };
+  });
+
+  ipcMain.handle("update:getSettings", () => {
+    return getUpdateSettings();
+  });
 
   app.on("before-quit", () => {
     app.isQuitting = true;

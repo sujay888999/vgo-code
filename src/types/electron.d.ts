@@ -46,6 +46,11 @@ interface VGODesktopAPI {
   deleteRemoteProfile?: (profileId: string) => Promise<any>
   selectRemoteProfile?: (profileId: string) => Promise<any>
   installSkill?: (payload: { sourcePath: string; name?: string }) => Promise<any>
+  checkForUpdates?: (payload?: { force?: boolean; updateUrl?: string }) => Promise<any>
+  skipVersion?: (version: string) => Promise<any>
+  resetSkipVersion?: () => Promise<any>
+  setAutoCheck?: (enabled: boolean, intervalHours?: number) => Promise<any>
+  getUpdateSettings?: () => Promise<any>
 }
 
 declare global {

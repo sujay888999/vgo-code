@@ -57,6 +57,13 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
   installWhisper: () => ipcRenderer.invoke("runtime:installWhisper"),
   installSkill: (payload) => ipcRenderer.invoke("runtime:installSkill", payload),
   
+  // Update
+  checkForUpdates: (payload) => ipcRenderer.invoke("update:check", payload || {}),
+  skipVersion: (version) => ipcRenderer.invoke("update:skipVersion", version),
+  resetSkipVersion: () => ipcRenderer.invoke("update:resetSkip"),
+  setAutoCheck: (enabled, intervalHours) => ipcRenderer.invoke("update:setAutoCheck", enabled, intervalHours),
+  getUpdateSettings: () => ipcRenderer.invoke("update:getSettings"),
+  
   // Events
   on: (channel, callback) => {
     const listener = (_event, payload) => callback(payload);
@@ -84,4 +91,10 @@ ipcRenderer.on("app:stateRefresh", (_event, state) => {
 ipcRenderer.on("agent:event", (_event, payload) => {
   console.log("Received agent:event:", payload);
   window.dispatchEvent(new CustomEvent("vgoAgentEvent", { detail: payload }));
+});
+
+// Forward update available events to renderer
+ipcRenderer.on("update:available", (_event, payload) => {
+  console.log("Received update:available:", payload);
+  window.dispatchEvent(new CustomEvent("vgoUpdateAvailable", { detail: payload }));
 });
