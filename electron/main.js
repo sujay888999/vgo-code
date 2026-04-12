@@ -25,6 +25,8 @@ let authWindow = null;
 let authCheckInFlight = false;
 const pendingPermissionRequests = new Map();
 const activePromptControllers = new Map();
+const PERMISSION_REQUEST_TTL = 300000;
+const CONTROLLER_TTL = 600000;
 let browserAuthState = {
   status: "idle",
   message: "",
@@ -37,6 +39,23 @@ let mockServerInfo = {
 };
 const AUTH_PARTITION = "persist:vgo-auth";
 let tray = null;
+
+function cleanupExpiredMapEntries() {
+  const now = Date.now();
+  for (const [key, data] of activePromptControllers) {
+    if (now - data.createdAt > CONTROLLER_TTL) {
+      data.controller.abort();
+      activePromptControllers.delete(key);
+    }
+  }
+  for (const [key, data] of pendingPermissionRequests) {
+    if (now - data.createdAt > PERMISSION_REQUEST_TTL) {
+      pendingPermissionRequests.delete(key);
+    }
+  }
+}
+
+setInterval(cleanupExpiredMapEntries, 60000);
 let mainWindow = null;
 
 const TEXT_EXTENSIONS = new Set([
@@ -270,12 +289,28 @@ function setRuntimeEngine(engineId) {
   });
 }
 
-function extractAbsolutePathsFromPrompt(prompt = "") {
+function isPathWithinWorkspace(filePath, workspace) {
+  try {
+    const resolved = path.resolve(filePath);
+    const workspaceResolved = path.resolve(workspace);
+    return resolved.startsWith(workspaceResolved + path.sep) || resolved === workspaceResolved;
+  } catch {
+    return false;
+  }
+}
+
+function extractAbsolutePathsFromPrompt(prompt = "", workspace = "") {
   const text = String(prompt || "");
   const matches =
-    text.match(/[A-Za-z]:\\[^\s"'“”‘’<>|?*\r\n]+(?:\\[^\s"'“”‘’<>|?*\r\n]+)*/g) || [];
+    text.match(/[A-Za-z]:\\[^\s"'""''<>|?*\r\n]+(?:\\[^\s"'""''<>|?*\r\n]+)*/g) || [];
 
-  return [...new Set(matches.map((item) => String(item || "").trim()).filter(Boolean))];
+  const validPaths = [...new Set(matches.map((item) => String(item || "").trim()).filter(Boolean))];
+  
+  if (!workspace) {
+    return validPaths;
+  }
+  
+  return validPaths.filter(filePath => isPathWithinWorkspace(filePath, workspace));
 }
 
 function commonDirectory(paths = []) {
@@ -309,7 +344,8 @@ function deriveTaskWorkspace(prompt = "", currentWorkspace = "", sessionDirector
     .filter(Boolean)
     .filter((item) => fs.existsSync(item));
 
-  const absolutePaths = extractAbsolutePathsFromPrompt(prompt)
+  const workspace = currentWorkspace || sessionDirectory || "";
+  const absolutePaths = extractAbsolutePathsFromPrompt(prompt, workspace)
     .map((item) => path.resolve(item))
     .filter((item) => fs.existsSync(item));
 
@@ -504,16 +540,19 @@ async function requestToolPermission(call = {}, notify = () => {}) {
       resolve(false);
     }, 300000);
 
-    pendingPermissionRequests.set(requestId, (approved) => {
-      clearTimeout(timeout);
-      pendingPermissionRequests.delete(requestId);
-      notify({
-        type: approved ? "permission_granted" : "permission_denied",
-        tool: call.name,
-        detail,
-        requestId
-      });
-      resolve(Boolean(approved));
+    pendingPermissionRequests.set(requestId, {
+      callback: (approved) => {
+        clearTimeout(timeout);
+        pendingPermissionRequests.delete(requestId);
+        notify({
+          type: approved ? "permission_granted" : "permission_denied",
+          tool: call.name,
+          detail,
+          requestId
+        });
+        resolve(Boolean(approved));
+      },
+      createdAt: Date.now()
     });
   });
 }
@@ -1104,8 +1143,17 @@ async function validateStoredRealLogin() {
         profile
       }
     });
-  } catch {
+  } catch (error) {
     clearRealVgoAiSession();
+    setBrowserAuthState({
+      status: "error",
+      message: `登录态已失效（${error.message}），请重新登录。`
+    });
+    mainWindow?.webContents?.send("auth:stateUpdate", {
+      status: "logged_out",
+      reason: "token_invalid",
+      message: "登录态已失效，请重新登录。"
+    });
   }
 }
 
@@ -1381,19 +1429,32 @@ async function beginBrowserVgoAiAuth(payload = {}) {
       redirectUri
     });
 
-    const poll = setInterval(async () => {
+    let authPollInterval = null;
+
+    const clearAuthPoll = () => {
+      if (authPollInterval) {
+        clearInterval(authPollInterval);
+        authPollInterval = null;
+      }
+    };
+
+    authWindow.on("closed", () => {
+      clearAuthPoll();
+    });
+
+    authPollInterval = setInterval(async () => {
       if (!authWindow || authWindow.isDestroyed()) {
-        clearInterval(poll);
+        clearAuthPoll();
         return;
       }
 
       try {
         const ok = await finalizeEmbeddedAuth(preferredModel);
         if (ok) {
-          clearInterval(poll);
+          clearAuthPoll();
         }
       } catch (error) {
-        clearInterval(poll);
+        clearAuthPoll();
         clearRealVgoAiSession();
         setBrowserAuthState({
           status: "error",
@@ -1421,7 +1482,9 @@ async function beginBrowserVgoAiAuth(payload = {}) {
     throw error;
   }
 
-  setTimeout(() => {
+  let authTimeout = null;
+  authTimeout = setTimeout(() => {
+    authTimeout = null;
     if (pendingAuthServer === server && browserAuthState.status === "waiting") {
       clearRealVgoAiSession();
       setBrowserAuthState({
@@ -1727,11 +1790,11 @@ app.whenReady().then(async () => {
     return serializeState();
   });
   ipcMain.handle("permissions:respond", (_event, payload = {}) => {
-    const resolver = pendingPermissionRequests.get(payload.requestId);
-    if (!resolver) {
+    const entry = pendingPermissionRequests.get(payload.requestId);
+    if (!entry) {
       return { ok: false };
     }
-    resolver(payload.approved === true);
+    entry.callback(payload.approved === true);
     return { ok: true };
   });
 
@@ -1940,7 +2003,7 @@ app.whenReady().then(async () => {
     const compression = maybeCompressActiveSession();
     session = store.getActiveSession();
     const controller = new AbortController();
-    activePromptControllers.set(session.id, controller);
+    activePromptControllers.set(session.id, { controller, createdAt: Date.now() });
 
     let result;
     try {
@@ -2037,29 +2100,33 @@ app.whenReady().then(async () => {
     return { ok: true };
   });
 
-  ipcMain.handle("chat:resetSession", () => ({ sessionId: store.resetActiveSession() }));
+  ipcMain.handle("chat:resetSession", () => {
+    const sessionId = store.resetActiveSession();
+    return { sessionId, state: serializeState() };
+  });
   ipcMain.handle("chat:createSession", () => ({
     session: store.createAndActivateSession(settings.workspace || null),
     state: serializeState()
   }));
-  ipcMain.handle("chat:switchSession", (_event, sessionId) =>
-    store.switchSession(sessionId) ? serializeState() : null
-  );
+  ipcMain.handle("chat:switchSession", (_event, sessionId) => {
+    const result = store.switchSession(sessionId);
+    return result ? { state: result } : null;
+  });
   ipcMain.handle("chat:renameSession", (_event, payload) => {
     store.renameSession(payload.sessionId, payload.title);
-    return serializeState();
+    return { state: serializeState() };
   });
   ipcMain.handle("chat:togglePinSession", (_event, sessionId) => {
     store.togglePinSession(sessionId);
-    return serializeState();
+    return { state: serializeState() };
   });
   ipcMain.handle("chat:deleteSession", (_event, sessionId) => {
     store.deleteSession(sessionId);
-    return serializeState();
+    return { state: serializeState() };
   });
   ipcMain.handle("chat:updateSession", (_event, payload) => {
     store.updateSessionMeta(payload.sessionId, payload);
-    return serializeState();
+    return { state: serializeState() };
   });
   ipcMain.handle("chat:clearHistory", () => {
     store.clearActiveHistory();
@@ -2118,7 +2185,12 @@ app.whenReady().then(async () => {
     return result.filePaths.map((filePath) => readAttachmentPreview(filePath));
   });
 
-  ipcMain.handle("attachments:remove", async () => ({ ok: true }));
+  ipcMain.handle("attachments:remove", async (_event, index) => {
+    if (typeof index !== "number" || index < 0) {
+      return { ok: false, error: "Invalid attachment index" };
+    }
+    return { ok: true };
+  });
 
   ipcMain.handle("auth:openLoginTerminal", () => {
     activeEngine().openLoginShell(store.getState().workspace, settings);

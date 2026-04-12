@@ -196,13 +196,39 @@ function detectShell(command) {
   if (/^(Get-|Set-|New-|Remove-|Invoke-|Write-|Select-|Where-|ForEach-|Measure-|Sort-|Group-|Format-|ConvertTo?-|ConvertFrom?-|\$env:|\$\w+=)/i.test(command)) {
     return "powershell.exe";
   }
-  return true;
+  return "cmd.exe";
+}
+
+function isCommandSafe(command) {
+  const dangerousPatterns = [
+    /;\s*rm\s+-rf/i,
+    /&&\s*rm\s+/i,
+    /\|\|\s*rm\s+/i,
+    /`.*rm\s+-rf/i,
+    /\$\(.*rm\s+/i,
+    /eval\s*\(/i,
+    /exec\s*\(/i,
+    /subprocess.*shell\s*=\s*true/i,
+    /os\.system/i,
+    /os\.popen/i,
+    /child_process\.exec/i,
+  ];
+  return !dangerousPatterns.some(pattern => pattern.test(command));
 }
 
 function runCommand(workspace, args = {}, options = {}) {
   const command = String(args.command || "").trim();
   if (!command) {
     return { ok: false, name: "run_command", summary: "Missing required argument: command", output: "" };
+  }
+
+  if (!isCommandSafe(command)) {
+    return { 
+      ok: false, 
+      name: "run_command", 
+      summary: "Command blocked: potentially dangerous pattern detected", 
+      output: "" 
+    };
   }
 
   let cwd;
@@ -214,14 +240,25 @@ function runCommand(workspace, args = {}, options = {}) {
 
   const timeoutMs = clamp(args.timeoutMs, 1000, 300000, 45000);
   const shell = detectShell(command);
-  const result = spawnSync(command, {
-    cwd,
-    encoding: "utf8",
-    timeout: timeoutMs,
-    maxBuffer: 10 * 1024 * 1024,
-    shell,
-    env: process.env
-  });
+  
+  let result;
+  try {
+    result = spawnSync(command, {
+      cwd,
+      encoding: "utf8",
+      timeout: timeoutMs,
+      maxBuffer: 10 * 1024 * 1024,
+      shell,
+      env: process.env
+    });
+  } catch (error) {
+    return { 
+      ok: false, 
+      name: "run_command", 
+      summary: `Command execution failed: ${error.message}`, 
+      output: "" 
+    };
+  }
 
   if (result.error) {
     const isTimeout = result.error.message?.includes("timeout") || result.error.code === "ETIMEDOUT";

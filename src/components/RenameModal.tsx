@@ -3,13 +3,13 @@ import { useAppStore } from '../store/appStore'
 import { X, Check, AlertCircle } from 'lucide-react'
 
 export function RenameModal() {
-  const { setRenameOverlayOpen, activeSessionId, sessions } = useAppStore()
+  const { setRenameOverlayOpen, activeSessionId, sessions, hydrate } = useAppStore()
 
   const session = sessions.find((s) => s.id === activeSessionId)
   const [name, setName] = useState(session?.title || '')
   const [error, setError] = useState('')
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!name.trim()) {
       setError('名称不能为空')
       return
@@ -20,7 +20,14 @@ export function RenameModal() {
       return
     }
 
-    void window.vgoDesktop?.renameSession?.(name.trim())
+    try {
+      const result = await window.vgoDesktop?.renameSession?.(name.trim())
+      if (result?.state) {
+        hydrate(result.state)
+      }
+    } catch (e) {
+      console.error('Failed to rename session:', e)
+    }
     setRenameOverlayOpen(false)
   }
 

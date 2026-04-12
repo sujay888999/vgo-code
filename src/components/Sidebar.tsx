@@ -72,6 +72,8 @@ export function Sidebar() {
         const result = await window.vgoDesktop?.switchSession?.(sessionId)
         if (result?.state) {
           hydrate(result.state)
+        } else if (result) {
+          hydrate(result)
         } else {
           setActiveSessionId(sessionId)
         }
@@ -86,8 +88,12 @@ export function Sidebar() {
   const handleDeleteSession = useCallback(
     async (sessionId: string) => {
       try {
-        await window.vgoDesktop?.deleteSession?.(sessionId)
-        await refreshState()
+        const result = await window.vgoDesktop?.deleteSession?.(sessionId)
+        if (result?.state) {
+          hydrate(result.state)
+        } else {
+          await refreshState()
+        }
       } catch (e) {
         console.error('Failed to delete session:', e)
       }
@@ -97,12 +103,16 @@ export function Sidebar() {
 
   const handleResetSession = useCallback(async () => {
     try {
-      await window.vgoDesktop?.resetSession?.()
-      await refreshState()
+      const result = await window.vgoDesktop?.resetSession?.()
+      if (result?.state) {
+        hydrate(result.state)
+      } else {
+        await refreshState()
+      }
     } catch (e) {
       console.error('Failed to reset session:', e)
     }
-  }, [refreshState])
+  }, [hydrate, refreshState])
 
   const handleModelSelect = useCallback(
     async (modelId: string) => {
