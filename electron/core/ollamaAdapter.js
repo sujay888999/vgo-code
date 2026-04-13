@@ -1687,7 +1687,10 @@ async function runOllamaPrompt({
         messages.push({
           role: "user",
           content:
-            "【重要】write_file 调用失败，原因是 content 参数不完整或被截断。请立即重新调用 write_file，path 参数写文件名（如 fibonacci.py），content 参数必须是完整的代码内容，不能省略任何字符。直接输出工具调用，不要解释。"
+            "【重要】write_file 调用失败，原因是 content 参数不完整或被截断。有两个解决方案：\n" +
+            "方案1：重新调用 write_file，但这次只写一个极简版本（比如只有 import 语句和函数签名），然后再调用 write_file 追加内容。\n" +
+            "方案2：使用 run_command 写文件，例如：write_file 连续失败3次后，改用 run_command，命令格式如：run_command({\"command\":\"cat > file.py << 'EOF'\\n代码内容\\nEOF\"})\n" +
+            "请选择一个方案继续。"
         });
       }
 
