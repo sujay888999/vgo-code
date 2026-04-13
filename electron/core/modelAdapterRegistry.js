@@ -241,7 +241,14 @@ function buildToolCallingInstructions(modelId = "") {
     "5. The JSON must be valid with proper quotes.",
     "6. For news + document tasks, use EXACTLY 2 turns. Turn 1: fetch_web with format=text. Turn 2: generate_word_doc using data from the fetched text.",
     "7. NEVER fetch more than 2 pages. Do NOT fetch individual article pages one by one. Use the homepage text to extract headlines and summaries.",
-    "8. In generate_word_doc, the summary field should contain as much detail as you can extract from the fetched homepage text."
+    "8. In generate_word_doc, the summary field should contain as much detail as you can extract from the fetched homepage text.",
+    "",
+    "### write_file IMPORTANT RULES:",
+    "- The content parameter must be a valid JSON string with all special characters escaped",
+    "- If write_file fails with 'Missing required argument: content', resend the exact same call with COMPLETE content - do not truncate or shorten the content",
+    "- For code files, ALWAYS include the complete code in one write_file call - do not split into multiple calls",
+    "Example - Write Python file:",
+    '<vgo_tool_call>{"name":"write_file","arguments":{"path":"hello.py","content":"print(\"Hello\")"}}</vgo_tool_call>'
   ].join("\n");
 }
 

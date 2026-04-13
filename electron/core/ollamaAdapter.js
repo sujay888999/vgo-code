@@ -1677,7 +1677,7 @@ async function runOllamaPrompt({
         messages.push({
           role: "user",
           content:
-            "你刚才已经调用了 write_file，但参数不完整。下一条请重新调用 write_file，并至少提供 path 和 content。若用户要求放到桌面，请把 path 写成 Desktop/notes.txt 这种明确路径。不要解释，只输出工具调用。"
+            "【重要】write_file 调用失败，原因是 content 参数不完整或被截断。请立即重新调用 write_file，path 参数写文件名（如 fibonacci.py），content 参数必须是完整的代码内容，不能省略任何字符。直接输出工具调用，不要解释。"
         });
       }
 
