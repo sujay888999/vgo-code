@@ -1602,6 +1602,16 @@ async function runOllamaPrompt({
       const toolResultMessage = protocol.buildToolResultMessage(toolResults);
       messages.push({ role: "user", content: toolResultMessage });
 
+      const dirEmpty = toolResults.some(r => r.name === "list_dir" && r.ok && /Listed 0 entries/i.test(r.summary || ""));
+      const readNotExistCount = toolResults.filter(r => r.name === "read_file" && !r.ok && /ENOENT|no such file/i.test(r.summary || "")).length;
+      if (dirEmpty && readNotExistCount >= 2 && !writeArgumentRetrySent) {
+        writeArgumentRetrySent = true;
+        messages.push({
+          role: "user",
+          content: "提示：目录为空，不需要读取配置文件。请直接根据用户需求创建文件。如果用户要求创建新文件，立即调用 write_file 工具，path 参数写文件名（如 TestComponent.tsx），content 参数写完整代码内容。不要再尝试读取不存在的文件。"
+        });
+      }
+
       const hasWriteArgumentFailure = toolResults.some(
         (result) =>
           result.name === "write_file" &&
