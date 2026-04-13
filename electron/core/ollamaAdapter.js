@@ -907,7 +907,27 @@ function getUnfinishedRequiredReadPaths(prompt = "", rawEvents = [], workspace =
   }
 
   const completedReadPaths = collectCompletedReadPaths(rawEvents);
-  return requestedPaths.filter((requestedPath) => !completedReadPaths.has(requestedPath));
+  const failedReadPaths = collectFailedReadPaths(rawEvents);
+  return requestedPaths.filter(
+    (requestedPath) =>
+      !completedReadPaths.has(requestedPath) &&
+      !failedReadPaths.has(requestedPath)
+  );
+}
+
+function collectFailedReadPaths(rawEvents = []) {
+  const failed = new Set();
+  for (const event of rawEvents) {
+    if (event?.type === "tool_result" && event?.tool === "read_file" && !event?.ok) {
+      if (/ENOENT|no such file|not exist/i.test(String(event?.summary || ""))) {
+        const match = String(event?.summary || "").match(/^Read\s+(.+?)\s+/i);
+        if (match?.[1]) {
+          failed.add(path.resolve(match[1]));
+        }
+      }
+    }
+  }
+  return failed;
 }
 
 function hasUnfinishedRequiredReads(prompt = "", rawEvents = [], workspace = "") {
@@ -922,6 +942,17 @@ function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", work
 
   const hasToolResults = rawEvents.some((event) => event && event.type === "tool_result");
   const unfinishedRequiredReads = hasUnfinishedRequiredReads(prompt, rawEvents, workspace);
+  const successfulWrite = rawEvents.some(
+    (event) => event?.type === "tool_result" && event?.tool === "write_file" && event?.ok
+  );
+  const allReadsFailed = rawEvents.some(
+    (event) => event?.type === "tool_result" && event?.tool === "read_file" && !event?.ok
+  );
+
+  if (successfulWrite && allReadsFailed) {
+    return false;
+  }
+
   const continuationPatterns = [
     /下一步/i,
     /下一步行动/i,
@@ -954,18 +985,25 @@ function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", work
     /已完成全部/i,
     /任务完成/i,
     /结论如下/i,
-    /综合来看/i
+    /综合来看/i,
+    /已创建/i,
+    /已生成/i,
+    /文件已/i
   ];
 
   if (finalPatterns.some((pattern) => pattern.test(normalized))) {
-    if (unfinishedRequiredReads) {
+    if (unfinishedRequiredReads && !allReadsFailed) {
       return true;
     }
     return false;
   }
 
-  if (unfinishedRequiredReads) {
+  if (unfinishedRequiredReads && !allReadsFailed) {
     return true;
+  }
+
+  if (allReadsFailed && successfulWrite) {
+    return false;
   }
 
   if (continuationPatterns.some((pattern) => pattern.test(normalized))) {
