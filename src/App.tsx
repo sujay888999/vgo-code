@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useI18n } from './i18n'
 import { useAppStore } from './store/appStore'
 import { useI18n, setI18nLocale } from './i18n'
 import { Sidebar } from './components/Sidebar'
@@ -141,7 +142,13 @@ export function App() {
     compactMode,
     uiMode,
   } = useAppStore()
+  const { locale: i18nLocale } = useI18n()
+  const [localeKey, setLocaleKey] = useState(0)
   const [updateNotificationOpen, setUpdateNotificationOpen] = useState(false)
+  
+  useEffect(() => {
+    setLocaleKey(k => k + 1)
+  }, [i18nLocale])
 
   useEffect(() => {
     const handleUpdateAvailable = () => {
@@ -522,7 +529,7 @@ export function App() {
   }, [hydrate])
 
   return (
-    <div className="layout">
+    <div className="layout" key={localeKey}>
       <Sidebar />
       <MainPanel />
       {settingsOverlayOpen && <SettingsModal />}
