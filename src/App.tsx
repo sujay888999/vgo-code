@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from './store/appStore'
-import { useI18n } from './i18n'
+import { useI18n, setI18nLocale } from './i18n'
 import { Sidebar } from './components/Sidebar'
 import { MainPanel } from './components/MainPanel'
 import { SettingsModal } from './components/SettingsModal'
@@ -163,7 +163,12 @@ export function App() {
     const loadInitialState = async () => {
       try {
         const state = await window.vgoDesktop?.getState?.()
-        if (state) hydrate(state)
+        if (state) {
+          hydrate(state)
+          if (state.settings?.localization?.locale) {
+            setI18nLocale(state.settings.localization.locale)
+          }
+        }
       } catch (error) {
         console.error('Failed to load initial state:', error)
       }

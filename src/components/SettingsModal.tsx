@@ -185,31 +185,46 @@ export function SettingsModal() {
 
   const applyAppearance = async (payload: Record<string, unknown>) => {
     await withStatus(t('settings.saving'), async () => {
-      await window.vgoDesktop?.updateAppearance?.(payload)
+      const result = await window.vgoDesktop?.updateAppearance?.(payload)
+      if (result) {
+        hydrate(result)
+      }
     })
   }
 
   const applyLocalization = async (payload: Record<string, unknown>) => {
     await withStatus(t('settings.savingLanguage'), async () => {
-      await window.vgoDesktop?.updateLocalization?.(payload)
+      const result = await window.vgoDesktop?.updateLocalization?.(payload)
+      if (result) {
+        hydrate(result)
+      }
     })
   }
 
   const applyBehavior = async (payload: Record<string, unknown>) => {
     await withStatus(t('settings.savingBehavior'), async () => {
-      await window.vgoDesktop?.updateBehavior?.(payload)
+      const result = await window.vgoDesktop?.updateBehavior?.(payload)
+      if (result) {
+        hydrate(result)
+      }
     })
   }
 
   const applyAccess = async (payload: Record<string, unknown>) => {
     await withStatus(t('settings.savingAccess'), async () => {
-      await window.vgoDesktop?.updateAccess?.(payload)
+      const result = await window.vgoDesktop?.updateAccess?.(payload)
+      if (result) {
+        hydrate(result)
+      }
     })
   }
 
   const applyAgentPrefs = async (payload: Record<string, unknown>) => {
     await withStatus(t('settings.savingAgent'), async () => {
-      await window.vgoDesktop?.updateAgentPreferences?.(payload)
+      const result = await window.vgoDesktop?.updateAgentPreferences?.(payload)
+      if (result) {
+        hydrate(result)
+      }
     })
   }
 
@@ -227,19 +242,21 @@ export function SettingsModal() {
 
     await withStatus(t('settings.savingConfig'), async () => {
       if (editableActiveProfile) {
-        await window.vgoDesktop?.updateRemoteProfile?.(editableActiveProfile.id, payload)
+        const result = await window.vgoDesktop?.updateRemoteProfile?.(editableActiveProfile.id, payload)
         await window.vgoDesktop?.setEngine?.(provider === 'Ollama' ? 'ollama' : 'vgo-remote')
         await window.vgoDesktop?.selectRemoteProfile?.(editableActiveProfile.id)
+        if (result) hydrate(result)
       } else {
-        await window.vgoDesktop?.createRemoteProfile?.(payload)
+        const result = await window.vgoDesktop?.createRemoteProfile?.(payload)
         await window.vgoDesktop?.setEngine?.(provider === 'Ollama' ? 'ollama' : 'vgo-remote')
+        if (result) hydrate(result)
       }
     })
   }
 
   const handleCreateNewProfile = async () => {
     const payload = {
-      name: configName.trim() || '新配置',
+      name: configName.trim() || t('settings.newConfig'),
       provider,
       baseUrl: baseUrl.trim(),
       ollamaUrl: provider === 'Ollama' ? baseUrl.trim() : undefined,
@@ -249,16 +266,18 @@ export function SettingsModal() {
       activate: true,
     }
 
-    await withStatus('正在创建配置...', async () => {
-      await window.vgoDesktop?.createRemoteProfile?.(payload)
+    await withStatus(t('settings.creatingConfig'), async () => {
+      const result = await window.vgoDesktop?.createRemoteProfile?.(payload)
       await window.vgoDesktop?.setEngine?.(provider === 'Ollama' ? 'ollama' : 'vgo-remote')
+      if (result) hydrate(result)
     })
   }
 
   const handleDeleteProfile = async () => {
     if (!editableActiveProfile) return
-    await withStatus('正在删除配置...', async () => {
-      await window.vgoDesktop?.deleteRemoteProfile?.(editableActiveProfile.id)
+    await withStatus(t('settings.deletingConfig'), async () => {
+      const result = await window.vgoDesktop?.deleteRemoteProfile?.(editableActiveProfile.id)
+      if (result) hydrate(result)
     })
   }
 

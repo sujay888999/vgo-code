@@ -173,6 +173,9 @@ const translations: Record<Locale, Record<string, string>> = {
     'settings.normalizingLog': '正在整理日志编码...',
     'settings.autoScrollHint': '停留在底部时，自动跟随最新输出。',
     'settings.taskPanelHint': '展示结构化的执行状态和步骤结果。',
+    'settings.newConfig': '新配置',
+    'settings.creatingConfig': '正在创建配置...',
+    'settings.deletingConfig': '正在删除配置...',
   },
   'en-US': {
     'app.title': 'VGO Code',
@@ -344,6 +347,9 @@ const translations: Record<Locale, Record<string, string>> = {
     'settings.normalizingLog': 'Normalizing log encoding...',
     'settings.autoScrollHint': 'Auto-follow latest output when staying at bottom.',
     'settings.taskPanelHint': 'Display structured execution status and step results.',
+    'settings.newConfig': 'New Config',
+    'settings.creatingConfig': 'Creating config...',
+    'settings.deletingConfig': 'Deleting config...',
   },
 }
 
