@@ -1430,10 +1430,20 @@ async function runOllamaPrompt({
       try {
         const workspacePath = workspace || process.cwd();
         const entries = fs.readdirSync(workspacePath).filter(f => !f.startsWith('.') && f !== 'node_modules');
-        if (entries.length === 0) {
+        const projectConfigFiles = ['package.json', 'tsconfig.json', 'tsconfig.node.json', 'electron', 'src', 'Cargo.toml', 'go.mod', 'pom.xml', 'build.gradle'];
+        const hasProjectConfig = projectConfigFiles.some(config => {
+          try {
+            const configPath = path.join(workspacePath, config);
+            const stat = fs.statSync(configPath);
+            return stat.isFile() || stat.isDirectory();
+          } catch {
+            return false;
+          }
+        });
+        if (!hasProjectConfig) {
           messages.push({
             role: "user",
-            content: "重要提示：当前工作目录是空的，没有任何文件。如果用户要求创建新文件，不要尝试读取不存在的配置文件（如 package.json、tsconfig.json 等），直接使用 write_file 工具创建所需文件即可。"
+            content: "重要提示：当前工作目录没有项目配置文件（如 package.json、tsconfig.json、src/、electron/ 等）。这是一个空白目录。如果用户要求创建新文件（如 .tsx、.py、.js 等），直接使用 write_file 工具创建，不要尝试读取不存在的配置文件。"
           });
         }
       } catch (e) {
