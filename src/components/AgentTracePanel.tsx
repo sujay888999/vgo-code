@@ -1,5 +1,6 @@
 import React from 'react'
 import type { TaskStep } from '../store/appStore'
+import { useI18n } from '../i18n'
 import {
   Loader2,
   ShieldAlert,
@@ -15,8 +16,8 @@ interface AgentTracePanelProps {
   promptRunning: boolean
 }
 
-function formatTime(timestamp: number) {
-  return new Date(timestamp).toLocaleTimeString('zh-CN', {
+function formatTime(timestamp: number, locale: string = 'zh-CN') {
+  return new Date(timestamp).toLocaleTimeString(locale, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
@@ -27,27 +28,27 @@ function normalizeText(text?: string) {
   return String(text || '').replace(/\s+/g, ' ').trim()
 }
 
-function isThinkingStep(step: TaskStep) {
+function isThinkingStep(step: TaskStep, t: (key: string) => string) {
   const title = normalizeText(step.title).toLowerCase()
   return (
     step.state === 'planning' ||
     (step.state === 'working' &&
-      (title.includes('思考') ||
-        title.includes('规划') ||
-        title.includes('继续处理') ||
-        title.includes('工作流') ||
-        title.includes('前置检查') ||
+      (title.includes(t('agentTrace.thinking')) ||
+        title.includes(t('agentTrace.planning')) ||
+        title.includes(t('agentTrace.continuing')) ||
+        title.includes(t('agentTrace.workflow')) ||
+        title.includes(t('agentTrace.prerequisite')) ||
         title.includes('continu') ||
         title.includes('thinking') ||
         title.includes('workflow')))
   )
 }
 
-function toThinkingLines(steps: TaskStep[]) {
+function toThinkingLines(steps: TaskStep[], t: (key: string) => string) {
   const seen = new Set<string>()
   const lines: string[] = []
 
-  for (const step of steps.filter(isThinkingStep)) {
+  for (const step of steps.filter((s) => isThinkingStep(s, t))) {
     const title = normalizeText(step.title)
     const detailLines = String(step.detail || '')
       .split('\n')
@@ -70,11 +71,11 @@ function toThinkingLines(steps: TaskStep[]) {
   return lines.slice(-6)
 }
 
-function isExecutionStep(step: TaskStep) {
-  return !isThinkingStep(step)
+function isExecutionStep(step: TaskStep, t: (key: string) => string) {
+  return !isThinkingStep(step, t)
 }
 
-function getIcon(step: TaskStep) {
+function getIcon(step: TaskStep, t: (key: string) => string) {
   const title = normalizeText(step.title).toLowerCase()
 
   if (step.state === 'permission_requested') {
@@ -86,14 +87,14 @@ function getIcon(step: TaskStep) {
   if (step.state === 'completed' || step.state === 'permission_granted') {
     return <CheckCircle2 size={13} className="process-icon success" />
   }
-  if (title.includes('工具') || title.includes('tool')) {
+  if (title.includes(t('agentTrace.tool')) || title.includes('tool')) {
     return <Wrench size={13} className="process-icon active" />
   }
   if (
-    title.includes('规划') ||
-    title.includes('思考') ||
-    title.includes('计划') ||
-    title.includes('工作流') ||
+    title.includes(t('agentTrace.planning')) ||
+    title.includes(t('agentTrace.thinking')) ||
+    title.includes(t('agentTrace.executionPlan')) ||
+    title.includes(t('agentTrace.workflow')) ||
     title.includes('skill')
   ) {
     return <Sparkles size={13} className="process-icon active" />
@@ -102,6 +103,7 @@ function getIcon(step: TaskStep) {
 }
 
 export function AgentTracePanel({ steps, promptRunning }: AgentTracePanelProps) {
+  const { t, locale } = useI18n()
   const visible = steps
     .filter((step) =>
       [
@@ -115,26 +117,26 @@ export function AgentTracePanel({ steps, promptRunning }: AgentTracePanelProps) 
     )
     .slice(-12)
 
-  const thinkingLines = toThinkingLines(visible)
-  const executionSteps = visible.filter(isExecutionStep).slice(-6)
+  const thinkingLines = toThinkingLines(visible, t)
+  const executionSteps = visible.filter((s) => isExecutionStep(s, t)).slice(-6)
 
   if (!promptRunning && !visible.length) return null
 
   return (
-    <section className="agent-process-stream" aria-label="Codex 思考过程">
+    <section className="agent-process-stream" aria-label="Codex Process">
       <div className="agent-process-head">
         <div className="agent-process-head-copy">
           <span className="agent-process-title">Codex Process</span>
-          <span className="agent-process-caption">思考与执行过程可见</span>
+          <span className="agent-process-caption">{t('agentTrace.processVisible')}</span>
         </div>
-        <span className="agent-process-subtitle">{promptRunning ? '运行中' : '最近活动'}</span>
+        <span className="agent-process-subtitle">{promptRunning ? t('agentTrace.running') : t('agentTrace.recentActivity')}</span>
       </div>
 
       {!!thinkingLines.length && (
         <div className="agent-thinking-block">
           <div className="agent-thinking-head">
             <Lightbulb size={15} className="process-icon muted" />
-            <span className="agent-thinking-title">Thinking...</span>
+            <span className="agent-thinking-title">{t('agentTrace.thinkingTitle')}</span>
           </div>
           <ol className="agent-thinking-list">
             {thinkingLines.map((line, index) => (
@@ -150,7 +152,7 @@ export function AgentTracePanel({ steps, promptRunning }: AgentTracePanelProps) 
         <div className="agent-process-list">
           {executionSteps.map((step) => (
             <div key={step.id} className={`agent-process-item ${step.state}`}>
-              <div className="agent-process-leading">{getIcon(step)}</div>
+              <div className="agent-process-leading">{getIcon(step, t)}</div>
               <div className="agent-process-main">
                 <div className="agent-process-line">
                   <span className="agent-process-name">{step.title}</span>

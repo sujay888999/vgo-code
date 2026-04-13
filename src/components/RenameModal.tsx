@@ -1,8 +1,10 @@
 import React, { useState } from 'react'
 import { useAppStore } from '../store/appStore'
+import { useI18n } from '../i18n'
 import { X, Check, AlertCircle } from 'lucide-react'
 
 export function RenameModal() {
+  const { t } = useI18n()
   const { setRenameOverlayOpen, activeSessionId, sessions, hydrate } = useAppStore()
 
   const session = sessions.find((s) => s.id === activeSessionId)
@@ -11,12 +13,12 @@ export function RenameModal() {
 
   const handleSubmit = async () => {
     if (!name.trim()) {
-      setError('名称不能为空')
+      setError(t('rename.nameCannotEmpty'))
       return
     }
 
     if (name.length > 100) {
-      setError('名称不能超过 100 个字符')
+      setError(t('rename.nameTooLong'))
       return
     }
 
@@ -45,7 +47,7 @@ export function RenameModal() {
     <div className="modal-overlay" onClick={() => setRenameOverlayOpen(false)}>
       <div className="modal rename-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>重命名当前线程</h2>
+          <h2>{t('rename.title')}</h2>
           <button className="icon-button" onClick={() => setRenameOverlayOpen(false)}>
             <X size={18} />
           </button>
@@ -53,7 +55,7 @@ export function RenameModal() {
 
         <div className="modal-body">
           <div className="form-group">
-            <label htmlFor="session-name">线程名称</label>
+            <label htmlFor="session-name">{t('rename.threadName')}</label>
             <input
               id="session-name"
               type="text"
@@ -64,7 +66,7 @@ export function RenameModal() {
                 setError('')
               }}
               onKeyDown={handleKeyDown}
-              placeholder="输入新的线程名称"
+              placeholder={t('rename.inputPlaceholder')}
               autoFocus
               maxLength={100}
             />
@@ -74,17 +76,17 @@ export function RenameModal() {
                 <span>{error}</span>
               </div>
             )}
-            <p className="form-hint">最多 100 个字符。</p>
+            <p className="form-hint">{t('rename.charLimit')}</p>
           </div>
         </div>
 
         <div className="modal-footer">
           <button className="ghost-button" onClick={() => setRenameOverlayOpen(false)}>
-            取消
+            {t('rename.cancel')}
           </button>
           <button className="primary-button" onClick={handleSubmit}>
             <Check size={16} />
-            保存
+            {t('rename.save')}
           </button>
         </div>
       </div>

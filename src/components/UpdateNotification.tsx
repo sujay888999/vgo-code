@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { X, Download, RefreshCw } from 'lucide-react'
+import { useI18n } from '../i18n'
 
 interface UpdateInfo {
   currentVersion: string
@@ -14,6 +15,7 @@ interface UpdateNotificationProps {
 }
 
 export function UpdateNotification({ onClose }: UpdateNotificationProps) {
+  const { t } = useI18n()
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [isDownloading, setIsDownloading] = useState(false)
 
@@ -68,7 +70,7 @@ export function UpdateNotification({ onClose }: UpdateNotificationProps) {
       <div className="update-notification-header">
         <div className="update-notification-title">
           <RefreshCw size={16} />
-          <span>发现新版本</span>
+          <span>{t('update.newVersion')}</span>
         </div>
         <button className="icon-button" onClick={onClose}>
           <X size={16} />
@@ -77,19 +79,19 @@ export function UpdateNotification({ onClose }: UpdateNotificationProps) {
       
       <div className="update-notification-body">
         <div className="update-version-info">
-          <span className="update-label">当前版本</span>
+          <span className="update-label">{t('update.currentVersion')}</span>
           <span className="update-version">{updateInfo.currentVersion}</span>
         </div>
         <div className="update-arrow">→</div>
         <div className="update-version-info">
-          <span className="update-label">最新版本</span>
+          <span className="update-label">{t('update.latestVersion')}</span>
           <span className="update-version update-version-new">{updateInfo.latestVersion}</span>
         </div>
       </div>
 
       {updateInfo.releaseNotes && (
         <div className="update-release-notes">
-          <div className="update-label">更新说明</div>
+          <div className="update-label">{t('update.releaseNotes')}</div>
           <div className="update-notes-content">
             {updateInfo.releaseNotes.length > 200 
               ? updateInfo.releaseNotes.slice(0, 200) + '...' 
@@ -105,21 +107,21 @@ export function UpdateNotification({ onClose }: UpdateNotificationProps) {
           disabled={isDownloading || !updateInfo.downloadUrl}
         >
           <Download size={14} />
-          {isDownloading ? '正在下载...' : '下载新版本'}
+          {isDownloading ? t('update.downloading') : t('update.downloadNewVersion')}
         </button>
         <button 
           className="btn btn-secondary"
           onClick={handleSkipVersion}
           disabled={isDownloading}
         >
-          跳过此版本
+          {t('update.skipVersion')}
         </button>
         <button 
           className="btn btn-text"
           onClick={handleLater}
           disabled={isDownloading}
         >
-          稍后提醒
+          {t('update.laterRemind')}
         </button>
       </div>
     </div>

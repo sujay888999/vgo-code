@@ -42,14 +42,14 @@ export function MainPanel() {
 
     if (activeProfile && (isLocalProfile || !isCloudEngineSelected)) {
       return {
-        name: activeProfile.model || activeProfile.name || '未选择模型',
+        name: activeProfile.model || activeProfile.name || t('mainPanel.noModelSelected'),
         provider: runtimeProviderLabel || 'Local LLM via Ollama',
       }
     }
 
     const cloudModel = modelCatalog.find((model) => model.id === vgoAIPreferredModel)
     return {
-      name: cloudModel?.label || vgoAIPreferredModel || '未选择模型',
+      name: cloudModel?.label || vgoAIPreferredModel || t('mainPanel.noModelSelected'),
       provider: runtimeProviderLabel || 'VGO AI Cloud',
     }
   }, [
@@ -59,6 +59,7 @@ export function MainPanel() {
     modelCatalog,
     vgoAIPreferredModel,
     runtimeProviderLabel,
+    t,
   ])
 
   const scrollToBottom = useCallback(() => {
@@ -257,11 +258,11 @@ export function MainPanel() {
         {showTaskPanel && (
           <div className={`task-panel-wrapper ${taskPanelCollapsed ? 'collapsed' : ''}`}>
             <div className="task-panel-header">
-              <span>任务面板</span>
+              <span>{t('mainPanel.taskPanel')}</span>
               <button
                 className="icon-button"
                 onClick={toggleTaskPanelCollapsed}
-                title={taskPanelCollapsed ? '展开任务面板' : '收起任务面板'}
+                title={taskPanelCollapsed ? t('mainPanel.expandPanel') : t('mainPanel.collapsePanel')}
               >
                 {taskPanelCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
               </button>

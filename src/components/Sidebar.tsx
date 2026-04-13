@@ -230,11 +230,11 @@ export function Sidebar() {
 
     const cloudModel = modelCatalog.find((m) => m.id === vgoAIPreferredModel)
     return {
-      name: cloudModel?.label || vgoAIPreferredModel || '未选择模型',
+      name: cloudModel?.label || vgoAIPreferredModel || t('sidebar.noModelSelected'),
       model: vgoAIPreferredModel || '',
       isLocal: false,
     }
-  }, [remoteProfiles, activeRemoteProfileId, modelCatalog, vgoAIPreferredModel, runtimeEngineId])
+  }, [remoteProfiles, activeRemoteProfileId, modelCatalog, vgoAIPreferredModel, runtimeEngineId, t])
 
   const localProfiles = remoteProfiles.filter((p) => p.provider === 'Ollama')
   const cloudModels = modelCatalog
@@ -274,11 +274,11 @@ export function Sidebar() {
         <section className="panel panel-accent">
           <div className="panel-head">
             <div>
-              <div className="panel-kicker">账号中心</div>
-              <h3>登录与模型绑定</h3>
+              <div className="panel-kicker">{t('sidebar.accountCenter')}</div>
+              <h3>{t('sidebar.loginAndModel')}</h3>
             </div>
             <div className={`status-pill ${vgoAILoggedIn ? 'online' : ''}`}>
-              {vgoAILoggedIn ? '已登录' : '未登录'}
+              {vgoAILoggedIn ? t('sidebar.loggedIn') : t('sidebar.notLoggedIn')}
             </div>
           </div>
 
@@ -287,7 +287,7 @@ export function Sidebar() {
               <div className="account-summary">
                 <div className="account-row">
                   <User size={14} />
-                  <span>{vgoAIDisplayName || '未命名用户'}</span>
+                  <span>{vgoAIDisplayName || t('sidebar.unnamedUser')}</span>
                 </div>
                 {vgoAIEmail && (
                   <div className="account-row">
@@ -485,14 +485,14 @@ export function Sidebar() {
         <section className="panel">
           <div className="panel-head">
             <div>
-              <div className="panel-kicker">工作区</div>
-              <h3>{workspace ? '当前目录' : '未选择目录'}</h3>
+              <div className="panel-kicker">{t('sidebar.workspace')}</div>
+              <h3>{workspace ? t('sidebar.currentDirectory') : t('sidebar.noDirectorySelected')}</h3>
             </div>
           </div>
 
           <div className="workspace-path" title={workspace}>
             <FolderOpen size={14} />
-            <span>{workspace ? workspace.split(/[/\\]/).pop() : '点击下方按钮选择工作区'}</span>
+            <span>{workspace ? workspace.split(/[/\\]/).pop() : t('sidebar.clickToSelectWorkspace')}</span>
           </div>
 
           <div className="button-stack">

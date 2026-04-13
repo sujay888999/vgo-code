@@ -536,9 +536,9 @@ export function SettingsModal() {
                   </div>
                   <div className="language-grid">
                     {[
-                      ['workspace-only', '仅工作区'],
-                      ['workspace-and-desktop', '工作区 + 桌面'],
-                      ['full-system', '全局范围'],
+                      ['workspace-only', t('settings.workspaceOnly')],
+                      ['workspace-and-desktop', t('settings.workspaceAndDesktop')],
+                      ['full-system', t('settings.fullSystem')],
                     ].map(([id, label]) => (
                       <button
                         key={id}
@@ -641,23 +641,23 @@ export function SettingsModal() {
 
             {activeSettingsTab === 'runtime' && (
               <div className="settings-section">
-                <h3>账号状态</h3>
+                <h3>{t('settings.accountStatus')}</h3>
                 <div className="account-info">
                   <div className="info-row">
-                    <span className="label">登录状态</span>
-                    <span className="value">{vgoAILoggedIn ? '已登录' : '未登录'}</span>
+                    <span className="label">{t('settings.loginStatus')}</span>
+                    <span className="value">{vgoAILoggedIn ? t('settings.loggedIn') : t('settings.notLoggedIn')}</span>
                   </div>
                   <div className="info-row">
-                    <span className="label">账号</span>
-                    <span className="value">{vgoAIDisplayName || vgoAIEmail || '未绑定'}</span>
+                    <span className="label">{t('settings.account')}</span>
+                    <span className="value">{vgoAIDisplayName || vgoAIEmail || t('settings.notBound')}</span>
                   </div>
                   <div className="info-row">
-                    <span className="label">云端默认模型</span>
-                    <span className="value">{vgoAIPreferredModel || '未设置'}</span>
+                    <span className="label">{t('settings.cloudDefaultModel')}</span>
+                    <span className="value">{vgoAIPreferredModel || t('settings.notSet')}</span>
                   </div>
                 </div>
 
-                <h3>运行引擎</h3>
+                <h3>{t('settings.runtimeEngine')}</h3>
                 <div className="engine-list">
                   {visibleEngines.map((engine) => (
                     <button

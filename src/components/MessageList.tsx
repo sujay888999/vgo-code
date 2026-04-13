@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import type { Message } from '../store/appStore'
+import { useI18n } from '../i18n'
 import {
   Copy,
   CheckCheck,
@@ -44,6 +45,7 @@ interface MessageItemProps {
 }
 
 function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
+  const { t } = useI18n()
   const isUser = message.role === 'user'
   const isAssistant = message.role === 'assistant'
   const isLoading = message.status === 'loading'
@@ -93,7 +95,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
-    return lines[lines.length - 1] || '点击展开查看本轮推理过程'
+    return lines[lines.length - 1] || t('message.clickToExpand')
   })()
 
   const renderContent = () => {
@@ -106,7 +108,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
         >
           <span className="message-progress-toggle-meta">
             <ChevronRight size={14} />
-            <span>{message.title || '推理过程'}</span>
+            <span>{message.title || t('message.reasoning')}</span>
           </span>
           <span className="message-progress-toggle-preview">{previewLine}</span>
         </button>
@@ -116,8 +118,8 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
     if (isLoading) {
       return (
         <div className="message-loading message-loading-stream">
-          <span className="loading-text">{message.title || '思考并输出中...'}</span>
-          <StreamingContent text={displayedText || '正在准备回复...'} isStreaming={true} />
+          <span className="loading-text">{message.title || t('message.thinking')}</span>
+          <StreamingContent text={displayedText || t('message.preparing')} isStreaming={true} />
         </div>
       )
     }
@@ -132,7 +134,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
               onClick={() => setIsCollapsed(true)}
             >
               <ChevronDown size={14} />
-              <span>{message.title || '推理过程'}</span>
+              <span>{message.title || t('message.reasoning')}</span>
             </button>
           )}
           <StreamingContent text={displayedText} isStreaming={isStreaming} />
@@ -151,7 +153,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
 
       <div className="message-body">
         <div className="message-meta">
-          <span className="message-role">{isUser ? '你' : isProgressMessage ? '过程' : '助手'}</span>
+          <span className="message-role">{isUser ? t('message.roleUser') : isProgressMessage ? t('message.roleProgress') : t('message.roleAssistant')}</span>
           <span className="message-time">
             <Clock size={12} />
             {formatTime(message.timestamp)}
@@ -163,7 +165,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
           {message.status === 'error' && (
             <div className="message-error">
               <AlertTriangle size={14} />
-              <span>处理失败</span>
+              <span>{t('message.failed')}</span>
             </div>
           )}
         </div>
