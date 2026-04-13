@@ -161,10 +161,11 @@ export function Composer() {
   }
 
   const handleSubmit = async () => {
-    if (!input.trim() || promptRunning) return
+    if (promptRunning) return
+    if (!input.trim() && attachments.length === 0) return
 
     const currentAttachments = [...attachments]
-    const promptText = `${input.trim()}${buildAttachmentContext(currentAttachments)}`
+    const promptText = input.trim() ? `${input.trim()}${buildAttachmentContext(currentAttachments)}` : buildAttachmentContext(currentAttachments)
     setInput('')
     setPromptRunning(true)
     setShowTemplates(false)
@@ -287,7 +288,7 @@ export function Composer() {
     removeAttachmentAt(index)
   }
 
-  const canSend = input.trim().length > 0 && !promptRunning && vgoAILoggedIn
+  const canSend = (input.trim().length > 0 || attachments.length > 0) && !promptRunning && vgoAILoggedIn
 
   return (
     <div className="composer">
