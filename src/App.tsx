@@ -529,11 +529,11 @@ export function App() {
   }, [hydrate])
 
   return (
-    <div className="layout" key={localeKey}>
-      <Sidebar />
-      <MainPanel />
-      {settingsOverlayOpen && <SettingsModal />}
-      {renameOverlayOpen && <RenameModal />}
+    <div className="layout">
+      <Sidebar key={`sidebar-${localeKey}`} />
+      <MainPanel key={`mainpanel-${localeKey}`} />
+      {settingsOverlayOpen && <SettingsModal key={`settings-${localeKey}`} />}
+      {renameOverlayOpen && <RenameModal key={`rename-${localeKey}`} />}
       {updateNotificationOpen && (
         <UpdateNotification onClose={() => setUpdateNotificationOpen(false)} />
       )}
