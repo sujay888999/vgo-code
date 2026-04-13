@@ -1388,6 +1388,21 @@ async function runOllamaPrompt({
       message: step === 0 ? "正在请求 Ollama 模型..." : `正在继续第 ${step + 1} 轮推理...`
     });
 
+    if (step === 0) {
+      try {
+        const workspacePath = workspace || process.cwd();
+        const entries = fs.readdirSync(workspacePath).filter(f => !f.startsWith('.') && f !== 'node_modules');
+        if (entries.length === 0) {
+          messages.push({
+            role: "user",
+            content: "重要提示：当前工作目录是空的，没有任何文件。如果用户要求创建新文件，不要尝试读取不存在的配置文件（如 package.json、tsconfig.json 等），直接使用 write_file 工具创建所需文件即可。"
+          });
+        }
+      } catch (e) {
+        // ignore directory check errors
+      }
+    }
+
     try {
       const response = await sendOllamaRequest({
         baseUrl,
