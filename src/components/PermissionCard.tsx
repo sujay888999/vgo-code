@@ -1,12 +1,14 @@
 import React from 'react'
 import type { TaskStep } from '../store/appStore'
 import { ShieldAlert, Check, X } from 'lucide-react'
+import { useI18n } from '../i18n'
 
 interface PermissionCardProps {
   step: TaskStep
 }
 
 export function PermissionCard({ step }: PermissionCardProps) {
+  const { t } = useI18n()
   const requestId = step.requestId
 
   const respond = async (approved: boolean) => {
@@ -25,17 +27,17 @@ export function PermissionCard({ step }: PermissionCardProps) {
           <ShieldAlert size={16} />
           <span>{step.title}</span>
         </div>
-        <span className="permission-card-badge">等待确认</span>
+        <span className="permission-card-badge">{t('permission.waitingConfirm')}</span>
       </div>
       {step.detail && <pre className="permission-card-detail">{step.detail}</pre>}
       <div className="permission-card-actions">
         <button className="ghost-button" onClick={() => void respond(false)}>
           <X size={14} />
-          <span>拒绝</span>
+          <span>{t('permission.deny')}</span>
         </button>
         <button className="primary-button" onClick={() => void respond(true)}>
           <Check size={14} />
-          <span>允许本次</span>
+          <span>{t('permission.allowOnce')}</span>
         </button>
       </div>
     </div>

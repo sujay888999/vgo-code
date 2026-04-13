@@ -1,5 +1,6 @@
 import React from 'react'
 import type { TaskStep } from '../store/appStore'
+import { useI18n } from '../i18n'
 import {
   Circle,
   CheckCircle,
@@ -16,6 +17,8 @@ interface TaskPanelProps {
 }
 
 export function TaskPanel({ steps }: TaskPanelProps) {
+  const { t } = useI18n()
+
   const getIcon = (state: TaskStep['state']) => {
     switch (state) {
       case 'completed':
@@ -56,14 +59,14 @@ export function TaskPanel({ steps }: TaskPanelProps) {
       {steps.length === 0 ? (
         <div className="task-empty">
           <Clock size={24} />
-          <p>暂时还没有执行步骤</p>
-          <p className="hint">开始任务后，这里会显示规划、工具调用、能力检查与结果状态。</p>
+          <p>{t('task.empty')}</p>
+          <p className="hint">{t('task.hint')}</p>
         </div>
       ) : (
         <div className="task-list">
           {activeSteps.length > 0 && (
             <div className="task-section">
-              <div className="task-section-title">进行中</div>
+              <div className="task-section-title">{t('task.inProgress')}</div>
               {activeSteps.map((step) => (
                 <div key={step.id} className={`task-item ${step.state}`}>
                   <div className="task-icon">{getIcon(step.state)}</div>
@@ -79,7 +82,9 @@ export function TaskPanel({ steps }: TaskPanelProps) {
 
           {completedSteps.length > 0 && (
             <div className="task-section">
-              <div className="task-section-title">已完成（{completedSteps.length}）</div>
+              <div className="task-section-title">
+                {t('task.completedWithCount', { count: completedSteps.length })}
+              </div>
               {completedSteps.slice(-6).map((step) => (
                 <div key={step.id} className={`task-item ${step.state}`}>
                   <div className="task-icon">{getIcon(step.state)}</div>
@@ -93,7 +98,9 @@ export function TaskPanel({ steps }: TaskPanelProps) {
 
           {errorSteps.length > 0 && (
             <div className="task-section">
-              <div className="task-section-title error">失败（{errorSteps.length}）</div>
+              <div className="task-section-title error">
+                {t('task.failedWithCount', { count: errorSteps.length })}
+              </div>
               {errorSteps.map((step) => (
                 <div key={step.id} className={`task-item ${step.state}`}>
                   <div className="task-icon">{getIcon(step.state)}</div>

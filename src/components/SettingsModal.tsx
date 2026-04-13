@@ -382,8 +382,8 @@ export function SettingsModal() {
                 </div>
 
                 <ToggleRow
-                  title="紧凑布局"
-                  hint="减少间距，适合高密度工作流。"
+                  title={t('settings.compactLayout')}
+                  hint={t('settings.compactLayoutHint')}
                   enabled={compactMode}
                   onToggle={async () => {
                     toggleCompactMode()
@@ -526,78 +526,6 @@ export function SettingsModal() {
                     await applyAgentPrefs({ showRuntimeMeta: !showRuntimeMeta })
                   }}
                 />
-
-                <div className="slider-row">
-                  <div>
-                    <span>工作范围</span>
-                    <p className="hint">
-                      控制 Agent 默认可访问的位置。选择“全局范围”后，作用域会扩大到整台电脑。
-                    </p>
-                  </div>
-                  <div className="language-grid">
-                    {[
-                      ['workspace-only', t('settings.workspaceOnly')],
-                      ['workspace-and-desktop', t('settings.workspaceAndDesktop')],
-                      ['full-system', t('settings.fullSystem')],
-                    ].map(([id, label]) => (
-                      <button
-                        key={id}
-                        type="button"
-                        className={`theme-card ${accessScope === id ? 'active' : ''}`}
-                        onClick={async () => {
-                          setAccessScope(id as 'workspace-only' | 'workspace-and-desktop' | 'full-system')
-                          await applyAccess({ scope: id })
-                        }}
-                      >
-                        <span>{label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeSettingsTab === 'agent' && (
-              <div className="settings-section">
-                <ToggleRow
-                  title="自动压缩上下文"
-                  hint="长会话时自动总结历史，降低上下文膨胀。"
-                  enabled={autoSummarizeContext}
-                  onToggle={async () => {
-                    toggleAutoSummarize()
-                    await applyAgentPrefs({ autoSummarizeContext: !autoSummarizeContext })
-                  }}
-                />
-                <div className="slider-row">
-                  <div>
-                    <span>压缩阈值</span>
-                    <p className="hint">达到上下文窗口阈值后自动触发压缩。</p>
-                  </div>
-                  <div className="slider-control">
-                    <input
-                      type="range"
-                      min={0.5}
-                      max={0.98}
-                      step={0.01}
-                      value={compressionThreshold}
-                      onChange={async (event) => {
-                        const next = Number(event.target.value)
-                        setCompressionThreshold(next)
-                        await applyAgentPrefs({ contextCompressionThreshold: next })
-                      }}
-                    />
-                    <span>{Math.round(compressionThreshold * 100)}%</span>
-                  </div>
-                </div>
-                <ToggleRow
-                  title={t('settings.showRuntimeMeta')}
-                  hint={t('settings.showRuntimeMetaHint')}
-                  enabled={showRuntimeMeta}
-                  onToggle={async () => {
-                    toggleShowRuntimeMeta()
-                    await applyAgentPrefs({ showRuntimeMeta: !showRuntimeMeta })
-                  }}
-                />
                 <ToggleRow
                   title={t('settings.showExecutionPlan')}
                   hint={t('settings.showExecutionPlanHint')}
@@ -677,40 +605,40 @@ export function SettingsModal() {
                       {switchingKey === engine.id ? (
                         <Loader2 size={14} className="spin" />
                       ) : runtimeEngineId === engine.id ? (
-                        <span className="engine-badge">当前</span>
+                        <span className="engine-badge">{t('settings.current')}</span>
                       ) : null}
                     </button>
                   ))}
                 </div>
 
-                <h3>能力维护</h3>
+                <h3>{t('settings.capabilityMaintenance')}</h3>
                 <div className="manual-config-card">
                   <p className="hint">
-                    安装本地 Whisper 转写能力，或整理历史 `ollama-engine.log` 的乱码记录。
+                    {t('settings.capabilityMaintenanceHint')}
                   </p>
                   <div className="button-row manual-config-actions">
                     <button type="button" className="primary-button" onClick={() => void handleInstallWhisper()} disabled={busy}>
                       {busy ? <Loader2 size={14} className="spin" /> : <Wrench size={14} />}
-                      安装 Whisper
+                      {t('settings.installWhisper')}
                     </button>
                     <button type="button" className="ghost-button" onClick={() => void handleNormalizeLog()} disabled={busy}>
                       <Wrench size={14} />
-                      整理日志编码
+                      {t('settings.normalizeLog')}
                     </button>
                   </div>
                   {status && <p className="manual-config-status">{status}</p>}
                 </div>
 
-                <h3>手动配置模型</h3>
+                <h3>{t('settings.manualConfig')}</h3>
                 <div className="manual-config-card">
                   <p className="hint">
-                    填写配置名称、类型、地址和模型名即可保存，并立即切换到这条模型链路。系统默认云端配置不在这里展示。
+                    {t('settings.manualConfigHint')}
                   </p>
 
                   <div className="simple-config-grid">
                     <input
                       className="text-input"
-                      placeholder="配置名称，例如 Gemma4 本地模型"
+                      placeholder={t('settings.configNamePlaceholder')}
                       value={configName}
                       onChange={(event) => {
                         setConfigName(event.target.value)
@@ -732,8 +660,8 @@ export function SettingsModal() {
                         )
                       }}
                     >
-                      <option value="Ollama">本地 Ollama</option>
-                      <option value="Custom HTTP Provider">云端 HTTP Provider</option>
+                      <option value="Ollama">{t('settings.localOllama')}</option>
+                      <option value="Custom HTTP Provider">{t('settings.cloudHttpProvider')}</option>
                     </select>
 
                     <input
@@ -752,7 +680,7 @@ export function SettingsModal() {
 
                     <input
                       className="text-input"
-                      placeholder={provider === 'Ollama' ? '例如 gemma4:e4b' : '例如 gpt-5.4-mini'}
+                      placeholder={provider === 'Ollama' ? t('settings.modelPlaceholderOllama') : t('settings.modelPlaceholderHttp')}
                       value={model}
                       onChange={(event) => {
                         setModel(event.target.value)
@@ -763,7 +691,7 @@ export function SettingsModal() {
                     {provider !== 'Ollama' && (
                       <input
                         className="text-input"
-                        placeholder="API Key（可选）"
+                        placeholder={t('settings.apiKeyPlaceholder')}
                         value={apiKey}
                         onChange={(event) => {
                           setApiKey(event.target.value)
@@ -774,7 +702,7 @@ export function SettingsModal() {
 
                     <textarea
                       className="text-input config-textarea"
-                      placeholder="系统提示（可选）"
+                      placeholder={t('settings.systemPromptPlaceholder')}
                       value={systemPrompt}
                       onChange={(event) => {
                         setSystemPrompt(event.target.value)
@@ -786,11 +714,11 @@ export function SettingsModal() {
                   <div className="button-row manual-config-actions">
                     <button type="button" className="primary-button" onClick={() => void handleSaveCurrentProfile()} disabled={busy}>
                       {busy ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
-                      保存并切换
+                      {t('settings.saveAndSwitch')}
                     </button>
                     <button type="button" className="ghost-button" onClick={() => void handleCreateNewProfile()} disabled={busy}>
                       <Plus size={14} />
-                      另存为新配置
+                      {t('settings.saveAsNew')}
                     </button>
                     <button
                       type="button"
@@ -799,13 +727,13 @@ export function SettingsModal() {
                       disabled={busy || !editableActiveProfile}
                     >
                       <Trash2 size={14} />
-                      删除当前配置
+                      {t('settings.deleteCurrentConfig')}
                     </button>
                   </div>
                   {status && <p className="manual-config-status">{status}</p>}
                 </div>
 
-                <h3>已有配置</h3>
+                <h3>{t('settings.existingConfigs')}</h3>
                 <div className="remote-profiles">
                   {editableProfiles.map((profile) => (
                     <button
@@ -824,12 +752,12 @@ export function SettingsModal() {
                       {switchingKey === profile.id ? (
                         <Loader2 size={14} className="spin" />
                       ) : activeRemoteProfileId === profile.id ? (
-                        <span className="profile-badge">已启用</span>
+                        <span className="profile-badge">{t('settings.enabled')}</span>
                       ) : null}
                     </button>
                   ))}
                   {editableProfiles.length === 0 && (
-                    <p className="manual-config-status">暂无手动配置，可先保存一个本地或云端模型配置。</p>
+                    <p className="manual-config-status">{t('settings.noManualConfigs')}</p>
                   )}
                 </div>
               </div>

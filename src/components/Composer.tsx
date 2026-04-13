@@ -30,13 +30,6 @@ interface QuickTemplate {
   prompt: string
 }
 
-interface QuickTemplate {
-  id: string
-  icon: React.ReactNode
-  label: string
-  prompt: string
-}
-
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -145,6 +138,17 @@ export function Composer() {
     textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
   }, [input])
 
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
+      }
+    }
+  }, [])
+
   const pollLatestState = async () => {
     try {
       const state = await window.vgoDesktop?.getState?.()
@@ -177,7 +181,7 @@ export function Composer() {
       let lastHistoryLength = 0
       let stableCount = 0
 
-      const pollInterval = window.setInterval(async () => {
+      pollIntervalRef.current = window.setInterval(async () => {
         pollCount += 1
         const state = await pollLatestState()
         const currentHistoryLength = state?.history?.length || 0
@@ -190,7 +194,10 @@ export function Composer() {
         }
 
         if (stableCount >= 3 || pollCount >= maxPolls) {
-          window.clearInterval(pollInterval)
+          if (pollIntervalRef.current) {
+            window.clearInterval(pollIntervalRef.current)
+            pollIntervalRef.current = null
+          }
           setPromptRunning(false)
           clearAttachments()
         }
@@ -286,52 +293,52 @@ export function Composer() {
     <div className="composer">
       <div className="permission-bar">
         <div className="permission-group">
-          <span className="permission-label">权限:</span>
+          <span className="permission-label">{t('composer.permission')}</span>
           <button
             className={`permission-button ${permissionMode === 'workload-only' ? 'active' : ''}`}
             onClick={() => void handlePermissionModeChange('workload-only')}
-            title="默认权限"
+            title={t('composer.defaultTitle')}
           >
             <Lock size={14} />
-            <span>默认</span>
+            <span>{t('composer.default')}</span>
           </button>
           <button
             className={`permission-button ${permissionMode === 'full' ? 'active' : ''}`}
             onClick={() => void handlePermissionModeChange('full')}
-            title="完全访问权限"
+            title={t('composer.fullAccessTitle')}
           >
             <Unlock size={14} />
-            <span>完全访问</span>
+            <span>{t('composer.fullAccess')}</span>
           </button>
         </div>
 
         <div className="permission-divider" />
 
         <div className="permission-group">
-          <span className="permission-label">范围:</span>
+          <span className="permission-label">{t('composer.scope')}</span>
           <button
             className={`permission-button ${accessScope === 'workspace-only' ? 'active' : ''}`}
             onClick={() => void handleAccessScopeChange('workspace-only')}
-            title="仅工作区"
+            title={t('composer.workspaceTitle')}
           >
             <FolderOpen size={14} />
-            <span>工作区</span>
+            <span>{t('composer.workspace')}</span>
           </button>
           <button
             className={`permission-button ${accessScope === 'workspace-and-desktop' ? 'active' : ''}`}
             onClick={() => void handleAccessScopeChange('workspace-and-desktop')}
-            title="工作区和桌面"
+            title={t('composer.workspaceDesktopTitle')}
           >
             <Globe size={14} />
-            <span>工作区 + 桌面</span>
+            <span>{t('composer.workspaceDesktop')}</span>
           </button>
           <button
             className={`permission-button ${accessScope === 'full-system' ? 'active' : ''}`}
             onClick={() => void handleAccessScopeChange('full-system')}
-            title="全局范围"
+            title={t('composer.globalTitle')}
           >
             <Globe size={14} />
-            <span>全局</span>
+            <span>{t('composer.global')}</span>
           </button>
         </div>
       </div>

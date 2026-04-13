@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { useI18n } from './i18n'
-import { useAppStore } from './store/appStore'
 import { useI18n, setI18nLocale } from './i18n'
+import { useAppStore } from './store/appStore'
 import { Sidebar } from './components/Sidebar'
 import { MainPanel } from './components/MainPanel'
 import { SettingsModal } from './components/SettingsModal'
@@ -399,7 +398,7 @@ export function App() {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         updateTaskStep(payload.requestId, {
           state: 'permission_granted',
-          detail: payload.detail || '已授权，继续执行。',
+          detail: payload.detail || t('permission.granted'),
         })
       }
 
@@ -407,14 +406,14 @@ export function App() {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'error')
         updateTaskStep(payload.requestId, {
           state: 'permission_denied',
-          detail: payload.detail || '已拒绝本次操作。',
+          detail: payload.detail || t('permission.denied'),
         })
       }
 
       if (eventType === 'plan') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         upsertTaskStep('task-plan', {
-          title: payload.summary || '执行计划',
+          title: payload.summary || t('task.plan'),
           detail: Array.isArray(payload.steps) ? payload.steps.join('\n') : '',
           state: 'planning',
         })
@@ -423,7 +422,7 @@ export function App() {
       if (eventType === 'workflow_selected') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         upsertTaskStep('task-workflow', {
-          title: payload.label ? `工作流 · ${payload.label}` : '工作流已切换',
+          title: payload.label ? `${t('agentTrace.workflow')} · ${payload.label}` : t('task.workflowSwitched'),
           detail: payload.detail || '',
           state: 'planning',
         })
@@ -432,7 +431,7 @@ export function App() {
       if (eventType === 'workflow_probe') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         upsertTaskStep('task-probe', {
-          title: '前置检查',
+          title: t('agentTrace.prerequisite'),
           detail: payload.detail || '',
           state: 'working',
         })
@@ -441,7 +440,7 @@ export function App() {
       if (eventType === 'capability_gap') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'error')
         upsertTaskStep('task-gap', {
-          title: '能力缺口',
+          title: t('agentTrace.capabilityGap'),
           detail: payload.detail || '',
           state: 'error',
         })
@@ -451,11 +450,11 @@ export function App() {
         const skills = Array.isArray(payload.skills) ? payload.skills : []
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         upsertTaskStep('task-skills', {
-          title: 'Skill 建议',
+          title: t('agentTrace.skillSuggestion'),
           detail:
             payload.detail ||
             skills.map((skill) => `${skill.name} · ${skill.path}`).join('\n') ||
-            '未找到匹配的本机 skill',
+            t('agentTrace.noMatchingSkill'),
           state: skills.length ? 'completed' : 'error',
         })
       }
@@ -480,7 +479,7 @@ export function App() {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         addTaskStep({
           id: `tool-result-${timestamp}`,
-          title: `${payload.tool || '工具'}结果`,
+          title: `${payload.tool || t('agentTrace.tool')} ${t('agentTrace.result')}`,
           detail: payload.summary || payload.output || '',
           state: payload.ok ? 'completed' : 'error',
           timestamp,
@@ -490,7 +489,7 @@ export function App() {
       if (eventType === 'verification') {
         addTaskStep({
           id: `verify-${timestamp}`,
-          title: payload.detail || '结果复核',
+          title: payload.detail || t('agentTrace.verification'),
           detail: '',
           state: payload.status === 'passed' ? 'completed' : 'working',
           timestamp,
