@@ -166,15 +166,17 @@ export function Composer() {
 
     const currentAttachments = [...attachments]
     const promptText = input.trim() ? `${input.trim()}${buildAttachmentContext(currentAttachments)}` : buildAttachmentContext(currentAttachments)
+    
     setInput('')
     setPromptRunning(true)
     setShowTemplates(false)
 
     try {
-      await window.vgoDesktop?.submitPrompt?.({
+      const result = await window.vgoDesktop?.submitPrompt?.({
         text: promptText,
         attachments: currentAttachments,
       })
+      console.log('[Composer] submitPrompt result:', result)
       await pollLatestState()
 
       const maxPolls = 60
