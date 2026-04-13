@@ -6,7 +6,7 @@ const modelAdapters = require("./modelAdapterRegistry");
 const familyTools = require("./modelFamilyToolAdapters");
 const skillRegistry = require("./skillRegistry");
 
-const MAX_AGENT_STEPS = 12;
+const MAX_AGENT_STEPS = 30;
 const UPSTREAM_RETRYABLE_PATTERN = /Failed to connect to upstream channel/i;
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "vgo-remote.log");
@@ -215,7 +215,7 @@ function extractToolCalls(rawText = "") {
   return [];
 }
 
-function buildMessageHistory(history, systemPrompt, currentPrompt = "") {
+function buildMessageHistory(history, systemPrompt, currentPrompt = "", attachments = []) {
   const trimmedHistory = (history || [])
     .filter((item) => item && (item.role === "user" || item.role === "assistant"))
     .map((item) => ({
@@ -224,6 +224,10 @@ function buildMessageHistory(history, systemPrompt, currentPrompt = "") {
     }))
     .filter((item) => item.content)
     .slice(-20);
+
+  const attachmentSummary = attachments.length
+    ? `\n\n[Attachments]\n${attachments.map((item, index) => `${index + 1}. ${item.name} | ${item.path}`).join("\n")}`
+    : "";
 
   const messages = [
     {
@@ -238,7 +242,7 @@ function buildMessageHistory(history, systemPrompt, currentPrompt = "") {
   if (!hasUserMessage && normalizedPrompt) {
     messages.push({
       role: "user",
-      content: normalizedPrompt
+      content: normalizedPrompt + attachmentSummary
     });
   }
 
@@ -757,6 +761,7 @@ async function runRealVgoPrompt({
   requestToolPermission,
   onEvent,
   prompt,
+  attachments = [],
   signal
 }) {
   const token = settings.vgoAI.accessToken;
@@ -767,7 +772,7 @@ async function runRealVgoPrompt({
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
   const skillWorkflowNudge = skillRegistry.buildSkillWorkflowNudge(activeSkills);
   const systemPrompt = buildSafeSystemPrompt(settings, sessionMeta, activeSkills);
-  const activeHistory = buildMessageHistory(history, systemPrompt, prompt);
+  const activeHistory = buildMessageHistory(history, systemPrompt, prompt, attachments);
   if (skillPreflightNudge) {
     activeHistory.push({
       role: "user",
@@ -1312,12 +1317,16 @@ async function runRealVgoPrompt({
   };
 }
 
-async function runLocalPrompt({ workspace, sessionId, prompt, settings, history, sessionMeta }) {
+async function runLocalPrompt({ workspace, sessionId, prompt, settings, history, sessionMeta, attachments = [] }) {
   const remote = settings?.remote || {};
   const baseUrl = (remote.baseUrl || "").trim().replace(/\/+$/, "");
   const activeSkills = skillRegistry.detectRelevantSkills(prompt);
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
   const skillWorkflowNudge = skillRegistry.buildSkillWorkflowNudge(activeSkills);
+
+  const attachmentSummary = attachments.length
+    ? `\n\n[Attachments]\n${attachments.map((item, index) => `${index + 1}. ${item.name} | ${item.path}`).join("\n")}`
+    : "";
 
   if (!baseUrl) {
     return {
@@ -1342,7 +1351,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
         systemPrompt: buildSafeSystemPrompt(settings, sessionMeta, activeSkills),
         workspace,
         sessionId,
-        prompt: [prompt, skillPreflightNudge, skillWorkflowNudge].filter(Boolean).join("\n\n"),
+        prompt: [prompt, skillPreflightNudge, skillWorkflowNudge, attachmentSummary].filter(Boolean).join("\n\n"),
         history
       })
     });
