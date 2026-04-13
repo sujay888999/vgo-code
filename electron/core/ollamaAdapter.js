@@ -1366,6 +1366,8 @@ async function runOllamaPrompt({
     attachments
   );
 
+  let writeArgumentRetrySent = false;
+
   for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
     if (signal?.aborted) {
       return {
@@ -1599,6 +1601,22 @@ async function runOllamaPrompt({
 
       const toolResultMessage = protocol.buildToolResultMessage(toolResults);
       messages.push({ role: "user", content: toolResultMessage });
+
+      const hasWriteArgumentFailure = toolResults.some(
+        (result) =>
+          result.name === "write_file" &&
+          !result.ok &&
+          /Missing required argument: (path|content)/i.test(String(result.summary || ""))
+      );
+
+      if (protocol.promptRequiresWrite(prompt) && hasWriteArgumentFailure && !writeArgumentRetrySent) {
+        writeArgumentRetrySent = true;
+        messages.push({
+          role: "user",
+          content:
+            "你刚才已经调用了 write_file，但参数不完整。下一条请重新调用 write_file，并至少提供 path 和 content。若用户要求放到桌面，请把 path 写成 Desktop/notes.txt 这种明确路径。不要解释，只输出工具调用。"
+        });
+      }
 
     } catch (error) {
       logRuntime("request:exception", { error: error.message });
