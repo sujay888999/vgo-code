@@ -5,7 +5,7 @@ import { MessageList } from './MessageList'
 import { Composer } from './Composer'
 import { TaskPanel } from './TaskPanel'
 import { PermissionCard } from './PermissionCard'
-import { ChevronDown, ChevronUp, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 
 export function MainPanel() {
   const { t } = useI18n()
@@ -17,7 +17,6 @@ export function MainPanel() {
     showTaskPanel,
     taskPanelCollapsed,
     toggleTaskPanelCollapsed,
-    toggleShowTaskPanel,
     vgoAILoggedIn,
     vgoAIPreferredModel,
     modelCatalog,
@@ -222,13 +221,7 @@ export function MainPanel() {
             </div>
           )}
 
-          <button
-            className="icon-button"
-            onClick={toggleShowTaskPanel}
-            title={showTaskPanel ? t('mainPanel.hideTaskPanel') : t('mainPanel.showTaskPanel')}
-          >
-            {showTaskPanel ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-          </button>
+
         </div>
       </header>
 

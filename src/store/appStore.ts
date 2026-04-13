@@ -287,7 +287,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   compactMode: false,
   enterToSend: true,
   autoScroll: true,
-  showTaskPanel: true,
+  showTaskPanel: false,
   taskPanelCollapsed: false,
   confirmDangerousOps: true,
   autoSummarizeContext: true,
