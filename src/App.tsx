@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from './store/appStore'
+import { useI18n } from './i18n'
 import { Sidebar } from './components/Sidebar'
 import { MainPanel } from './components/MainPanel'
 import { SettingsModal } from './components/SettingsModal'
@@ -28,7 +29,7 @@ function appendUniqueBlock(currentText: string, nextBlock: string) {
   return `${normalizedCurrent}\n\n${normalizedNext}`.trim()
 }
 
-function buildLiveProgressBlock(eventType: string, payload: any) {
+function buildLiveProgressBlock(eventType: string, payload: any, t: (key: string) => string) {
   if (eventType === 'task_status') {
     if (payload?.message) return payload.message
     if (payload?.detail) return payload.detail
@@ -36,34 +37,34 @@ function buildLiveProgressBlock(eventType: string, payload: any) {
 
   if (eventType === 'plan') {
     const steps = Array.isArray(payload?.steps) ? payload.steps.filter(Boolean) : []
-    return [payload?.summary || '执行计划', ...steps.map((step: string) => `- ${step}`)]
+    return [payload?.summary || t('task.plan'), ...steps.map((step: string) => `- ${step}`)]
       .filter(Boolean)
       .join('\n')
   }
 
   if (eventType === 'workflow_selected') {
-    return payload?.detail || (payload?.label ? `已切换到 ${payload.label} 工作流` : '')
+    return payload?.detail || (payload?.label ? `${t('task.workflowSwitched')} ${payload.label}` : '')
   }
 
   if (eventType === 'workflow_probe') {
-    return payload?.detail || '已完成前置检查'
+    return payload?.detail || t('task.probeComplete')
   }
 
   if (eventType === 'tool_result') {
     const summary = payload?.summary || payload?.output || ''
-    return `${payload?.ok ? '工具已完成' : '工具失败'}: ${payload?.tool || 'unknown'}${summary ? `\n${summary}` : ''}`
+    return `${payload?.ok ? t('tool.completed') : t('tool.failed')}: ${payload?.tool || 'unknown'}${summary ? `\n${summary}` : ''}`
   }
 
   if (eventType === 'permission_requested') {
-    return `等待授权: ${payload?.tool || 'unknown'}${payload?.detail ? `\n${payload.detail}` : ''}`
+    return `${t('permission.waiting')}: ${payload?.tool || 'unknown'}${payload?.detail ? `\n${payload.detail}` : ''}`
   }
 
   if (eventType === 'permission_granted') {
-    return `已授权继续执行${payload?.tool ? `: ${payload.tool}` : ''}`
+    return `${t('permission.granted')}${payload?.tool ? `: ${payload.tool}` : ''}`
   }
 
   if (eventType === 'permission_denied') {
-    return `授权被拒绝${payload?.tool ? `: ${payload.tool}` : ''}`
+    return `${t('permission.denied')}${payload?.tool ? `: ${payload.tool}` : ''}`
   }
 
   if (eventType === 'capability_gap' || eventType === 'skill_suggestions') {
@@ -73,49 +74,49 @@ function buildLiveProgressBlock(eventType: string, payload: any) {
   return ''
 }
 
-function getTaskCopy(status?: string, payload?: any) {
+function getTaskCopy(status?: string, payload?: any, t: (key: string) => string = (k: string) => k) {
   switch (status) {
     case 'planning':
       return {
-        title: '规划任务',
-        detail: payload?.message || '正在分析需求并生成执行计划...',
+        title: t('task.planningTitle'),
+        detail: payload?.message || t('task.analyzing'),
         state: 'planning' as const,
       }
     case 'thinking':
       return {
-        title: '思考中',
-        detail: payload?.message || '正在整理上下文并请求模型响应...',
+        title: t('task.thinking'),
+        detail: payload?.message || t('task.thinkingContext'),
         state: 'working' as const,
       }
     case 'continuing':
       return {
-        title: '继续处理',
-        detail: payload?.message || '正在延续当前任务流并推进下一步...',
+        title: t('task.continuing'),
+        detail: payload?.message || t('task.continuingDetail'),
         state: 'working' as const,
       }
     case 'tool_running':
       return {
-        title: payload?.message || '运行工具',
+        title: payload?.message || t('task.running'),
         detail: payload?.detail || '',
         state: 'working' as const,
       }
     case 'retrying':
     case 'fallback_model':
       return {
-        title: payload?.message || '切换策略',
-        detail: payload?.detail || '正在重试或切换可用模型链路...',
+        title: payload?.message || t('task.switching'),
+        detail: payload?.detail || t('task.switchingDetail'),
         state: 'working' as const,
       }
     case 'completed':
       return {
-        title: payload?.message || '任务完成',
+        title: payload?.message || t('task.completed'),
         detail: payload?.detail || '',
         state: 'completed' as const,
       }
     case 'error':
     case 'failed':
       return {
-        title: payload?.message || '任务失败',
+        title: payload?.message || t('task.error'),
         detail: payload?.detail || '',
         state: 'error' as const,
       }
@@ -173,6 +174,7 @@ export function App() {
 
   useEffect(() => {
     const handleAgentEvent = (e: Event) => {
+      const { t } = useI18n.getState()
       const payload = (e as CustomEvent).detail || {}
       const eventType = payload.type || payload.event
       const status = payload.status
@@ -193,7 +195,7 @@ export function App() {
             status: nextStatus,
             timestamp,
             kind: 'progress',
-            title: '推理过程',
+            title: t('message.reasoning'),
           })
           return
         }
@@ -205,7 +207,7 @@ export function App() {
           status: nextStatus,
           timestamp,
           kind: 'progress',
-          title: '推理过程',
+          title: t('message.reasoning'),
           collapsed: false,
         })
       }
@@ -223,7 +225,7 @@ export function App() {
             status: nextStatus,
             timestamp,
             kind: 'final',
-            title: '最终结果',
+            title: t('message.finalResult'),
           })
           return
         }
@@ -235,7 +237,7 @@ export function App() {
           status: nextStatus,
           timestamp,
           kind: 'final',
-          title: '最终结果',
+          title: t('message.finalResult'),
         })
       }
 
@@ -250,7 +252,7 @@ export function App() {
           status: nextStatus,
           timestamp,
           kind: 'progress',
-          title: '推理过程',
+          title: t('message.reasoning'),
           collapsed: true,
         })
       }
@@ -269,7 +271,7 @@ export function App() {
             status: nextStatus,
             timestamp,
             kind: 'progress',
-            title: '推理过程',
+            title: t('message.reasoning'),
             collapsed: true,
           })
           return
@@ -282,7 +284,7 @@ export function App() {
           status: nextStatus,
           timestamp,
           kind: 'progress',
-          title: '推理过程',
+          title: t('message.reasoning'),
           collapsed: true,
         })
       }
@@ -313,15 +315,15 @@ export function App() {
         })
       }
 
-      const progressBlock = buildLiveProgressBlock(eventType, payload)
+      const progressBlock = buildLiveProgressBlock(eventType, payload, t)
       const currentLiveText =
         useAppStore.getState().messages.find((message) => message.id === liveMessageId)?.text || ''
 
       if (eventType === 'task_status') {
-        const taskCopy = getTaskCopy(status, payload)
+        const taskCopy = getTaskCopy(status, payload, t)
         if (taskCopy) {
           if (status === 'planning') {
-            upsertLiveMessage(progressBlock || payload?.message || '正在分析任务...', 'loading')
+            upsertLiveMessage(progressBlock || payload?.message || t('task.analyzing'), 'loading')
             upsertTaskStep('task-status-running', {
               title: taskCopy.title,
               detail: taskCopy.detail,
@@ -352,7 +354,7 @@ export function App() {
               detail: taskCopy.detail,
               state: taskCopy.state,
             })
-            finalizeLiveMessage(progressBlock || payload?.message || '任务已完成', 'done')
+            finalizeLiveMessage(progressBlock || payload?.message || t('task.done'), 'done')
           }
 
           if (status === 'error' || status === 'failed') {
@@ -363,7 +365,7 @@ export function App() {
               detail: taskCopy.detail,
               state: taskCopy.state,
             })
-            finalizeLiveMessage(progressBlock || payload?.message || '任务执行失败', 'error')
+            finalizeLiveMessage(progressBlock || payload?.message || t('task.failed'), 'error')
           }
         }
       }
@@ -374,7 +376,7 @@ export function App() {
           id: payload.requestId || `perm-${timestamp}`,
           requestId: payload.requestId,
           tool: payload.tool || 'unknown_tool',
-          title: `权限请求 · ${payload.tool || '未知操作'}`,
+          title: `${t('permission.request')} · ${payload.tool || t('permission.unknown')}`,
           detail: payload.detail || '',
           state: 'permission_requested',
           timestamp,

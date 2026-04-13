@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useAppStore, type AttachmentItem } from '../store/appStore'
+import { useI18n } from '../i18n'
 import {
   Send,
   Paperclip,
@@ -22,13 +23,12 @@ import {
   Unlock,
 } from 'lucide-react'
 
-const QUICK_TEMPLATES = [
-  { id: 'analyze', icon: <Search size={14} />, label: '分析代码', prompt: '请分析当前项目的代码结构和主要功能。' },
-  { id: 'refactor', icon: <Code size={14} />, label: '重构代码', prompt: '请帮我重构以下代码，提升可读性和可维护性：\n' },
-  { id: 'debug', icon: <Bug size={14} />, label: '调试问题', prompt: '我遇到了以下问题，请帮我调试：\n' },
-  { id: 'explain', icon: <BookOpen size={14} />, label: '解释代码', prompt: '请解释以下代码的工作原理：\n' },
-  { id: 'test', icon: <Sparkles size={14} />, label: '生成测试', prompt: '请为以下功能编写测试用例：\n' },
-]
+interface QuickTemplate {
+  id: string
+  icon: React.ReactNode
+  label: string
+  prompt: string
+}
 
 interface QuickTemplate {
   id: string
@@ -83,33 +83,34 @@ function readClipboardImage(file: File): Promise<AttachmentItem | null> {
   })
 }
 
-function buildAttachmentContext(items: AttachmentItem[]) {
+function buildAttachmentContext(items: AttachmentItem[], t: (key: string) => string) {
   if (!items.length) return ''
 
   return [
     '',
-    '[附件信息]',
+    '[Attachment Info]',
     ...items.map((file, index) => {
       const kindLabel =
         file.mediaType === 'image'
-          ? '图片'
+          ? t('attachment.image')
           : file.mediaType === 'audio'
-            ? '音频'
+            ? t('attachment.audio')
             : file.mediaType === 'video'
-              ? '视频'
+              ? t('attachment.video')
               : file.isText
-                ? '文本'
-                : '文件'
-      const head = `${index + 1}. ${file.name} (${kindLabel}，${formatFileSize(file.size)})`
+                ? t('attachment.text')
+                : t('attachment.file')
+      const head = `${index + 1}. ${file.name} (${kindLabel}, ${formatFileSize(file.size)})`
       if (file.isText && file.content) {
-        return `${head}\n路径: ${file.path}\n内容:\n${file.content}`
+        return `${head}\nPath: ${file.path}\nContent:\n${file.content}`
       }
-      return `${head}\n路径: ${file.path}\n说明: 非文本附件，若模型支持多模态请直接结合附件内容处理。`
+      return `${head}\nPath: ${file.path}\nNote: Non-text attachment, process with multimodal support if available.`
     }),
   ].join('\n\n')
 }
 
 export function Composer() {
+  const { t } = useI18n()
   const {
     promptRunning,
     setPromptRunning,
@@ -125,6 +126,14 @@ export function Composer() {
     accessScope,
     setAccessScope,
   } = useAppStore()
+
+  const QUICK_TEMPLATES: QuickTemplate[] = [
+    { id: 'analyze', icon: <Search size={14} />, label: t('template.analyze'), prompt: t('template.analyzePrompt') },
+    { id: 'refactor', icon: <Code size={14} />, label: t('template.refactor'), prompt: t('template.refactorPrompt') },
+    { id: 'debug', icon: <Bug size={14} />, label: t('template.debug'), prompt: t('template.debugPrompt') },
+    { id: 'explain', icon: <BookOpen size={14} />, label: t('template.explain'), prompt: t('template.explainPrompt') },
+    { id: 'test', icon: <Sparkles size={14} />, label: t('template.test'), prompt: t('template.testPrompt') },
+  ]
 
   const [input, setInput] = useState('')
   const [showTemplates, setShowTemplates] = useState(false)
@@ -332,15 +341,15 @@ export function Composer() {
           <button
             className={`toolbar-button ${showTemplates ? 'active' : ''}`}
             onClick={() => setShowTemplates(!showTemplates)}
-            title="快捷模板"
+            title={t('composer.templates')}
           >
             <Zap size={16} />
-            <span>模板</span>
+            <span>{t('composer.templates')}</span>
           </button>
 
-          <button className="toolbar-button" onClick={() => void handleAttachFiles()} title="添加附件">
+          <button className="toolbar-button" onClick={() => void handleAttachFiles()} title={t('composer.addAttachment')}>
             <Paperclip size={16} />
-            <span>附件</span>
+            <span>{t('composer.attach')}</span>
           </button>
         </div>
 
@@ -381,7 +390,7 @@ export function Composer() {
         <textarea
           ref={textareaRef}
           className="composer-textarea"
-          placeholder={vgoAILoggedIn ? '输入你的问题，按 Enter 发送…' : '请先登录 VGO AI 账号'}
+          placeholder={vgoAILoggedIn ? t('composer.placeholder') : t('composer.loginRequired')}
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={handleKeyDown}
@@ -392,7 +401,7 @@ export function Composer() {
 
         <div className="composer-actions">
           {promptRunning ? (
-            <button className="stop-button" onClick={handleStop} title="停止推理">
+            <button className="stop-button" onClick={handleStop} title={t('composer.stop')}>
               <Square size={18} />
             </button>
           ) : (
@@ -400,7 +409,7 @@ export function Composer() {
               className={`send-button ${canSend ? 'ready' : ''}`}
               onClick={() => void handleSubmit()}
               disabled={!canSend}
-              title="发送消息"
+              title={t('composer.send')}
             >
               <Send size={18} />
             </button>
@@ -409,9 +418,9 @@ export function Composer() {
       </div>
 
       <div className="composer-hint">
-        <span>Shift + Enter 换行</span>
+        <span>Shift + Enter {t('composer.newLine')}</span>
         <span>·</span>
-        <span>Enter 发送</span>
+        <span>{t('composer.enterToSend')}</span>
       </div>
     </div>
   )

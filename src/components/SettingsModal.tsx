@@ -13,18 +13,20 @@ import {
   X,
 } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
-import { setI18nLocale } from '../i18n'
+import { useI18n, setI18nLocale } from '../i18n'
 
 type SettingsTab = 'appearance' | 'language' | 'behavior' | 'agent' | 'runtime'
 type ManualProvider = 'Ollama' | 'Custom HTTP Provider'
 
-const TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
-  { id: 'appearance', label: '外观', icon: <Palette size={16} /> },
-  { id: 'language', label: '语言', icon: <Globe size={16} /> },
-  { id: 'behavior', label: '交互', icon: <Settings2 size={16} /> },
-  { id: 'agent', label: 'Skills', icon: <Bot size={16} /> },
-  { id: 'runtime', label: '运行', icon: <Cpu size={16} /> },
-]
+function TabsComponent({ t }: { t: (key: string) => string }) {
+  return [
+    { id: 'appearance' as SettingsTab, label: t('settings.appearance'), icon: <Palette size={16} /> },
+    { id: 'language' as SettingsTab, label: t('settings.language'), icon: <Globe size={16} /> },
+    { id: 'behavior' as SettingsTab, label: t('settings.behavior'), icon: <Settings2 size={16} /> },
+    { id: 'agent' as SettingsTab, label: t('settings.agent'), icon: <Bot size={16} /> },
+    { id: 'runtime' as SettingsTab, label: t('settings.runtime'), icon: <Cpu size={16} /> },
+  ]
+}
 
 function ToggleRow({
   title,
@@ -53,6 +55,7 @@ function ToggleRow({
 }
 
 export function SettingsModal() {
+  const { t } = useI18n()
   const {
     setSettingsOverlayOpen,
     activeSettingsTab,
@@ -93,6 +96,8 @@ export function SettingsModal() {
     hydrate,
   } = useAppStore()
 
+  const TABS = useMemo(() => TabsComponent({ t }), [t])
+
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
   const [draftDirty, setDraftDirty] = useState(false)
@@ -123,10 +128,10 @@ export function SettingsModal() {
   )
   const engineDescriptions = useMemo(
     () => ({
-      ollama: '本地模型链路，适合离线、私有化和低延迟工作流。',
-      'vgo-remote': '云端模型链路，适合更强模型、联网能力和多设备同步。',
+      ollama: t('settings.ollamaDesc'),
+      'vgo-remote': t('settings.vgoRemoteDesc'),
     }),
-    [],
+    [t],
   )
 
   const refreshState = async () => {
@@ -166,53 +171,51 @@ export function SettingsModal() {
   }, [editableActiveProfile, activeRemoteProfileId, draftDirty, hydratedProfileId])
 
   const withStatus = async (message: string, fn: () => Promise<void>) => {
-    setBusy(true)
     setStatus(message)
+    setBusy(true)
     try {
       await fn()
-      await refreshState()
-      setStatus('已保存')
       window.setTimeout(() => setStatus(''), 1400)
     } catch (error: any) {
-      setStatus(error?.message || '操作失败')
+      setStatus(error?.message || t('settings.operationFailed'))
     } finally {
       setBusy(false)
     }
   }
 
   const applyAppearance = async (payload: Record<string, unknown>) => {
-    await withStatus('正在保存外观设置...', async () => {
+    await withStatus(t('settings.saving'), async () => {
       await window.vgoDesktop?.updateAppearance?.(payload)
     })
   }
 
   const applyLocalization = async (payload: Record<string, unknown>) => {
-    await withStatus('正在保存语言设置...', async () => {
+    await withStatus(t('settings.savingLanguage'), async () => {
       await window.vgoDesktop?.updateLocalization?.(payload)
     })
   }
 
   const applyBehavior = async (payload: Record<string, unknown>) => {
-    await withStatus('正在保存交互设置...', async () => {
+    await withStatus(t('settings.savingBehavior'), async () => {
       await window.vgoDesktop?.updateBehavior?.(payload)
     })
   }
 
   const applyAccess = async (payload: Record<string, unknown>) => {
-    await withStatus('正在保存工作范围...', async () => {
+    await withStatus(t('settings.savingAccess'), async () => {
       await window.vgoDesktop?.updateAccess?.(payload)
     })
   }
 
   const applyAgentPrefs = async (payload: Record<string, unknown>) => {
-    await withStatus('正在保存 Agent 设置...', async () => {
+    await withStatus(t('settings.savingAgent'), async () => {
       await window.vgoDesktop?.updateAgentPreferences?.(payload)
     })
   }
 
   const handleSaveCurrentProfile = async () => {
     const payload = {
-      name: configName.trim() || '未命名配置',
+      name: configName.trim() || t('settings.unnamedConfig'),
       provider,
       baseUrl: baseUrl.trim(),
       ollamaUrl: provider === 'Ollama' ? baseUrl.trim() : undefined,
@@ -222,7 +225,7 @@ export function SettingsModal() {
       activate: true,
     }
 
-    await withStatus('正在保存当前配置...', async () => {
+    await withStatus(t('settings.savingConfig'), async () => {
       if (editableActiveProfile) {
         await window.vgoDesktop?.updateRemoteProfile?.(editableActiveProfile.id, payload)
         await window.vgoDesktop?.setEngine?.(provider === 'Ollama' ? 'ollama' : 'vgo-remote')
@@ -281,19 +284,19 @@ export function SettingsModal() {
   }
 
   const handleToggleSkill = async (skillId: string, enabled: boolean) => {
-    await withStatus(`${enabled ? '启用' : '停用'} Skill 中...`, async () => {
+    await withStatus(`${enabled ? t('settings.enabling') : t('settings.disabling')} Skill...`, async () => {
       await window.vgoDesktop?.updateSkillState?.({ id: skillId, enabled })
     })
   }
 
   const handleInstallWhisper = async () => {
-    await withStatus('正在安装 Whisper 运行时...', async () => {
+    await withStatus(t('settings.installingWhisper'), async () => {
       await window.vgoDesktop?.installWhisper?.()
     })
   }
 
   const handleNormalizeLog = async () => {
-    await withStatus('正在整理日志编码...', async () => {
+    await withStatus(t('settings.normalizingLog'), async () => {
       await window.vgoDesktop?.normalizeEngineLog?.()
     })
   }
@@ -303,8 +306,8 @@ export function SettingsModal() {
       <div className="modal settings-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header settings-header">
           <div>
-            <h2>设置</h2>
-            <p className="hint">统一管理外观、语言、交互、Skills 和运行能力。</p>
+            <h2>{t('settings.title')}</h2>
+            <p className="hint">{t('settings.hint')}</p>
           </div>
           <button type="button" className="icon-button" onClick={() => setSettingsOverlayOpen(false)}>
             <X size={18} />
@@ -331,13 +334,13 @@ export function SettingsModal() {
           <div className="settings-content">
             {activeSettingsTab === 'appearance' && (
               <div className="settings-section">
-                <h3>主题</h3>
+                <h3>{t('settings.theme')}</h3>
                 <div className="theme-grid">
                   {[
-                    ['aurora', 'Aurora'],
-                    ['graphite', 'Graphite'],
-                    ['paper-light', 'Paper Light'],
-                    ['solar', 'Solar'],
+                    ['aurora', t('settings.theme.aurora')],
+                    ['graphite', t('settings.theme.graphite')],
+                    ['paper-light', t('settings.theme.paper')],
+                    ['solar', t('settings.theme.solar')],
                   ].map(([id, label]) => (
                     <button
                       key={id}
@@ -367,11 +370,11 @@ export function SettingsModal() {
 
             {activeSettingsTab === 'language' && (
               <div className="settings-section">
-                <h3>界面语言</h3>
+                <h3>{t('settings.locale')}</h3>
                 <div className="language-grid">
                   {[
-                    ['zh-CN', '简体中文'],
-                    ['en-US', 'English'],
+                    ['zh-CN', t('settings.zhCN')],
+                    ['en-US', t('settings.enUS')],
                   ].map(([id, label]) => (
                     <button
                       key={id}
@@ -393,8 +396,8 @@ export function SettingsModal() {
             {activeSettingsTab === 'behavior' && (
               <div className="settings-section">
                 <ToggleRow
-                  title="Enter 发送"
-                  hint="按 Enter 直接发送，Shift + Enter 换行。"
+                  title={t('settings.enterToSend')}
+                  hint={t('settings.enterToSendHint')}
                   enabled={enterToSend}
                   onToggle={async () => {
                     toggleEnterToSend()
@@ -402,8 +405,8 @@ export function SettingsModal() {
                   }}
                 />
                 <ToggleRow
-                  title="自动滚动"
-                  hint="停留在底部时，自动跟随最新输出。"
+                  title={t('settings.autoScroll')}
+                  hint={t('settings.autoScrollHint')}
                   enabled={autoScroll}
                   onToggle={async () => {
                     toggleAutoScroll()
@@ -411,8 +414,8 @@ export function SettingsModal() {
                   }}
                 />
                 <ToggleRow
-                  title="显示右侧任务面板"
-                  hint="展示结构化的执行状态和步骤结果。"
+                  title={t('settings.taskPanel')}
+                  hint={t('settings.taskPanelHint')}
                   enabled={showTaskPanel}
                   onToggle={async () => {
                     toggleShowTaskPanel()
@@ -420,12 +423,82 @@ export function SettingsModal() {
                   }}
                 />
                 <ToggleRow
-                  title="危险操作确认"
-                  hint="写文件、执行命令等敏感操作先弹出授权卡。"
+                  title={t('settings.confirmDanger')}
+                  hint={t('settings.confirmDangerHint')}
                   enabled={confirmDangerousOps}
                   onToggle={async () => {
                     toggleConfirmDangerousOps()
                     await applyBehavior({ confirmDangerousOps: !confirmDangerousOps })
+                  }}
+                />
+
+                <div className="slider-row">
+                  <div>
+                    <span>{t('settings.accessScope')}</span>
+                    <p className="hint">{t('settings.accessScopeHint')}</p>
+                  </div>
+                  <div className="language-grid">
+                    {[
+                      ['workspace-only', t('settings.workspaceOnly')],
+                      ['workspace-and-desktop', t('settings.workspaceAndDesktop')],
+                      ['full-system', t('settings.fullSystem')],
+                    ].map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className={`theme-card ${accessScope === id ? 'active' : ''}`}
+                        onClick={async () => {
+                          setAccessScope(id as 'workspace-only' | 'workspace-and-desktop' | 'full-system')
+                          await applyAccess({ scope: id })
+                        }}
+                      >
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeSettingsTab === 'agent' && (
+              <div className="settings-section">
+                <ToggleRow
+                  title={t('settings.autoCompress')}
+                  hint={t('settings.autoCompressHint')}
+                  enabled={autoSummarizeContext}
+                  onToggle={async () => {
+                    toggleAutoSummarize()
+                    await applyAgentPrefs({ autoSummarizeContext: !autoSummarizeContext })
+                  }}
+                />
+                <div className="slider-row">
+                  <div>
+                    <span>{t('settings.compressionThreshold')}</span>
+                    <p className="hint">{t('settings.compressionThresholdHint')}</p>
+                  </div>
+                  <div className="slider-control">
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={0.98}
+                      step={0.01}
+                      value={compressionThreshold}
+                      onChange={async (event) => {
+                        const next = Number(event.target.value)
+                        setCompressionThreshold(next)
+                        await applyAgentPrefs({ contextCompressionThreshold: next })
+                      }}
+                    />
+                    <span>{Math.round(compressionThreshold * 100)}%</span>
+                  </div>
+                </div>
+                <ToggleRow
+                  title={t('settings.showRuntimeMeta')}
+                  hint={t('settings.showRuntimeMetaHint')}
+                  enabled={showRuntimeMeta}
+                  onToggle={async () => {
+                    toggleShowRuntimeMeta()
+                    await applyAgentPrefs({ showRuntimeMeta: !showRuntimeMeta })
                   }}
                 />
 
@@ -492,8 +565,8 @@ export function SettingsModal() {
                   </div>
                 </div>
                 <ToggleRow
-                  title="显示运行元信息"
-                  hint="展示模型、上下文和来源等运行信息。"
+                  title={t('settings.showRuntimeMeta')}
+                  hint={t('settings.showRuntimeMetaHint')}
                   enabled={showRuntimeMeta}
                   onToggle={async () => {
                     toggleShowRuntimeMeta()
@@ -501,8 +574,8 @@ export function SettingsModal() {
                   }}
                 />
                 <ToggleRow
-                  title="显示执行计划"
-                  hint="在任务开始阶段展示规划步骤。"
+                  title={t('settings.showExecutionPlan')}
+                  hint={t('settings.showExecutionPlanHint')}
                   enabled={showExecutionPlan}
                   onToggle={async () => {
                     toggleShowExecutionPlan()
@@ -510,11 +583,9 @@ export function SettingsModal() {
                   }}
                 />
 
-                <h3>已安装 Skills</h3>
+                <h3>{t('settings.installedSkills')}</h3>
                 <div className="manual-config-card">
-                  <p className="hint">
-                    这里会自动列出本机已安装的 Skills。以后新安装的 Skill 也会自动出现在这里，并可单独启用或停用。
-                  </p>
+                  <p className="hint">{t('settings.skillsHint')}</p>
                   <div className="remote-profiles skill-list">
                     {skills.map((skill) => (
                       <div key={skill.id} className={`profile-item skill-item ${skill.enabled ? 'active' : ''}`}>
@@ -531,12 +602,12 @@ export function SettingsModal() {
                           onClick={() => void handleToggleSkill(skill.id, !skill.enabled)}
                           disabled={busy}
                         >
-                          {skill.enabled ? '停用' : '启用'}
+                          {skill.enabled ? t('settings.disable') : t('settings.enable')}
                         </button>
                       </div>
                     ))}
                     {skills.length === 0 && (
-                      <p className="manual-config-status">当前还没有发现可管理的本机 Skill。</p>
+                      <p className="manual-config-status">{t('settings.noSkills')}</p>
                     )}
                   </div>
                 </div>

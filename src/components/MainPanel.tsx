@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { useAppStore } from '../store/appStore'
+import { useI18n } from '../i18n'
 import { MessageList } from './MessageList'
 import { Composer } from './Composer'
 import { TaskPanel } from './TaskPanel'
@@ -7,6 +8,7 @@ import { PermissionCard } from './PermissionCard'
 import { ChevronDown, ChevronUp, PanelRightClose, PanelRightOpen } from 'lucide-react'
 
 export function MainPanel() {
+  const { t } = useI18n()
   const {
     activeSessionId,
     messages,
@@ -163,10 +165,10 @@ export function MainPanel() {
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
           </div>
-          <h2>开始新会话</h2>
-          <p>从左侧选择一个线程，或新建会话开始当前工作。</p>
+          <h2>{t('mainPanel.startNewChat')}</h2>
+          <p>{t('mainPanel.tip')}</p>
           <button className="primary-button" onClick={handleCreateSession}>
-            新建会话
+            {t('sidebar.newChat')}
           </button>
         </div>
       </main>
@@ -222,7 +224,7 @@ export function MainPanel() {
           <button
             className="icon-button"
             onClick={toggleShowTaskPanel}
-            title={showTaskPanel ? '隐藏任务面板' : '显示任务面板'}
+            title={showTaskPanel ? t('mainPanel.hideTaskPanel') : t('mainPanel.showTaskPanel')}
           >
             {showTaskPanel ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
           </button>

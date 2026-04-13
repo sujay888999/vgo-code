@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react'
 import { useAppStore } from '../store/appStore'
+import { useI18n } from '../i18n'
 import {
   MessageSquare,
   FolderOpen,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react'
 
 export function Sidebar() {
+  const { t, locale } = useI18n()
   const {
     sessions,
     activeSessionId,
@@ -155,25 +157,25 @@ export function Sidebar() {
 
   const handleBrowserLogin = useCallback(async () => {
     setIsLoggingIn(true)
-    setLoginStatus('正在打开网页登录页…')
+    setLoginStatus(t('status.openingLoginPage'))
     try {
       await window.vgoDesktop?.login?.()
-      setLoginStatus('网页登录页已打开，请在浏览器中完成授权。')
+      setLoginStatus(t('status.loginPageOpened'))
     } catch (e: any) {
-      setLoginStatus(e?.message || '网页登录启动失败')
+      setLoginStatus(e?.message || t('status.loginFailed'))
     } finally {
       setIsLoggingIn(false)
     }
-  }, [])
+  }, [t])
 
   const handlePasswordLogin = useCallback(async () => {
     if (!loginEmail.trim() || !loginPassword.trim()) {
-      setLoginStatus('请先输入邮箱和密码')
+      setLoginStatus(t('status.enterEmailPassword'))
       return
     }
 
     setIsLoggingIn(true)
-    setLoginStatus('正在登录…')
+    setLoginStatus(t('status.loggingIn'))
     try {
       await window.vgoDesktop?.loginWithCredentials?.({
         email: loginEmail.trim(),
@@ -183,24 +185,24 @@ export function Sidebar() {
       })
       await refreshState()
       setLoginPassword('')
-      setLoginStatus('登录成功')
+      setLoginStatus(t('status.loginSuccess'))
       setShowPasswordForm(false)
     } catch (e: any) {
-      setLoginStatus(e?.message || '登录失败')
+      setLoginStatus(e?.message || t('status.loginError'))
     } finally {
       setIsLoggingIn(false)
     }
-  }, [loginEmail, loginPassword, loginDisplayName, vgoAIPreferredModel, refreshState])
+  }, [t, loginEmail, loginPassword, loginDisplayName, vgoAIPreferredModel, refreshState])
 
   const handleLogout = useCallback(async () => {
     try {
       await window.vgoDesktop?.logout?.()
       await refreshState()
-      setLoginStatus('已退出登录')
+      setLoginStatus(t('status.loggedOut'))
     } catch (e: any) {
-      setLoginStatus(e?.message || '退出失败')
+      setLoginStatus(e?.message || t('status.logoutError'))
     }
-  }, [refreshState])
+  }, [t, refreshState])
 
   const filteredSessions = sessions.filter(
     (s) =>
@@ -386,7 +388,7 @@ export function Sidebar() {
           ) : (
             <div className="helper-text">
               <LogIn size={14} style={{ marginRight: 8, display: 'inline' }} />
-              登录 VGO AI 账号后可同步云端模型和权限设置。
+              {t('sidebar.loginRequired')}
             </div>
           )}
         </section>
@@ -394,8 +396,8 @@ export function Sidebar() {
         <section className="panel">
           <div className="panel-head">
             <div>
-              <div className="panel-kicker">线程中心</div>
-              <h3>任务线程</h3>
+              <div className="panel-kicker">{t('sidebar.threadCenter')}</div>
+              <h3>{t('sidebar.taskThreads')}</h3>
             </div>
             <button className="tiny-button" onClick={() => void handleCreateSession()}>
               <Plus size={14} />
@@ -407,7 +409,7 @@ export function Sidebar() {
             <input
               type="text"
               className="text-input"
-              placeholder="搜索线程…"
+              placeholder={t('sidebar.search')}
               value={sessionSearch}
               onChange={(e) => setSessionSearch(e.target.value)}
             />
@@ -417,7 +419,7 @@ export function Sidebar() {
             {pinnedSessions.length > 0 && (
               <div className="session-group">
                 <div className="session-group-title">
-                  <Pin size={12} /> 置顶
+                  <Pin size={12} /> {t('sidebar.pinned')}
                 </div>
                 {pinnedSessions.map((session) => (
                   <SessionItem
@@ -434,7 +436,7 @@ export function Sidebar() {
             {recentSessions.length > 0 && (
               <div className="session-group">
                 <div className="session-group-title">
-                  <MessageSquare size={12} /> 最近
+                  <MessageSquare size={12} /> {t('sidebar.recent')}
                 </div>
                 {recentSessions.map((session) => (
                   <SessionItem
@@ -450,7 +452,7 @@ export function Sidebar() {
 
             {backlogSessions.length > 0 && (
               <div className="session-group">
-                <div className="session-group-title">更多</div>
+                <div className="session-group-title">{t('sidebar.more')}</div>
                 {backlogSessions.map((session) => (
                   <SessionItem
                     key={session.id}
@@ -526,22 +528,22 @@ export function Sidebar() {
 
       <section className="sidebar-footer">
         <button className="ghost-button full-width" onClick={() => setSettingsOverlayOpen(true)}>
-          <Settings size={14} /> 设置
+          <Settings size={14} /> {t('settings.label')}
         </button>
 
         <div className="sidebar-auth-box">
           <div className="sidebar-auth-head">
-            <span className="panel-kicker">登录入口</span>
+            <span className="panel-kicker">{t('sidebar.loginEntry')}</span>
             <div className={`status-pill ${vgoAILoggedIn ? 'online' : ''}`}>
-              {vgoAILoggedIn ? '已登录' : '未登录'}
+              {vgoAILoggedIn ? t('sidebar.loggedIn') : t('sidebar.notLoggedIn')}
             </div>
           </div>
 
           {vgoAILoggedIn ? (
             <div className="sidebar-auth-summary">
-              <div className="helper-text">{vgoAIDisplayName || vgoAIEmail || '当前账号已登录'}</div>
+              <div className="helper-text">{vgoAIDisplayName || vgoAIEmail || t('sidebar.accountLoggedIn')}</div>
               <button className="ghost-button full-width" onClick={() => void handleLogout()}>
-                <LogOut size={14} /> 退出登录
+                <LogOut size={14} /> {t('sidebar.logout')}
               </button>
             </div>
           ) : (
@@ -551,34 +553,34 @@ export function Sidebar() {
                 onClick={() => void handleBrowserLogin()}
                 disabled={isLoggingIn}
               >
-                <LogIn size={14} /> 网页授权登录
+                <LogIn size={14} /> {t('sidebar.browserLogin')}
               </button>
               <button
                 className="ghost-button full-width"
                 onClick={() => setShowPasswordForm((value) => !value)}
               >
-                <User size={14} /> 邮箱密码登录
+                <User size={14} /> {t('sidebar.emailLogin')}
               </button>
 
               {showPasswordForm && (
                 <div className="sidebar-login-form">
                   <input
                     className="text-input"
-                    placeholder="邮箱地址"
+                    placeholder={t('sidebar.emailAddress')}
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                   />
                   <input
                     className="text-input"
                     type="password"
-                    placeholder="网页登录密码"
+                    placeholder={t('sidebar.password')}
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && void handlePasswordLogin()}
                   />
                   <input
                     className="text-input"
-                    placeholder="显示名称（可选）"
+                    placeholder={t('sidebar.displayName')}
                     value={loginDisplayName}
                     onChange={(e) => setLoginDisplayName(e.target.value)}
                   />
@@ -587,7 +589,7 @@ export function Sidebar() {
                     onClick={() => void handlePasswordLogin()}
                     disabled={isLoggingIn}
                   >
-                    <LogIn size={14} /> {isLoggingIn ? '登录中…' : '确认登录'}
+                    <LogIn size={14} /> {isLoggingIn ? t('sidebar.loggingIn') : t('sidebar.confirmLogin')}
                   </button>
                 </div>
               )}
@@ -616,9 +618,11 @@ interface SessionItemProps {
 }
 
 function SessionItem({ session, isActive, onClick, onDelete }: SessionItemProps) {
+  const { t, locale } = useI18n()
+  
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr)
-    return new Intl.DateTimeFormat('zh-CN', {
+    return new Intl.DateTimeFormat(locale === 'en-US' ? 'en-US' : 'zh-CN', {
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
@@ -653,8 +657,8 @@ function SessionItem({ session, isActive, onClick, onDelete }: SessionItemProps)
           <Trash2 size={12} />
         </button>
       </div>
-      <div className="session-title">{session.title || '新会话'}</div>
-      <div className="session-preview">{session.preview || '暂无消息'}</div>
+      <div className="session-title">{session.title || t('session.defaultTitle')}</div>
+      <div className="session-preview">{session.preview || t('sidebar.noMessages')}</div>
     </div>
   )
 }
