@@ -55,7 +55,7 @@ function ToggleRow({
 }
 
 export function SettingsModal() {
-  const { t } = useI18n()
+  const { t, locale: i18nLocale } = useI18n()
   const {
     setSettingsOverlayOpen,
     activeSettingsTab,
@@ -96,7 +96,7 @@ export function SettingsModal() {
     hydrate,
   } = useAppStore()
 
-  const TABS = useMemo(() => TabsComponent({ t }), [t])
+  const TABS = useMemo(() => TabsComponent({ t }), [t, i18nLocale])
 
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
@@ -131,8 +131,14 @@ export function SettingsModal() {
       ollama: t('settings.ollamaDesc'),
       'vgo-remote': t('settings.vgoRemoteDesc'),
     }),
-    [t],
+    [t, i18nLocale],
   )
+
+  useEffect(() => {
+    if (locale !== i18nLocale) {
+      setLocale(i18nLocale as 'zh-CN' | 'en-US')
+    }
+  }, [i18nLocale, locale, setLocale])
 
   const refreshState = async () => {
     const nextState = await window.vgoDesktop?.getState?.()
