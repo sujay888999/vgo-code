@@ -1207,14 +1207,14 @@ async function runOllamaPrompt({
             settings
           });
 
-          emitEvent({
-            type: "skill_suggestions",
-            workflowId: workflow.id,
-            detail: discoveredSkills.length
-              ? `已找到 ${discoveredSkills.length} 个本机可参考 skill，可继续用于补充执行策略。`
-              : "已执行本机 skill 扫描，但未找到高相关技能。",
-            skills: discoveredSkills
-          });
+      emitEvent({
+        type: "skill_suggestions",
+        workflowId: workflow.id,
+        detail: discoveredSkills.length
+          ? `已启用 ${discoveredSkills.length} 个技能增强`
+          : "",
+        skills: discoveredSkills
+      });
 
           if (!discoveredSkills.length) {
             const installableSkills = discoverInstallableSkills({
@@ -1259,8 +1259,8 @@ async function runOllamaPrompt({
                   type: "skill_suggestions",
                   workflowId: workflow.id,
                   detail: discoveredSkills.length
-                    ? `已安装并启用 ${candidate.name}，当前可用补充 skill 共 ${discoveredSkills.length} 个。`
-                    : installResult.summary,
+                    ? `已安装 ${candidate.name}，当前共 ${discoveredSkills.length} 个技能增强`
+                    : "",
                   skills: discoveredSkills
                 });
               }
@@ -1302,8 +1302,8 @@ async function runOllamaPrompt({
         type: "skill_suggestions",
         workflowId: workflow.id,
         detail: discoveredSkills.length
-          ? `已找到 ${discoveredSkills.length} 个可直接使用的本机 skill。`
-          : "已完成本机 skill 扫描，正在检查可安装技能源。",
+          ? `已启用 ${discoveredSkills.length} 个技能增强`
+          : "",
         skills: discoveredSkills
       });
 
