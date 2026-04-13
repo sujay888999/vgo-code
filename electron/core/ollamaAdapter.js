@@ -21,7 +21,7 @@ const {
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "ollama-engine.log");
 
-const MAX_TOOL_STEPS = 30;
+const MAX_TOOL_STEPS = 50;
 
 function logRuntime(event, payload = {}) {
   appendEngineLog(LOG_FILE, event, payload);

@@ -6,7 +6,7 @@ const modelAdapters = require("./modelAdapterRegistry");
 const familyTools = require("./modelFamilyToolAdapters");
 const skillRegistry = require("./skillRegistry");
 
-const MAX_AGENT_STEPS = 30;
+const MAX_AGENT_STEPS = 50;
 const UPSTREAM_RETRYABLE_PATTERN = /Failed to connect to upstream channel/i;
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "vgo-remote.log");
