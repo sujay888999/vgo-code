@@ -193,29 +193,91 @@ function extractTaggedToolCallPayloads(text) {
   return payloads;
 }
 
+function extractJsonFromText(text) {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{")) return null;
+  
+  let braceCount = 0;
+  let inString = false;
+  let escaped = false;
+  
+  for (let i = 0; i < trimmed.length; i++) {
+    const char = trimmed[i];
+    
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    
+    if (inString) continue;
+    
+    if (char === "{") {
+      braceCount++;
+    } else if (char === "}") {
+      braceCount--;
+      if (braceCount === 0) {
+        const jsonStr = trimmed.slice(0, i + 1);
+        return safeParseJson(jsonStr);
+      }
+    }
+  }
+  
+  return null;
+}
+
 function recoverSingleToolCallPayload(text = "") {
   if (typeof text !== "string") {
     return [];
   }
 
-  const directTaggedMatch = text.match(
-    /<vgo_tool_call>\s*(\{[\s\S]*?"name"\s*:\s*"[^"]+"[\s\S]*?\})\s*<\/vgo_tool_call>/i
-  );
-  if (directTaggedMatch?.[1]) {
-    const parsed = safeParseJson(directTaggedMatch[1].trim());
-    const parsedCalls = normalizeToolCalls(parsed?.name ? [parsed] : Array.isArray(parsed?.calls) ? parsed.calls : []);
-    if (parsedCalls.length) {
-      return parsedCalls;
+  const taggedMatch = text.match(/<vgo_tool_call>([\s\S]*?)<\/vgo_tool_call>/i);
+  if (taggedMatch?.[1]) {
+    const payload = taggedMatch[1].trim();
+    const parsed = extractJsonFromText(payload);
+    if (parsed) {
+      const parsedCalls = normalizeToolCalls(
+        parsed.name ? [parsed] : Array.isArray(parsed.calls) ? parsed.calls : []
+      );
+      if (parsedCalls.length) {
+        return parsedCalls;
+      }
     }
   }
 
-  const looseCallMatch = text.match(
-    /"name"\s*:\s*"([^"]+)"[\s\S]*?"arguments"\s*:\s*(\{[\s\S]*\})/i
-  );
-  if (looseCallMatch?.[1] && looseCallMatch?.[2]) {
-    const args = safeParseJson(looseCallMatch[2].trim());
-    if (args && typeof args === "object") {
-      return normalizeToolCalls([{ name: looseCallMatch[1], arguments: args }]);
+  const nameMatch = text.match(/"name"\s*:\s*"([^"]+)"/);
+  if (nameMatch) {
+    const toolName = nameMatch[1];
+    const nameEndIdx = text.indexOf(nameMatch[0]) + nameMatch[0].length;
+    const afterName = text.slice(nameEndIdx);
+    
+    const argsMatch = afterName.match(/"arguments"\s*:\s*(\{)/);
+    if (argsMatch) {
+      const argsStartIdx = afterName.indexOf(argsMatch[0]) + argsMatch[0].length - 1;
+      const afterArgs = afterName.slice(argsStartIdx);
+      const parsed = extractJsonFromText(afterArgs);
+      if (parsed && typeof parsed === "object") {
+        return normalizeToolCalls([{ name: toolName, arguments: parsed }]);
+      }
+    }
+    
+    const pathMatch = afterName.match(/"path"\s*:\s*"([^"]+)"/);
+    if (pathMatch) {
+      return normalizeToolCalls([{ name: toolName, arguments: { path: pathMatch[1] } }]);
+    }
+    
+    const contentMatch = afterName.match(/"content"\s*:\s*"([^"]*)"/);
+    if (contentMatch) {
+      return normalizeToolCalls([{ name: toolName, arguments: { content: contentMatch[1] } }]);
     }
   }
 
@@ -286,6 +348,7 @@ async function sendOllamaRequest({ baseUrl, model, messages, signal, onChunk }) 
       model,
       messages,
       stream: true,
+      num_predict: 16384,
       tools: [
         {
           type: "function",
@@ -321,12 +384,27 @@ async function sendOllamaRequest({ baseUrl, model, messages, signal, onChunk }) 
           type: "function",
           function: {
             name: "write_file",
-            description: "Write content to a file",
+            description: "Write content to a file (overwrites existing file). IMPORTANT: Keep content concise and complete. For content >500 chars, use write_file first then append_file.",
             parameters: {
               type: "object",
               properties: {
                 path: { type: "string", description: "File path to write" },
                 content: { type: "string", description: "Content to write" }
+              },
+              required: ["path", "content"]
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "append_file",
+            description: "Append content to an existing file. Use write_file first, then use this to add more.",
+            parameters: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "File path to append to" },
+                content: { type: "string", description: "Content to append" }
               },
               required: ["path", "content"]
             }
@@ -1687,10 +1765,10 @@ async function runOllamaPrompt({
         messages.push({
           role: "user",
           content:
-            "【重要】write_file 调用失败，原因是 content 参数不完整或被截断。有两个解决方案：\n" +
-            "方案1：重新调用 write_file，但这次只写一个极简版本（比如只有 import 语句和函数签名），然后再调用 write_file 追加内容。\n" +
-            "方案2：使用 run_command 写文件，例如：write_file 连续失败3次后，改用 run_command，命令格式如：run_command({\"command\":\"cat > file.py << 'EOF'\\n代码内容\\nEOF\"})\n" +
-            "请选择一个方案继续。"
+            "【重要】write_file 调用失败，原因是 content 参数被截断。请使用分段写入策略：\n" +
+            "1. 先用 write_file 写文件的前半部分（函数定义、import 等）\n" +
+            "2. 然后用 append_file 追加剩余内容（函数实现、测试代码等）\n" +
+            "例如：write_file({\"path\":\"test.py\",\"content\":\"import...\"}) 然后 append_file({\"path\":\"test.py\",\"content\":\"def func():...\"})"
         });
       }
 

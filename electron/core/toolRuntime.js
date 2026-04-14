@@ -132,6 +132,28 @@ function writeFile(workspace, args = {}, options = {}) {
   };
 }
 
+function appendFile(workspace, args = {}, options = {}) {
+  if (!args.path) {
+    return { ok: false, name: "append_file", summary: "Missing required argument: path", output: "" };
+  }
+  if (typeof args.content !== "string") {
+    return { ok: false, name: "append_file", summary: "Missing required argument: content", output: "" };
+  }
+
+  const targetPath = ensureWorkspacePath(workspace, args.path, options);
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.appendFileSync(targetPath, args.content, "utf8");
+
+  const exists = fs.existsSync(targetPath);
+  const size = exists ? fs.statSync(targetPath).size : 0;
+  return {
+    ok: exists,
+    name: "append_file",
+    summary: exists ? `Appended to ${targetPath}.` : `Failed to append to ${targetPath}.`,
+    output: `exists=${exists}\npath=${targetPath}\nsize=${size}`
+  };
+}
+
 function listDir(workspace, args = {}, options = {}) {
   const targetPath = ensureWorkspacePath(workspace, args.path || ".", options);
   const entries = fs
@@ -913,6 +935,7 @@ const TOOL_MAP = {
   search_code: searchCode,
   run_command: runCommand,
   write_file: writeFile,
+  append_file: appendFile,
   copy_file: copyFile,
   move_file: moveFile,
   rename_file: renameFile,
