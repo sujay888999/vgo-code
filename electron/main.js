@@ -1656,7 +1656,7 @@ app.whenReady().then(async () => {
 
   setTimeout(async () => {
     const updateResult = await initializeAutoCheck(app.getVersion(), {
-      updateUrl: "https://api.github.com/repos/vgo-code/vgo-code/releases/latest"
+      updateUrl: "https://yourdomain.com/vgo-code/version.json"
     });
     if (updateResult?.updateAvailable && mainWindow) {
       mainWindow.webContents.send("update:available", {
@@ -2218,7 +2218,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("update:check", async (_event, payload = {}) => {
     const appVersion = app.getVersion();
-    const updateUrl = payload.updateUrl || "https://api.github.com/repos/vgo-code/vgo-code/releases/latest";
+    const updateUrl = payload.updateUrl || "https://yourdomain.com/vgo-code/version.json";
     const result = await checkForUpdates(appVersion, { updateUrl, force: payload.force || false });
     if (result.ok && result.updateAvailable && mainWindow) {
       mainWindow.webContents.send("update:available", {

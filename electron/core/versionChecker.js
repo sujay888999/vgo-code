@@ -130,7 +130,7 @@ async function fetchLatestVersion(updateUrl) {
 
 async function checkForUpdates(appVersion, updateConfig = {}) {
   const {
-    updateUrl = "https://api.github.com/repos/vgo-code/vgo-code/releases/latest",
+    updateUrl = "https://yourdomain.com/vgo-code/version.json",
     force = false
   } = updateConfig;
 
