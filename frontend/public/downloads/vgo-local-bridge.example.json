@@ -1,0 +1,37 @@
+{
+  "workspaceId": "replace-with-your-workspace-id",
+  "bridgeName": "VGO Local Bridge",
+  "serverBaseUrl": "https://vgoai.cn",
+  "userAccessToken": "replace-with-your-vgo-agent-login-token-for-first-bootstrap",
+  "bridgeId": "",
+  "bridgeToken": "",
+  "platform": "windows",
+  "machineLabel": "Office PC",
+  "workingDirectory": "E:\\api-platform网站平台",
+  "executor": {
+    "provider": "open-interpreter",
+    "command": "E:\\VGO-Local-Executor\\oi312-env\\Scripts\\interpreter.exe",
+    "args": []
+  },
+  "polling": {
+    "enabled": true,
+    "intervalSeconds": 10
+  },
+  "security": {
+    "requireApproval": true,
+    "allowedRoots": [
+      "E:\\Projects",
+      "E:\\api-platform网站平台"
+    ],
+    "allowShell": true,
+    "allowFileWrite": true,
+    "allowNetwork": false
+  },
+  "reporting": {
+    "uploadLogs": true,
+    "uploadArtifacts": true,
+    "includeScreenshots": false
+  },
+  "jobTimeoutSeconds": 1800,
+  "env": {}
+}

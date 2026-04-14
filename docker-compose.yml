@@ -1,0 +1,125 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: api-platform-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-api_platform}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: api-platform-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: api-platform-backend
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_DATABASE: ${POSTGRES_DB:-api_platform}
+      DB_SYNCHRONIZE: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-vgo-ai-local-dev-secret}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-https://api-m.sandbox.paypal.com}
+      PAYPAL_DISPLAY_NAME: ${PAYPAL_DISPLAY_NAME:-}
+      PAYPAL_ACCOUNT_EMAIL: ${PAYPAL_ACCOUNT_EMAIL:-}
+      PAYPAL_PAYMENT_LINK: ${PAYPAL_PAYMENT_LINK:-}
+      PAYPAL_RECIPIENT_NOTE: ${PAYPAL_RECIPIENT_NOTE:-}
+      ALIPAY_DISPLAY_NAME: ${ALIPAY_DISPLAY_NAME:-}
+      ALIPAY_ACCOUNT: ${ALIPAY_ACCOUNT:-}
+      ALIPAY_PAYMENT_LINK: ${ALIPAY_PAYMENT_LINK:-}
+      ALIPAY_QR_CODE_URL: ${ALIPAY_QR_CODE_URL:-}
+      ALIPAY_RECIPIENT_NOTE: ${ALIPAY_RECIPIENT_NOTE:-}
+      WECHAT_DISPLAY_NAME: ${WECHAT_DISPLAY_NAME:-}
+      WECHAT_ACCOUNT: ${WECHAT_ACCOUNT:-}
+      WECHAT_PAYMENT_LINK: ${WECHAT_PAYMENT_LINK:-}
+      WECHAT_QR_CODE_URL: ${WECHAT_QR_CODE_URL:-}
+      WECHAT_RECIPIENT_NOTE: ${WECHAT_RECIPIENT_NOTE:-}
+      USDT_WALLET_ADDRESS: ${USDT_WALLET_ADDRESS:-}
+      USDT_NETWORK: ${USDT_NETWORK:-TRC20}
+      USDT_EVM_RPC_URL: ${USDT_EVM_RPC_URL:-}
+      USDT_ERC20_CONTRACT: ${USDT_ERC20_CONTRACT:-}
+      USDT_TRC20_CONTRACT: ${USDT_TRC20_CONTRACT:-}
+      TRONGRID_API_KEY: ${TRONGRID_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      REGISTRATION_BYPASS_CODE: ${REGISTRATION_BYPASS_CODE:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - backend_data:/app/data
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: api-platform-frontend
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+      API_PROXY_TARGET: http://backend:3001
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: api-platform-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /opt/vgo-ai/certs:/etc/nginx/certs:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_data:
