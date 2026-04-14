@@ -191,39 +191,49 @@ export default function TeamsPage() {
               </div>
               <div>
                 <div className="text-lg font-semibold text-slate-900">云端大模型充值调用</div>
-                <div className="text-sm text-slate-600">接入 VGO AI 平台，享受更强大的云端模型能力</div>
+                <div className="text-sm text-slate-600">接入 VGO AI 平台，享受最新最强的大模型能力</div>
               </div>
             </div>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">GPT 系列</div>
-                <div className="mt-2 text-xs text-slate-600">GPT-4o、GPT-4-Turbo、GPT-3.5-Turbo</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">OpenAI 官方接口</div>
+                <div className="text-sm font-semibold text-slate-900">GPT-5 系列</div>
+                <div className="mt-2 text-xs text-slate-600">GPT-5、GPT-4.5、GPT-4o（最新）</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">OpenAI · 业界领先</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">Claude 系列</div>
-                <div className="mt-2 text-xs text-slate-600">Claude 3.5 Sonnet、Claude 3 Opus</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Anthropic 官方接口</div>
+                <div className="text-sm font-semibold text-slate-900">Claude 4 系列</div>
+                <div className="mt-2 text-xs text-slate-600">Claude Opus 4、Claude Sonnet 4</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Anthropic · 最强推理</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">Gemini 系列</div>
-                <div className="mt-2 text-xs text-slate-600">Gemini 1.5 Pro、Gemini 1.5 Flash</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Google AI 接口</div>
+                <div className="text-sm font-semibold text-slate-900">Gemini 3 系列</div>
+                <div className="mt-2 text-xs text-slate-600">Gemini 3 Ultra、Gemini 3 Pro</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Google AI · 多模态领先</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">通义千问</div>
-                <div className="mt-2 text-xs text-slate-600">qwen-plus、qwen-turbo、qwen-max</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">阿里云百炼</div>
+                <div className="text-sm font-semibold text-slate-900">通义千问 Qwen3</div>
+                <div className="mt-2 text-xs text-slate-600">Qwen3-Max、Qwen3-Pro、Qwen3-Plus</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">阿里云百炼 · 国产旗舰</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">DeepSeek</div>
-                <div className="mt-2 text-xs text-slate-600">deepseek-chat、deepseek-coder</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">深度求索官方</div>
+                <div className="text-sm font-semibold text-slate-900">DeepSeek V3</div>
+                <div className="mt-2 text-xs text-slate-600">DeepSeek-V3、DeepSeek-R1（推理）</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">深度求索 · 性价比之王</div>
+              </div>
+              <div className="rounded-2xl border border-amber-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">Llama 4</div>
+                <div className="mt-2 text-xs text-slate-600">Llama-4-Sovereign、LLaMA-4-Maverick</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Meta · 开源最强</div>
+              </div>
+              <div className="rounded-2xl border border-amber-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">Gemma 4</div>
+                <div className="mt-2 text-xs text-slate-600">Gemma-4-Giant、Gemma-4-Scorpio</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Google · 开源新王</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
                 <div className="text-sm font-semibold text-slate-900">更多模型</div>
-                <div className="mt-2 text-xs text-slate-600">Moonshot、智谱 GLM、讯飞星火...</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">持续接入中</div>
+                <div className="mt-2 text-xs text-slate-600">Mistral Large 3、Grok、Moonshot...</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">持续接入最新模型</div>
               </div>
             </div>
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
