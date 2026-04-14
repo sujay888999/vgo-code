@@ -51,10 +51,22 @@ const features = [
 ];
 
 const models = [
+  { name: 'qwen2.5', desc: '通义千问，国产旗舰大模型' },
+  { name: 'qwen2.5-coder', desc: '通义千问代码模型，专注编程' },
+  { name: 'qwen3', desc: '通义千问最新一代，全面超越前代' },
+  { name: 'deepseek-v3', desc: '深度求索最新模型，推理能力超强' },
+  { name: 'deepseek-coder', desc: '代码专用模型，代码生成能力强' },
   { name: 'gemma4', desc: '谷歌最新推理模型，适合复杂任务' },
-  { name: 'qwen2.5-coder', desc: '通义千问代码模型，专注编程辅助' },
-  { name: 'deepseek-coder', desc: '深悉代码模型，代码生成能力强' },
-  { name: 'llama3.2', desc: 'Meta 开源大模型，用途广泛' },
+  { name: 'gemma3', desc: '谷歌开源大模型，用途广泛' },
+  { name: 'llama4', desc: 'Meta 最新开源大模型' },
+  { name: 'llama3.2', desc: 'Meta 开源模型，用途广泛' },
+  { name: 'llama3.1', desc: 'Meta 开源模型，8B/70B 多规格' },
+  { name: 'mistral', desc: 'Mistral AI 开源模型' },
+  { name: 'codellama', desc: 'Meta 代码专用模型' },
+  { name: 'phi4', desc: '微软小钢炮，多语言能力强' },
+  { name: 'nemotron', desc: 'NVIDIA 开源大模型' },
+  { name: 'yi', desc: '零一万物开源模型' },
+  { name: 'command-r', desc: 'Cohere 开源推理模型' },
 ];
 
 const steps = [
@@ -169,22 +181,28 @@ export default function TeamsPage() {
             </div>
           </section>
 
-          <section className="mt-10 grid gap-6 xl:grid-cols-2">
+          <section className="mt-10">
             <div className="rounded-[30px] border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6">
               <div className="flex items-center gap-2 text-sm font-medium text-emerald-900">
                 <Globe className="h-4 w-4" />
-                支持的模型
+                支持的模型（基于 Ollama）
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 {models.map((model) => (
-                  <div key={model.name} className="rounded-[20px] border border-emerald-200 bg-white p-4">
+                  <div key={model.name} className="rounded-[16px] border border-emerald-200 bg-white p-3">
                     <div className="font-mono text-sm font-semibold text-emerald-700">{model.name}</div>
-                    <div className="mt-1 text-xs text-slate-600">{model.desc}</div>
+                    <div className="mt-1 text-xs text-slate-500">{model.desc}</div>
                   </div>
                 ))}
               </div>
+              <div className="mt-4 rounded-2xl border border-emerald-200/50 bg-emerald-50/50 p-3 text-xs text-slate-600">
+                <strong>所有 Ollama 模型</strong>：VGO CODE 基于 Ollama，理论上支持 Ollama 模型库中的所有模型。
+                只需运行 <code className="rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-emerald-700">ollama pull 模型名</code> 即可使用。
+              </div>
             </div>
+          </section>
 
+          <section className="mt-10 grid gap-6 xl:grid-cols-2">
             <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-[0_10px_30px_rgba(15,23,42,0.04)]">
               <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
                 <TerminalSquare className="h-4 w-4 text-slate-500" />
