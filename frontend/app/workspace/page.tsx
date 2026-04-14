@@ -13,6 +13,7 @@ import {
   FileText,
   HardDrive,
   Loader2,
+  Monitor,
   Play,
   Plus,
   Save,
@@ -598,6 +599,38 @@ export default function WorkspacePage() {
               Manage teams
               <ChevronRight className="h-4 w-4" />
             </Link>
+          </div>
+        </div>
+
+        <div className="mb-6 rounded-[28px] border border-emerald-200 bg-gradient-to-r from-emerald-50 to-cyan-50 p-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-4">
+              <div className="inline-flex rounded-2xl border border-emerald-200 bg-white p-3">
+                <Monitor className="h-6 w-6 text-emerald-600" />
+              </div>
+              <div>
+                <div className="text-lg font-semibold text-slate-900">VGO CODE 桌面应用</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  网站内模型自动配置 · 本地 Ollama 深度集成 · 零配置体验
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Link
+                href="/teams"
+                className="inline-flex items-center gap-2 rounded-full border border-emerald-300 bg-white px-4 py-2 text-sm font-medium text-emerald-700"
+              >
+                查看详情
+              </Link>
+              <a
+                href="/downloads/vgo-code/VGO CODE Setup 1.0.0.exe"
+                download
+                className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-2 text-sm font-medium text-white"
+              >
+                <Download className="h-4 w-4" />
+                下载安装包
+              </a>
+            </div>
           </div>
         </div>
 
