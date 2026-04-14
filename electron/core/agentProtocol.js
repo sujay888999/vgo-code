@@ -193,9 +193,13 @@ function parseToolCalls(rawText = "") {
   }
   
   if (lineBasedCalls.length) {
+    const allCodeBlocks = [...source.matchAll(/```(?:\w+)?\s*([\s\S]*?)```/gi)];
+    let codeBlockIndex = 0;
+    
     for (const call of lineBasedCalls) {
       if ((call.name === "write_file" || call.name === "append_file") && !call.arguments.content) {
-        const afterMatch = source.slice((call.matchIndex || 0) + 50);
+        const afterMatch = source.slice(call.matchIndex || 0);
+        
         const codeBlockMatch = afterMatch.match(/```(?:\w+)?\s*([\s\S]*?)```/i);
         if (codeBlockMatch?.[1]) {
           let content = codeBlockMatch[1].trim();
@@ -204,7 +208,7 @@ function parseToolCalls(rawText = "") {
             if (line.match(/^def |^import |^from |^class |^\s*(if|else|for|while|return|""""|''')/)) {
               return line;
             }
-            return line.replace(/^(\s*).*/, "$1");
+            return line;
           });
           content = trimmedLines.join("\n").trim();
           if (content.length > 0) {
