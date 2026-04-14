@@ -4,6 +4,8 @@ import Link from 'next/link';
 import {
   ArrowLeft,
   CheckCircle2,
+  Cloud,
+  CreditCard,
   Download,
   Globe,
   HardDrive,
@@ -13,6 +15,7 @@ import {
   Sparkles,
   TerminalSquare,
   Wifi,
+  Zap,
 } from 'lucide-react';
 import SiteLogo from '@/components/site-logo';
 
@@ -28,25 +31,25 @@ const downloads = [
 
 const features = [
   {
-    icon: Globe,
-    title: '网站内模型自动配置',
-    description: '从 VGO AI 平台模型目录一键拉取配置，智能检测本地环境，无需手动设置。',
+    icon: Cloud,
+    title: '云端大模型（充值调用）',
+    description: '接入 VGO AI 平台云端模型，GPT-4o、Claude、Gemini、通义千问等主流模型，按量计费。',
     highlight: true,
   },
   {
+    icon: Globe,
+    title: '网站内模型自动配置',
+    description: '从 VGO AI 平台模型目录一键拉取配置，智能检测本地环境，无需手动设置。',
+  },
+  {
     icon: Wifi,
-    title: '本地 Ollama 深度集成',
-    description: '支持 Ollama 所有模型（gemma4、qwen2.5-coder、deepseek-coder 等），完全离线可用。',
+    title: '本地 Ollama（免费离线）',
+    description: '支持 Ollama 所有模型（qwen3、deepseek-v3、llama4 等），完全免费离线可用。',
   },
   {
     icon: Sparkles,
     title: '智能 Agent 工具调用',
     description: 'write_file、read_file、run_command 等工具自动规划执行，完成复杂编程任务。',
-  },
-  {
-    icon: Settings,
-    title: '零配置体验',
-    description: '安装后首次启动自动引导配置，开箱即用，无需折腾。',
   },
 ];
 
@@ -114,19 +117,19 @@ export default function TeamsPage() {
                   <div className="text-sm font-semibold tracking-[0.14em] text-slate-900">VGO-CODE</div>
                 </div>
                 <h1 className="mt-4 text-4xl font-semibold tracking-[-0.05em] text-slate-950 md:text-5xl">
-                  本地 AI 编程助手
+                  AI 编程助手
                 </h1>
                 <p className="mt-4 max-w-2xl text-base leading-8 text-slate-600">
-                  基于 Electron 的桌面应用，集成 Ollama 本地模型，支持网站内模型自动配置，
-                  无需手动配置，开箱即用。
+                  基于 Electron 的桌面应用，支持<strong className="text-amber-600">云端大模型充值调用</strong>（GPT/Claude/Gemini）和
+                  <strong>本地 Ollama 免费离线</strong>两种模式，开箱即用。
                 </p>
               </div>
 
-              <div className="rounded-[28px] border border-emerald-200 bg-emerald-50 p-5 md:w-[320px]">
-                <div className="text-xs uppercase tracking-[0.2em] text-emerald-700">Latest Version</div>
+              <div className="rounded-[28px] border border-amber-200 bg-amber-50 p-5 md:w-[340px]">
+                <div className="text-xs uppercase tracking-[0.2em] text-amber-700">Latest Version</div>
                 <div className="mt-3 text-xl font-semibold">VGO CODE v1.0.0</div>
-                <div className="mt-2 leading-7 text-emerald-900/80">
-                  支持网站模型自动配置，本地 Ollama 深度集成，零配置体验。
+                <div className="mt-2 leading-7 text-amber-900/80">
+                  云端大模型充值调用 + 本地 Ollama 免费离线，双模式自由切换。
                 </div>
               </div>
             </div>
@@ -181,11 +184,67 @@ export default function TeamsPage() {
             </div>
           </section>
 
+          <section className="mt-10 rounded-[30px] border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 p-6">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="inline-flex rounded-2xl bg-amber-100 p-3">
+                <Zap className="h-6 w-6 text-amber-600" />
+              </div>
+              <div>
+                <div className="text-lg font-semibold text-slate-900">云端大模型充值调用</div>
+                <div className="text-sm text-slate-600">接入 VGO AI 平台，享受更强大的云端模型能力</div>
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="rounded-2xl border border-amber-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">GPT 系列</div>
+                <div className="mt-2 text-xs text-slate-600">GPT-4o、GPT-4-Turbo、GPT-3.5-Turbo</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">OpenAI 官方接口</div>
+              </div>
+              <div className="rounded-2xl border border-amber-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">Claude 系列</div>
+                <div className="mt-2 text-xs text-slate-600">Claude 3.5 Sonnet、Claude 3 Opus</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Anthropic 官方接口</div>
+              </div>
+              <div className="rounded-2xl border border-amber-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">Gemini 系列</div>
+                <div className="mt-2 text-xs text-slate-600">Gemini 1.5 Pro、Gemini 1.5 Flash</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Google AI 接口</div>
+              </div>
+              <div className="rounded-2xl border border-amber-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">通义千问</div>
+                <div className="mt-2 text-xs text-slate-600">qwen-plus、qwen-turbo、qwen-max</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">阿里云百炼</div>
+              </div>
+              <div className="rounded-2xl border border-amber-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">DeepSeek</div>
+                <div className="mt-2 text-xs text-slate-600">deepseek-chat、deepseek-coder</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">深度求索官方</div>
+              </div>
+              <div className="rounded-2xl border border-amber-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">更多模型</div>
+                <div className="mt-2 text-xs text-slate-600">Moonshot、智谱 GLM、讯飞星火...</div>
+                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">持续接入中</div>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2 text-sm text-slate-600">
+                <CreditCard className="h-4 w-4 text-slate-500" />
+                <span>按量计费，充多少用多少</span>
+              </div>
+              <Link
+                href="/recharge"
+                className="inline-flex items-center gap-2 rounded-full bg-amber-500 px-5 py-2.5 text-sm font-medium text-white"
+              >
+                立即充值
+              </Link>
+            </div>
+          </section>
+
           <section className="mt-10">
             <div className="rounded-[30px] border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6">
               <div className="flex items-center gap-2 text-sm font-medium text-emerald-900">
-                <Globe className="h-4 w-4" />
-                支持的模型（基于 Ollama）
+                <HardDrive className="h-4 w-4" />
+                本地 Ollama 模型（免费离线）
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 {models.map((model) => (
