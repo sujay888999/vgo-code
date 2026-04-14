@@ -233,78 +233,48 @@ function parseToolCalls(rawText = "") {
 function parseMinimaxToolCalls(source) {
   const calls = [];
   
-  const toolCallBlockPattern = /<minimax:tool_call>([\s\S]*?)<\/minimax:tool_call>/gi;
-  const invokePattern = /<invoke\s+name=["']([^"']+)["']>([\s\S]*?)<\/invoke>/gi;
-  
-  const toolBlocks = [...source.matchAll(toolCallBlockPattern)];
-  
-  for (const block of toolBlocks) {
-    const invokeMatches = [...block[1].matchAll(invokePattern)];
-    for (const match of invokeMatches) {
-      const name = match[1];
-      const paramsBlock = match[2];
+  const extractParams = (paramsBlock) => {
+    const params = {};
+    const paramPattern = /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)<\/parameter>/gi;
+    const paramMatches = [...paramsBlock.matchAll(paramPattern)];
+    for (const paramMatch of paramMatches) {
+      const paramName = paramMatch[1];
+      let paramValue = paramMatch[2].trim();
       
-      const paramPattern = /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)<\/parameter>/gi;
-      const params = {};
+      if (paramValue.startsWith('\n')) paramValue = paramValue.slice(1);
+      if (paramValue.endsWith('\n')) paramValue = paramValue.slice(0, -1);
       
-      const paramMatches = [...paramsBlock.matchAll(paramPattern)];
-      for (const paramMatch of paramMatches) {
-        const paramName = paramMatch[1];
-        let paramValue = paramMatch[2].trim();
-        
-        if (paramValue.startsWith('\n')) paramValue = paramValue.slice(1);
-        if (paramValue.endsWith('\n')) paramValue = paramValue.slice(0, -1);
-        
-        try {
-          const parsed = JSON.parse(paramValue);
-          params[paramName] = parsed;
-        } catch {
-          params[paramName] = paramValue;
-        }
-      }
-      
-      if (name) {
-        calls.push({
-          name,
-          arguments: params
-        });
+      try {
+        params[paramName] = JSON.parse(paramValue);
+      } catch {
+        params[paramName] = paramValue;
       }
     }
-  }
+    return params;
+  };
   
-  if (calls.length === 0) {
-    const invokeWithoutBlockPattern = /<invoke\s+name=["']([^"']+)["']>([\s\S]*?)<\/invoke>/gi;
-    const standaloneInvokes = [...source.matchAll(invokeWithoutBlockPattern)];
+  const invokePattern = /<invoke\s+name=["']([^"']+)["']>([\s\S]*?)<\/invoke>/gi;
+  const toolCallBlockPattern = /<minimax:tool_call>([\s\S]*?)<\/minimax:tool_call>/gi;
+  
+  const toolBlocks = [...source.matchAll(toolCallBlockPattern)];
+  const hasToolCallBlocks = toolBlocks.length > 0;
+  
+  const allInvokes = [...source.matchAll(invokePattern)];
+  
+  for (const match of allInvokes) {
+    const name = match[1];
+    const paramsBlock = match[2];
     
-    for (const match of standaloneInvokes) {
-      if (match[1] && !source.includes('<minimax:tool_call>')) {
-        const name = match[1];
-        const paramsBlock = match[2];
-        
-        const paramPattern = /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)<\/parameter>/gi;
-        const params = {};
-        
-        const paramMatches = [...paramsBlock.matchAll(paramPattern)];
-        for (const paramMatch of paramMatches) {
-          const paramName = paramMatch[1];
-          let paramValue = paramMatch[2].trim();
-          
-          if (paramValue.startsWith('\n')) paramValue = paramValue.slice(1);
-          if (paramValue.endsWith('\n')) paramValue = paramValue.slice(0, -1);
-          
-          try {
-            const parsed = JSON.parse(paramValue);
-            params[paramName] = parsed;
-          } catch {
-            params[paramName] = paramValue;
-          }
-        }
-        
-        calls.push({
-          name,
-          arguments: params
-        });
-      }
+    if (hasToolCallBlocks) {
+      const inToolBlock = toolBlocks.some(block => block[1].includes(match[0]));
+      if (!inToolBlock) continue;
+    }
+    
+    if (name) {
+      calls.push({
+        name,
+        arguments: extractParams(paramsBlock)
+      });
     }
   }
   

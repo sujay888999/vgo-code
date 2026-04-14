@@ -21,7 +21,16 @@ const {
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "ollama-engine.log");
 
-const MAX_TOOL_STEPS = 50;
+const DEFAULT_MAX_TOOL_STEPS = 50;
+const DEFAULT_NUM_PREDICT = 16384;
+
+function getMaxToolSteps(settings) {
+  return Number(settings?.remote?.maxToolSteps) || DEFAULT_MAX_TOOL_STEPS;
+}
+
+function getNumPredict(settings) {
+  return Number(settings?.remote?.numPredict) || DEFAULT_NUM_PREDICT;
+}
 
 function logRuntime(event, payload = {}) {
   appendEngineLog(LOG_FILE, event, payload);
@@ -36,7 +45,7 @@ async function parseJsonResponse(response) {
   }
 }
 
-async function parseOllamaStreamResponse(response, onChunk) {
+async function parseOllamaStreamResponse(response, onChunk, options = {}) {
   const reader = response.body?.getReader();
   if (!reader) {
     return await parseJsonResponse(response);
@@ -47,10 +56,30 @@ async function parseOllamaStreamResponse(response, onChunk) {
   let aggregatedContent = "";
   let aggregatedToolCalls = [];
   let finalEnvelope = null;
+  const startTime = Date.now();
+  const STREAM_TIMEOUT_MS = options.timeout || 300000;
 
   while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
+    if (Date.now() - startTime > STREAM_TIMEOUT_MS) {
+      logRuntime("stream:timeout", { duration: STREAM_TIMEOUT_MS });
+      reader.cancel();
+      break;
+    }
+
+    let readPromise;
+    try {
+      readPromise = reader.read();
+    } catch (err) {
+      logRuntime("stream:read_error", { error: err.message });
+      break;
+    }
+
+    const { value, done } = await Promise.race([
+      readPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Stream read timeout")), STREAM_TIMEOUT_MS))
+    ]).catch(err => ({ done: true, value: undefined }));
+
+    if (done || !value) {
       break;
     }
 
@@ -67,7 +96,8 @@ async function parseOllamaStreamResponse(response, onChunk) {
       let parsed;
       try {
         parsed = JSON.parse(trimmed);
-      } catch {
+      } catch (err) {
+        logRuntime("stream:parse_error", { error: err.message, preview: trimmed.slice(0, 100) });
         continue;
       }
 
@@ -78,7 +108,7 @@ async function parseOllamaStreamResponse(response, onChunk) {
       }
 
       if (Array.isArray(parsed?.message?.tool_calls) && parsed.message.tool_calls.length) {
-        aggregatedToolCalls = parsed.message.tool_calls;
+        aggregatedToolCalls = aggregatedToolCalls.concat(parsed.message.tool_calls);
       }
 
       if (typeof onChunk === "function") {
@@ -111,7 +141,9 @@ async function parseOllamaStreamResponse(response, onChunk) {
           message: parsed?.message || {}
         });
       }
-    } catch {}
+    } catch (err) {
+      logRuntime("stream:line_parse_error", { error: err?.message, preview: trimmed?.slice(0, 100) });
+    }
   }
 
   return {
@@ -337,7 +369,7 @@ function buildSkillPreflightNudge(skills = []) {
   ].join("\n");
 }
 
-async function sendOllamaRequest({ baseUrl, model, messages, signal, onChunk }) {
+async function sendOllamaRequest({ baseUrl, model, messages, signal, onChunk, timeout = 300000, numPredict = 16384 }) {
   logRuntime("request:start", { model, baseUrl });
   
   const response = await fetch(`${baseUrl}/api/chat`, {
@@ -348,7 +380,7 @@ async function sendOllamaRequest({ baseUrl, model, messages, signal, onChunk }) 
       model,
       messages,
       stream: true,
-      num_predict: 16384,
+      num_predict: numPredict,
       tools: [
         {
           type: "function",
@@ -569,7 +601,7 @@ async function sendOllamaRequest({ baseUrl, model, messages, signal, onChunk }) 
     })
   });
 
-  return await parseOllamaStreamResponse(response, onChunk);
+  return await parseOllamaStreamResponse(response, onChunk, { timeout });
 }
 
 function buildUserMessageContent(prompt = "", attachments = []) {
@@ -1475,6 +1507,9 @@ async function runOllamaPrompt({
     };
   }
 
+  const maxToolSteps = getMaxToolSteps(settings);
+  const numPredict = getNumPredict(settings);
+
   let messages = buildMessageHistory(
     history,
     systemPrompt,
@@ -1484,7 +1519,7 @@ async function runOllamaPrompt({
 
   let writeArgumentRetrySent = false;
 
-  for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
+  for (let step = 0; step < maxToolSteps; step += 1) {
     if (signal?.aborted) {
       return {
         ok: false,
@@ -1535,6 +1570,8 @@ async function runOllamaPrompt({
         model,
         messages,
         signal,
+        timeout: maxToolSteps * 60000,
+        numPredict,
         onChunk: ({ content, done }) => {
           const streamedText = modelAdapters.stripCustomerServiceBoilerplate(
             protocol.sanitizeAssistantText(protocol.tryRecoverMojibake(content || "")),
