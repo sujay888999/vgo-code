@@ -188,11 +188,39 @@ function parseToolCalls(rawText = "") {
     }
 
     if (Object.keys(args).length) {
-      lineBasedCalls.push({ name, arguments: args });
+      lineBasedCalls.push({ name, arguments: args, matchIndex: match.index });
     }
   }
+  
   if (lineBasedCalls.length) {
-    return lineBasedCalls;
+    for (const call of lineBasedCalls) {
+      if ((call.name === "write_file" || call.name === "append_file") && !call.arguments.content) {
+        const afterMatch = source.slice((call.matchIndex || 0) + 50);
+        const codeBlockMatch = afterMatch.match(/```(?:\w+)?\s*([\s\S]*?)```/i);
+        if (codeBlockMatch?.[1]) {
+          let content = codeBlockMatch[1].trim();
+          const lines = content.split("\n");
+          const trimmedLines = lines.map(line => {
+            if (line.match(/^def |^import |^from |^class |^\s*(if|else|for|while|return|""""|''')/)) {
+              return line;
+            }
+            return line.replace(/^(\s*).*/, "$1");
+          });
+          content = trimmedLines.join("\n").trim();
+          if (content.length > 0) {
+            call.arguments.content = content;
+          }
+        }
+        
+        const directContentMatch = afterMatch.match(/文件内容[：:]\s*([\s\S]*?)(?:\n\n|\n```|$)/i);
+        if (directContentMatch?.[1] && !call.arguments.content) {
+          call.arguments.content = directContentMatch[1].trim();
+        }
+      }
+    }
+    
+    const result = lineBasedCalls.map(({ matchIndex, ...rest }) => rest);
+    return result.filter(call => call.arguments && Object.keys(call.arguments).length > 0);
   }
 
   return [];

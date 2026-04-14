@@ -461,14 +461,20 @@ export function App() {
 
       if (eventType === 'model_response' && payload.text) {
         settleLiveMessage('done')
-        setPromptRunning(false)
+        const hasPendingToolCalls = Array.isArray(payload.toolCalls) && payload.toolCalls.length > 0
+        if (!hasPendingToolCalls) {
+          setPromptRunning(false)
+        }
         upsertFinalMessage(payload.text, 'done')
       }
 
       if (eventType === 'model_stream_delta' && payload.text) {
         if (payload.done) {
           settleLiveMessage('done')
-          setPromptRunning(false)
+          const hasPendingToolCalls = Array.isArray(payload.toolCalls) && payload.toolCalls.length > 0
+          if (!hasPendingToolCalls) {
+            setPromptRunning(false)
+          }
           upsertFinalMessage(payload.text, 'done')
         } else {
           upsertFinalMessage(payload.text, 'loading')
