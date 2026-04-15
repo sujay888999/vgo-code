@@ -1,4 +1,4 @@
-﻿const path = require("node:path");
+const path = require("node:path");
 const fs = require("node:fs");
 const http = require("node:http");
 const crypto = require("node:crypto");
@@ -652,7 +652,7 @@ function createTrayIcon() {
   
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: "鎵撳紑 VGO Code",
+      label: "打开 VGO Code",
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -757,7 +757,7 @@ function createAuthWindow(loginUrl) {
   return authWindow;
 }
 
-function syncRemoteProfileState(nextRemote, extraProfileFields = {}) {
+function syncRemoteProfileState(nextRemote, extraProfileFields = {}, currentVgoAi = null) {
   const activeProfileId = settings.activeRemoteProfileId;
   const profiles = (settings.remoteProfiles || []).map((profile) =>
     profile.id === activeProfileId
@@ -776,6 +776,7 @@ function syncRemoteProfileState(nextRemote, extraProfileFields = {}) {
 
   return {
     ...settings,
+    vgoAI: currentVgoAi !== null ? currentVgoAi : settings.vgoAI,
     remote: {
       ...nextRemote,
       provider:
@@ -907,7 +908,7 @@ function deleteRemoteProfileState(profileId) {
     : [
         {
           id: "default",
-          name: "榛樿 VGO AI",
+          name: "默认 VGO AI",
           provider: "VGO Remote",
           baseUrl: settings.remote.baseUrl,
           ollamaUrl: settings.remote.ollamaUrl || "",
@@ -1053,7 +1054,8 @@ function applyRealVgoAiSession({
         ...nextSettings.remote,
         model: preferredModel
       },
-      {}
+      {},
+      nextSettings.vgoAI
     );
   }
 
