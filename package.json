@@ -9,10 +9,12 @@
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
+    "build:web": "npm --prefix ./src run build",
     "pack": "electron-builder --win dir",
     "dist": "electron-builder --win nsis",
     "plan:next": "node ./scripts/auto-plan.js",
     "audit:brand": "node ./scripts/brand-audit.js",
+    "test:release-smoke": "node ./scripts/release-smoke.js",
     "verify:release": "powershell -ExecutionPolicy Bypass -File ./scripts/release-check.ps1"
   },
   "build": {
