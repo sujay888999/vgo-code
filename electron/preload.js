@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
   analyze: () => ipcRenderer.invoke("workspace:analyze"),
   
   // Auth
-  login: () => ipcRenderer.invoke("settings:startBrowserVgoAiAuth", { displayName: "VGO Developer", preferredModel: "vgo-coder-pro" }),
+  login: () => ipcRenderer.invoke("settings:startBrowserVgoAiAuth", { displayName: "VGO AI Developer", preferredModel: "vgo-coder-pro" }),
   loginWithCredentials: (payload) => ipcRenderer.invoke("settings:loginAndBindVgoAi", payload),
   logout: () => ipcRenderer.invoke("settings:logoutVgoAi"),
   getAuthStatus: () => ipcRenderer.invoke("settings:getBrowserAuthStatus"),

@@ -4,13 +4,13 @@ function createMockDatabase() {
   const models = [
     {
       id: "vgo-coder-pro",
-      label: "VGO Coder Pro",
+      label: "VGO AI Pro",
       description: "Balanced coding model for everyday implementation.",
       contextWindow: 32000
     },
     {
       id: "vgo-coder-fast",
-      label: "VGO Coder Fast",
+      label: "VGO AI Fast",
       description: "Low-latency coding model for fast turnarounds.",
       contextWindow: 24000
     },
@@ -25,7 +25,7 @@ function createMockDatabase() {
   const users = new Map();
 
   function ensureUser(displayName) {
-    const normalized = (displayName || "VGO Developer").trim() || "VGO Developer";
+    const normalized = (displayName || "VGO AI Developer").trim() || "VGO AI Developer";
     if (!users.has(normalized)) {
       users.set(normalized, {
         displayName: normalized,

@@ -45,7 +45,7 @@ export function Sidebar() {
   const [showPasswordForm, setShowPasswordForm] = useState(false)
   const [loginEmail, setLoginEmail] = useState(vgoAIEmail || '')
   const [loginPassword, setLoginPassword] = useState('')
-  const [loginDisplayName, setLoginDisplayName] = useState(vgoAIDisplayName || 'VGO Developer')
+  const [loginDisplayName, setLoginDisplayName] = useState(vgoAIDisplayName || 'VGO AI Developer')
   const [loginStatus, setLoginStatus] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [switchingKey, setSwitchingKey] = useState<string | null>(null)
@@ -180,7 +180,7 @@ export function Sidebar() {
       await window.vgoDesktop?.loginWithCredentials?.({
         email: loginEmail.trim(),
         password: loginPassword,
-        displayName: loginDisplayName.trim() || 'VGO Developer',
+        displayName: loginDisplayName.trim() || 'VGO AI Developer',
         preferredModel: vgoAIPreferredModel || 'vgo-coder-pro',
       })
       await refreshState()
@@ -255,9 +255,8 @@ export function Sidebar() {
       <div className="sidebar-scroll">
         <section className="brand-hero">
           <div className="brand-lockup">
-            <img className="brand-logo" src="/logo.png" alt="VGO Code" />
             <div>
-              <div className="brand-title">VGO Code</div>
+              <div className="brand-title">VGO CODE</div>
               <div className="brand-subtitle">AI Agent 开发工作台</div>
             </div>
           </div>

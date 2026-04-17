@@ -652,7 +652,7 @@ function createTrayIcon() {
   
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: "打开 VGO Code",
+      label: "打开 VGO CODE",
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -670,7 +670,7 @@ function createTrayIcon() {
     }
   ]);
   
-  tray.setToolTip("VGO Code");
+  tray.setToolTip("VGO CODE");
   tray.setContextMenu(contextMenu);
   
   tray.on("double-click", () => {
@@ -688,7 +688,7 @@ function createWindow() {
     minWidth: 1180,
     minHeight: 760,
     backgroundColor: "#08111d",
-    title: "VGO Code",
+    title: "VGO CODE",
     icon: getWindowIconPath(),
     autoHideMenuBar: true,
     webPreferences: {
@@ -945,7 +945,7 @@ function resolveProfileName(profile, fallbackEmail) {
     profile?.username ||
     profile?.email ||
     fallbackEmail ||
-    "VGO Developer"
+    "VGO AI Developer"
   );
 }
 
@@ -1323,7 +1323,7 @@ async function beginBrowserVgoAiAuth(payload = {}) {
     redirectUri: ""
   });
 
-  const displayName = (payload.displayName || "").trim() || "VGO Developer";
+  const displayName = (payload.displayName || "").trim() || "VGO AI Developer";
   const preferredModel = payload.preferredModel || "vgo-coder-pro";
 
   const server = http.createServer(async (req, res) => {
@@ -1927,7 +1927,7 @@ app.whenReady().then(async () => {
     state: serializeState()
   }));
   ipcMain.handle("settings:openVgoAiLoginPage", async (_event, payload = {}) => {
-    const displayName = (payload.displayName || "").trim() || "VGO Developer";
+  const displayName = (payload.displayName || "").trim() || "VGO AI Developer";
     const preferredModel = payload.preferredModel || "vgo-coder-pro";
     const loginUrl =
       `https://vgoai.cn/login?display_name=${encodeURIComponent(displayName)}` +

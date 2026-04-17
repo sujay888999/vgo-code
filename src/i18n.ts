@@ -4,7 +4,7 @@ type Locale = 'zh-CN' | 'en-US'
 
 const translations: Record<Locale, Record<string, string>> = {
   'zh-CN': {
-    'app.title': 'VGO Code',
+    'app.title': 'VGO CODE',
     'app.subtitle': '智能编码助手',
     'sidebar.newChat': '新会话',
     'sidebar.search': '搜索会话…',
@@ -230,7 +230,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'task.failedWithCount': '失败（{count}）',
   },
   'en-US': {
-    'app.title': 'VGO Code',
+    'app.title': 'VGO CODE',
     'app.subtitle': 'AI Coding Assistant',
     'sidebar.newChat': 'New Chat',
     'sidebar.search': 'Search sessions…',

@@ -113,7 +113,7 @@ const LOCALES = {
     settingsCenter: "设置中心",
     settings: "设置",
     close: "关闭",
-    settingsTitle: "VGO Code 设置中心",
+    settingsTitle: "VGO CODE 设置中心",
     settingsSubtitle: "统一管理主题、语言、交互和 Agent 偏好。",
     openSettings: "设置中心",
     runtimeDefault: "默认权限",
@@ -130,7 +130,7 @@ const LOCALES = {
     settingsCenter: "Settings",
     settings: "Settings",
     close: "Close",
-    settingsTitle: "VGO Code Settings",
+    settingsTitle: "VGO CODE Settings",
     settingsSubtitle: "Manage themes, language, behavior, and Agent preferences in one place.",
     openSettings: "Settings",
     runtimeDefault: "Default",
@@ -213,7 +213,7 @@ function applyAppearanceSettings(state) {
 
 function applyLocalization() {
   const locale = getLocale();
-  document.title = "VGO Code";
+  document.title = "VGO CODE";
   sidebarSettingsButton.textContent = t("settings");
   closeSettingsButton.textContent = t("close");
   document.getElementById("settingsTitle").textContent = t("settingsTitle");
@@ -761,8 +761,8 @@ function renderModelCatalog(state) {
   const source = items.length
     ? items
     : [
-        { id: "vgo-coder-pro", label: "VGO Coder Pro" },
-        { id: "vgo-coder-fast", label: "VGO Coder Fast" },
+        { id: "vgo-coder-pro", label: "VGO AI Pro" },
+        { id: "vgo-coder-fast", label: "VGO AI Fast" },
         { id: "vgo-architect-max", label: "VGO Architect Max" }
       ];
   const current = state.settings?.vgoAI?.preferredModel || state.settings?.remote?.model || source[0].id;

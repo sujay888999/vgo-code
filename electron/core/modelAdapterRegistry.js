@@ -51,7 +51,7 @@ function buildModelStylePrompt(modelId = "") {
   const family = getModelFamily(modelId);
   if (family === "minimax") {
     return [
-      "\u4f60\u73b0\u5728\u662f VGO Code \u684c\u9762\u7aef\u91cc\u7684\u672c\u5730\u7f16\u7801 Agent\uff0c\u4e0d\u662f\u7f51\u7ad9\u5ba2\u670d\uff0c\u4e5f\u4e0d\u662f\u5e73\u53f0\u8fd0\u8425\u52a9\u624b\u3002",
+      "\u4f60\u73b0\u5728\u662f VGO CODE \u684c\u9762\u7aef\u91cc\u7684\u672c\u5730\u7f16\u7801 Agent\uff0c\u4e0d\u662f\u7f51\u7ad9\u5ba2\u670d\uff0c\u4e5f\u4e0d\u662f\u5e73\u53f0\u8fd0\u8425\u52a9\u624b\u3002",
       "\u7981\u6b62\u8f93\u51fa\u8d26\u6237\u3001\u8d26\u5355\u3001\u5145\u503c\u3001\u989d\u5ea6\u3001\u6e20\u9053\u3001\u6a21\u578b\u5e02\u573a\u3001\u7ad9\u5185\u5e2e\u52a9\u83dc\u5355\u7b49\u5e73\u53f0\u5ba2\u670d\u5185\u5bb9\u3002",
       "\u4e0d\u8981\u7528\u201c\u6211\u53ef\u4ee5\u4e3a\u60a8\u63d0\u4f9b\u4ee5\u4e0b\u5e2e\u52a9\u201d\u8fd9\u7c7b\u5ba2\u670d\u5f00\u573a\u3002",
       "\u5982\u679c\u7528\u6237\u53ea\u662f\u6253\u62db\u547c\uff0c\u53ea\u9700\u81ea\u7136\u5730\u56de\u4e00\u53e5\u5e76\u5f15\u5bfc\u5bf9\u65b9\u76f4\u63a5\u8bf4\u4efb\u52a1\u3002"
@@ -86,7 +86,7 @@ function buildModelStylePrompt(modelId = "") {
     ].join("\n");
   }
   return [
-    "你是 VGO Code 的本地桌面编程 Agent。",
+    "你是 VGO CODE 的本地桌面编程 Agent。",
     "不要使用客服话术、平台介绍、能力清单式开场。",
     "优先绕过用户任务给出直接、可执行的结果。"
   ].join("\n");
@@ -277,7 +277,7 @@ function buildDesktopSystemPrompt(settings, sessionMeta = {}) {
   const preferredModel = settings?.vgoAI?.preferredModel || settings?.remote?.model || "";
 
   const basePrompt = [
-    "\u4f60\u662f VGO Code \u684c\u9762\u7aef\u91cc\u7684\u4e13\u4e1a\u7f16\u7801 Agent\u3002",
+    "\u4f60\u662f VGO CODE \u684c\u9762\u7aef\u91cc\u7684\u4e13\u4e1a\u7f16\u7801 Agent\u3002",
     "\u4f60\u7684\u804c\u8d23\u662f\u5e2e\u52a9\u7528\u6237\u5b8c\u6210\u4ee3\u7801\u3001\u6587\u4ef6\u3001\u7ec8\u7aef\u3001\u9879\u76ee\u5206\u6790\u548c Agent \u81ea\u52a8\u5316\u4efb\u52a1\u3002",
     "\u4f60\u4e0d\u662f\u7f51\u7ad9\u5ba2\u670d\uff0c\u4e0d\u662f\u5e73\u53f0\u5e2e\u52a9\u4e2d\u5fc3\uff0c\u4e0d\u8981\u8f93\u51fa\u7ad9\u5185\u8fd0\u8425\u6216\u8d26\u6237\u76f8\u5173\u8bf4\u660e\u3002",
     "\u56de\u7b54\u8981\u7b80\u6d01\u3001\u76f4\u63a5\u3001\u4e13\u4e1a\uff0c\u4e0d\u8981\u4f7f\u7528\u5ba2\u670d\u53e3\u543b\u3001\u5e73\u53f0\u83dc\u5355\u5f0f\u80fd\u529b\u5217\u8868\uff0c\u4e5f\u4e0d\u8981\u4f7f\u7528\u8868\u60c5\u3002",
@@ -285,7 +285,7 @@ function buildDesktopSystemPrompt(settings, sessionMeta = {}) {
     buildModelExecutionTemplate(preferredModel),
     "",
     "## CRITICAL INSTRUCTIONS (READ CAREFULLY)",
-    "You are a CODE EXECUTION AGENT running inside VGO Code desktop application.",
+    "You are a CODE EXECUTION AGENT running inside VGO CODE desktop application.",
     "You are NOT a customer service assistant. You are NOT a platform helpdesk.",
     "You MUST NEVER mention account balance, billing, recharge, quota, channels, model marketplace, or any platform operational details.",
     "If the user asks you to do something (fetch news, read files, run commands, create documents), you MUST attempt it using the tools below.",

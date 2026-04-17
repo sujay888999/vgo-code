@@ -1,8 +1,8 @@
-# VGO Code Skill Enhancement Roadmap
+# VGO CODE Skill Enhancement Roadmap
 
 ## Goal
 
-Turn VGO Code from a tool-enabled desktop agent into a skill-driven agent platform with:
+Turn VGO CODE from a tool-enabled desktop agent into a skill-driven agent platform with:
 
 - reusable skill definitions
 - prompt-to-skill routing
@@ -11,7 +11,7 @@ Turn VGO Code from a tool-enabled desktop agent into a skill-driven agent platfo
 
 ## Current baseline
 
-VGO Code already has:
+VGO CODE already has:
 
 - an agent loop
 - local tool runtime
@@ -142,7 +142,7 @@ Expected tools:
 
 ## Success criteria
 
-VGO Code skill system is considered usable when:
+VGO CODE skill system is considered usable when:
 
 - the router consistently selects the right built-in skill set
 - the selected skills influence execution behavior

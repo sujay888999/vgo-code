@@ -233,7 +233,7 @@ export function MainPanel() {
           {messages.length === 0 && (
             <div className="welcome-messages">
               <div className="welcome-card">
-                <h3>欢迎使用 VGO Code</h3>
+                <h3>欢迎使用 VGO CODE</h3>
                 <p>我可以帮你推进这些工作：</p>
                 <ul>
                   <li>分析和编写代码</li>
