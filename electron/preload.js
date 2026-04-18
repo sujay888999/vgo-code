@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
   
   // Update
   checkForUpdates: (payload) => ipcRenderer.invoke("update:check", payload || {}),
+  installUpdate: (payload) => ipcRenderer.invoke("update:install", payload || {}),
   skipVersion: (version) => ipcRenderer.invoke("update:skipVersion", version),
   resetSkipVersion: () => ipcRenderer.invoke("update:resetSkip"),
   setAutoCheck: (enabled, intervalHours) => ipcRenderer.invoke("update:setAutoCheck", enabled, intervalHours),
@@ -97,4 +98,9 @@ ipcRenderer.on("agent:event", (_event, payload) => {
 ipcRenderer.on("update:available", (_event, payload) => {
   console.log("Received update:available:", payload);
   window.dispatchEvent(new CustomEvent("vgoUpdateAvailable", { detail: payload }));
+});
+
+ipcRenderer.on("update:status", (_event, payload) => {
+  console.log("Received update:status:", payload);
+  window.dispatchEvent(new CustomEvent("vgoUpdateStatus", { detail: payload }));
 });

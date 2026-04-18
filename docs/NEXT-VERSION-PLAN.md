@@ -1,7 +1,7 @@
 # VGO CODE Next Version Plan
 
-Generated: 2026-04-17T13:32:01.383Z
-Current Version: 1.0.0
+Generated: 2026-04-17T14:06:40.787Z
+Current Version: 1.0.1
 Target Version: 1.1.0
 
 ## Release Objective

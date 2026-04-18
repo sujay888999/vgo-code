@@ -109,9 +109,19 @@ async function fetchLatestVersion(updateUrl) {
     }
 
     const latestVersion = response.version || response.tag?.replace(/^v/, "") || null;
-    const downloadUrl = response.downloadUrl || response.html_url || response.url || "";
-    const releaseNotes = response.releaseNotes || response.body || response.description || "";
-    const releaseDate = response.published_at || response.date || "";
+    const downloadUrl =
+      response.downloadUrl ||
+      response.download_url ||
+      response.html_url ||
+      response.url ||
+      "";
+    const releaseNotes =
+      response.releaseNotes ||
+      response.release_notes ||
+      response.body ||
+      response.description ||
+      "";
+    const releaseDate = response.published_at || response.releaseDate || response.date || "";
 
     appendVersionLog(`Latest version: ${latestVersion}, Download URL: ${downloadUrl}`);
 
@@ -130,7 +140,7 @@ async function fetchLatestVersion(updateUrl) {
 
 async function checkForUpdates(appVersion, updateConfig = {}) {
   const {
-    updateUrl = "https://yourdomain.com/vgo-code/version.json",
+    updateUrl = "https://vgoai.cn/downloads/vgo-code/version.json",
     force = false
   } = updateConfig;
 

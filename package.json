@@ -1,6 +1,6 @@
 {
   "name": "vgo-code",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "VGO CODE desktop agent workspace.",
   "main": "electron/main.js",
   "author": "VGO CODE",
@@ -45,6 +45,11 @@
       "target": [
         "nsis"
       ]
+    },
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
     },
     "afterPack": "./scripts/afterPack.js"
   },

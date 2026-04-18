@@ -109,6 +109,12 @@ export function SettingsModal() {
   const [apiKey, setApiKey] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [switchingKey, setSwitchingKey] = useState<string | null>(null)
+  const [updateAutoCheck, setUpdateAutoCheck] = useState(true)
+  const [updateIntervalHours, setUpdateIntervalHours] = useState(6)
+  const [updateLastCheckTime, setUpdateLastCheckTime] = useState(0)
+  const [updateSkipVersion, setUpdateSkipVersion] = useState('')
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const [updateStatus, setUpdateStatus] = useState('')
 
   const activeProfile = useMemo(
     () => remoteProfiles.find((item) => item.id === activeRemoteProfileId) || null,
@@ -175,6 +181,84 @@ export function SettingsModal() {
     setHydratedProfileId(activeRemoteProfileId)
     setDraftDirty(false)
   }, [editableActiveProfile, activeRemoteProfileId, draftDirty, hydratedProfileId])
+
+  const formatUpdateLastCheckTime = useCallback((timestamp: number) => {
+    if (!timestamp) {
+      return t('settings.update.neverChecked')
+    }
+    try {
+      return new Date(timestamp).toLocaleString()
+    } catch {
+      return t('settings.update.neverChecked')
+    }
+  }, [t])
+
+  const loadUpdateSettings = useCallback(async () => {
+    try {
+      const settings = await window.vgoDesktop?.getUpdateSettings?.()
+      if (!settings) return
+      setUpdateAutoCheck(Boolean(settings.autoCheck))
+      setUpdateIntervalHours(Number(settings.checkIntervalHours) || 6)
+      setUpdateLastCheckTime(Number(settings.lastCheckTime) || 0)
+      setUpdateSkipVersion(String(settings.skipVersion || ''))
+    } catch (error: any) {
+      setUpdateStatus(error?.message || t('settings.operationFailed'))
+    }
+  }, [t])
+
+  useEffect(() => {
+    if (activeSettingsTab === 'runtime') {
+      void loadUpdateSettings()
+    }
+  }, [activeSettingsTab, loadUpdateSettings])
+
+  const withUpdateStatus = async (message: string, fn: () => Promise<void>) => {
+    setUpdateStatus(message)
+    setUpdateBusy(true)
+    try {
+      await fn()
+    } catch (error: any) {
+      setUpdateStatus(error?.message || t('settings.operationFailed'))
+    } finally {
+      setUpdateBusy(false)
+    }
+  }
+
+  const handleCheckForUpdatesNow = async () => {
+    await withUpdateStatus(t('settings.update.checking'), async () => {
+      const result = await window.vgoDesktop?.checkForUpdates?.({ force: true })
+      await loadUpdateSettings()
+      if (!result?.ok) {
+        setUpdateStatus(result?.error || t('settings.operationFailed'))
+        return
+      }
+      if (result.updateAvailable) {
+        setUpdateStatus(
+          t('settings.update.available')
+            .replace('{current}', result.currentVersion || '-')
+            .replace('{latest}', result.latestVersion || '-'),
+        )
+        return
+      }
+      setUpdateStatus(t('settings.update.upToDate'))
+    })
+  }
+
+  const handleApplyUpdateSettings = async () => {
+    await withUpdateStatus(t('settings.update.saving'), async () => {
+      await window.vgoDesktop?.setAutoCheck?.(updateAutoCheck, updateIntervalHours)
+      await loadUpdateSettings()
+      setUpdateStatus(t('settings.update.saved'))
+    })
+  }
+
+  const handleResetSkippedVersion = async () => {
+    await withUpdateStatus(t('settings.update.resettingSkip'), async () => {
+      await window.vgoDesktop?.resetSkipVersion?.()
+      await loadUpdateSettings()
+      setUpdateStatus(t('settings.update.skipResetDone'))
+    })
+  }
 
   const withStatus = async (message: string, fn: () => Promise<void>) => {
     setStatus(message)
@@ -627,6 +711,86 @@ export function SettingsModal() {
                     </button>
                   </div>
                   {status && <p className="manual-config-status">{status}</p>}
+                </div>
+
+                <h3>{t('settings.update.title')}</h3>
+                <div className="manual-config-card">
+                  <p className="hint">{t('settings.update.hint')}</p>
+
+                  <div className="toggle-row">
+                    <div className="toggle-copy">
+                      <span>{t('settings.update.autoCheck')}</span>
+                      <p className="hint">{t('settings.update.autoCheckHint')}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className={`toggle ${updateAutoCheck ? 'on' : ''}`}
+                      onClick={() => setUpdateAutoCheck(!updateAutoCheck)}
+                      disabled={updateBusy}
+                    />
+                  </div>
+
+                  <div className="simple-config-grid">
+                    <label className="hint" htmlFor="update-interval-select">
+                      {t('settings.update.interval')}
+                    </label>
+                    <select
+                      id="update-interval-select"
+                      className="text-input"
+                      value={updateIntervalHours}
+                      onChange={(event) => setUpdateIntervalHours(Number(event.target.value))}
+                      disabled={updateBusy}
+                    >
+                      {[1, 3, 6, 12, 24].map((value) => (
+                        <option key={value} value={value}>
+                          {t('settings.update.intervalOption').replace('{hours}', String(value))}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="account-info">
+                    <div className="info-row">
+                      <span className="label">{t('settings.update.lastCheck')}</span>
+                      <span className="value">{formatUpdateLastCheckTime(updateLastCheckTime)}</span>
+                    </div>
+                    <div className="info-row">
+                      <span className="label">{t('settings.update.skippedVersion')}</span>
+                      <span className="value">{updateSkipVersion || t('settings.update.none')}</span>
+                    </div>
+                  </div>
+
+                  <div className="button-row manual-config-actions">
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => void handleCheckForUpdatesNow()}
+                      disabled={updateBusy}
+                    >
+                      {updateBusy ? <Loader2 size={14} className="spin" /> : <Wrench size={14} />}
+                      {t('settings.update.checkNow')}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => void handleApplyUpdateSettings()}
+                      disabled={updateBusy}
+                    >
+                      <Save size={14} />
+                      {t('settings.update.saveConfig')}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => void handleResetSkippedVersion()}
+                      disabled={updateBusy}
+                    >
+                      <Wrench size={14} />
+                      {t('settings.update.resetSkip')}
+                    </button>
+                  </div>
+
+                  {updateStatus && <p className="manual-config-status">{updateStatus}</p>}
                 </div>
 
                 <h3>{t('settings.manualConfig')}</h3>

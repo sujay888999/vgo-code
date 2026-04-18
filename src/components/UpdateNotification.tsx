@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react'
-import { X, Download, RefreshCw } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { Download, RefreshCw, X } from 'lucide-react'
 import { useI18n } from '../i18n'
 
 interface UpdateInfo {
@@ -17,39 +17,37 @@ interface UpdateNotificationProps {
 export function UpdateNotification({ onClose }: UpdateNotificationProps) {
   const { t } = useI18n()
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
-  const [isDownloading, setIsDownloading] = useState(false)
+  const [isInstalling, setIsInstalling] = useState(false)
 
   useEffect(() => {
-    const handleUpdateAvailable = (e: Event) => {
-      const info = (e as CustomEvent).detail
+    const handleUpdateAvailable = (event: Event) => {
+      const info = (event as CustomEvent).detail
       if (info) {
         setUpdateInfo(info)
       }
     }
 
     window.addEventListener('vgoUpdateAvailable', handleUpdateAvailable)
-
     return () => {
       window.removeEventListener('vgoUpdateAvailable', handleUpdateAvailable)
     }
   }, [])
 
-  const handleDownload = async () => {
+  const handleInstallNow = async () => {
     if (!updateInfo?.downloadUrl) return
-    setIsDownloading(true)
+    setIsInstalling(true)
     try {
-      await window.vgoDesktop?.shell?.openExternal?.(updateInfo.downloadUrl)
+      const result = await window.vgoDesktop?.installUpdate?.({
+        downloadUrl: updateInfo.downloadUrl,
+        latestVersion: updateInfo.latestVersion,
+        releaseNotes: updateInfo.releaseNotes,
+        releaseDate: updateInfo.releaseDate
+      })
+      if (result?.ok) {
+        onClose()
+      }
     } finally {
-      setIsDownloading(false)
-    }
-  }
-
-  const handleCheckUpdates = async () => {
-    setIsDownloading(true)
-    try {
-      await window.vgoDesktop?.checkForUpdates?.({ force: true })
-    } finally {
-      setIsDownloading(false)
+      setIsInstalling(false)
     }
   }
 
@@ -76,13 +74,13 @@ export function UpdateNotification({ onClose }: UpdateNotificationProps) {
           <X size={16} />
         </button>
       </div>
-      
+
       <div className="update-notification-body">
         <div className="update-version-info">
           <span className="update-label">{t('update.currentVersion')}</span>
           <span className="update-version">{updateInfo.currentVersion}</span>
         </div>
-        <div className="update-arrow">→</div>
+        <div className="update-arrow">{'->'}</div>
         <div className="update-version-info">
           <span className="update-label">{t('update.latestVersion')}</span>
           <span className="update-version update-version-new">{updateInfo.latestVersion}</span>
@@ -93,34 +91,26 @@ export function UpdateNotification({ onClose }: UpdateNotificationProps) {
         <div className="update-release-notes">
           <div className="update-label">{t('update.releaseNotes')}</div>
           <div className="update-notes-content">
-            {updateInfo.releaseNotes.length > 200 
-              ? updateInfo.releaseNotes.slice(0, 200) + '...' 
+            {updateInfo.releaseNotes.length > 200
+              ? `${updateInfo.releaseNotes.slice(0, 200)}...`
               : updateInfo.releaseNotes}
           </div>
         </div>
       )}
 
       <div className="update-notification-actions">
-        <button 
+        <button
           className="btn btn-primary"
-          onClick={handleDownload}
-          disabled={isDownloading || !updateInfo.downloadUrl}
+          onClick={handleInstallNow}
+          disabled={isInstalling || !updateInfo.downloadUrl}
         >
           <Download size={14} />
-          {isDownloading ? t('update.downloading') : t('update.downloadNewVersion')}
+          {isInstalling ? t('update.downloading') : t('update.downloadNewVersion')}
         </button>
-        <button 
-          className="btn btn-secondary"
-          onClick={handleSkipVersion}
-          disabled={isDownloading}
-        >
+        <button className="btn btn-secondary" onClick={handleSkipVersion} disabled={isInstalling}>
           {t('update.skipVersion')}
         </button>
-        <button 
-          className="btn btn-text"
-          onClick={handleLater}
-          disabled={isDownloading}
-        >
+        <button className="btn btn-text" onClick={handleLater} disabled={isInstalling}>
           {t('update.laterRemind')}
         </button>
       </div>

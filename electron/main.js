@@ -1,8 +1,9 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const http = require("node:http");
+const https = require("node:https");
 const crypto = require("node:crypto");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { BrowserWindow, app, dialog, ipcMain, shell, session, Tray, Menu, nativeImage } = require("electron");
 const { createStore } = require("./core/state");
 const {
@@ -38,6 +39,7 @@ let mockServerInfo = {
   baseUrl: settings.remote.baseUrl,
   status: "starting"
 };
+let lastDetectedUpdate = null;
 const AUTH_PARTITION = "persist:vgo-auth";
 let tray = null;
 
@@ -403,6 +405,158 @@ function sendStateRefresh() {
     if (!win.isDestroyed()) {
       win.webContents.send("app:stateRefresh", serializeState());
     }
+  }
+}
+
+function sendUpdateEvent(channel, payload = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  mainWindow.webContents.send(channel, payload);
+}
+
+function sanitizeFileName(name = "") {
+  return String(name || "")
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+    .trim();
+}
+
+function resolveInstallerFileName(downloadUrl = "", latestVersion = "") {
+  try {
+    const parsedUrl = new URL(downloadUrl);
+    const fromUrl = sanitizeFileName(path.basename(decodeURIComponent(parsedUrl.pathname || "")));
+    if (fromUrl) {
+      return fromUrl;
+    }
+  } catch {}
+
+  const normalizedVersion = String(latestVersion || "").trim() || "latest";
+  return `VGO CODE Setup ${normalizedVersion}.exe`;
+}
+
+function downloadInstallerFile(downloadUrl, targetPath) {
+  return new Promise((resolve, reject) => {
+    const fetchFile = (url, redirectCount = 0) => {
+      if (redirectCount > 5) {
+        reject(new Error("Too many redirects while downloading installer"));
+        return;
+      }
+
+      const client = String(url).startsWith("https://") ? https : http;
+      const request = client.get(url, (response) => {
+        const statusCode = Number(response.statusCode || 0);
+        const redirectLocation = response.headers?.location;
+
+        if (statusCode >= 300 && statusCode < 400 && redirectLocation) {
+          response.resume();
+          const nextUrl = new URL(redirectLocation, url).toString();
+          fetchFile(nextUrl, redirectCount + 1);
+          return;
+        }
+
+        if (statusCode !== 200) {
+          response.resume();
+          reject(new Error(`Download failed with HTTP ${statusCode}`));
+          return;
+        }
+
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        const output = fs.createWriteStream(targetPath);
+        response.pipe(output);
+        output.on("finish", () => {
+          output.close(() => resolve(targetPath));
+        });
+        output.on("error", (error) => {
+          output.destroy();
+          try {
+            fs.unlinkSync(targetPath);
+          } catch {}
+          reject(error);
+        });
+      });
+
+      request.on("error", reject);
+      request.setTimeout(120000, () => {
+        request.destroy(new Error("Installer download timed out"));
+      });
+    };
+
+    fetchFile(downloadUrl);
+  });
+}
+
+function resolveUpgradeScriptTemplatePath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "app.asar", "electron", "core", "scripts", "install-update.ps1");
+  }
+  return path.join(app.getAppPath(), "electron", "core", "scripts", "install-update.ps1");
+}
+
+function launchWindowsUpgradeScript(installerPath) {
+  const updateDir = path.join(app.getPath("userData"), "updates");
+  fs.mkdirSync(updateDir, { recursive: true });
+  const scriptTemplatePath = resolveUpgradeScriptTemplatePath();
+  const scriptContent = fs.readFileSync(scriptTemplatePath, "utf8");
+  const tempScriptPath = path.join(updateDir, `install-update-${Date.now()}.ps1`);
+  fs.writeFileSync(tempScriptPath, scriptContent, "utf8");
+
+  const args = [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    tempScriptPath,
+    "-InstallerPath",
+    installerPath,
+    "-AppExePath",
+    process.execPath
+  ];
+
+  const processHandle = spawn("powershell.exe", args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true
+  });
+  processHandle.unref();
+}
+
+async function installUpdatePackage(payload = {}) {
+  const updateInfo = {
+    currentVersion: app.getVersion(),
+    latestVersion: payload.latestVersion || lastDetectedUpdate?.latestVersion || "",
+    downloadUrl: payload.downloadUrl || lastDetectedUpdate?.downloadUrl || "",
+    releaseNotes: payload.releaseNotes || lastDetectedUpdate?.releaseNotes || "",
+    releaseDate: payload.releaseDate || lastDetectedUpdate?.releaseDate || ""
+  };
+
+  if (!updateInfo.downloadUrl) {
+    return { ok: false, error: "missing_download_url" };
+  }
+
+  if (process.platform !== "win32") {
+    await shell.openExternal(updateInfo.downloadUrl);
+    return { ok: true, mode: "external_download" };
+  }
+
+  try {
+    sendUpdateEvent("update:status", { status: "downloading", ...updateInfo });
+    const fileName = resolveInstallerFileName(updateInfo.downloadUrl, updateInfo.latestVersion);
+    const targetPath = path.join(app.getPath("userData"), "updates", fileName);
+    await downloadInstallerFile(updateInfo.downloadUrl, targetPath);
+
+    sendUpdateEvent("update:status", { status: "installing", installerPath: targetPath, ...updateInfo });
+    launchWindowsUpgradeScript(targetPath);
+
+    setTimeout(() => {
+      app.isQuitting = true;
+      app.quit();
+    }, 300);
+
+    return { ok: true, mode: "auto_upgrade", installerPath: targetPath };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendUpdateEvent("update:status", { status: "failed", error: message, ...updateInfo });
+    return { ok: false, error: message };
   }
 }
 
@@ -1658,16 +1812,17 @@ app.whenReady().then(async () => {
 
   setTimeout(async () => {
     const updateResult = await initializeAutoCheck(app.getVersion(), {
-      updateUrl: "https://yourdomain.com/vgo-code/version.json"
+      updateUrl: "https://vgoai.cn/downloads/vgo-code/version.json"
     });
     if (updateResult?.updateAvailable && mainWindow) {
-      mainWindow.webContents.send("update:available", {
+      lastDetectedUpdate = {
         currentVersion: updateResult.currentVersion,
         latestVersion: updateResult.latestVersion,
         downloadUrl: updateResult.downloadUrl,
         releaseNotes: updateResult.releaseNotes,
         releaseDate: updateResult.releaseDate
-      });
+      };
+      sendUpdateEvent("update:available", lastDetectedUpdate);
     }
   }, 5000);
 
@@ -2220,18 +2375,23 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("update:check", async (_event, payload = {}) => {
     const appVersion = app.getVersion();
-    const updateUrl = payload.updateUrl || "https://yourdomain.com/vgo-code/version.json";
+    const updateUrl = payload.updateUrl || "https://vgoai.cn/downloads/vgo-code/version.json";
     const result = await checkForUpdates(appVersion, { updateUrl, force: payload.force || false });
     if (result.ok && result.updateAvailable && mainWindow) {
-      mainWindow.webContents.send("update:available", {
+      lastDetectedUpdate = {
         currentVersion: result.currentVersion,
         latestVersion: result.latestVersion,
         downloadUrl: result.downloadUrl,
         releaseNotes: result.releaseNotes,
         releaseDate: result.releaseDate
-      });
+      };
+      sendUpdateEvent("update:available", lastDetectedUpdate);
     }
     return result;
+  });
+
+  ipcMain.handle("update:install", async (_event, payload = {}) => {
+    return await installUpdatePackage(payload);
   });
 
   ipcMain.handle("update:skipVersion", (_event, version) => {
