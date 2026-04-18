@@ -23,7 +23,7 @@ const downloads = [
   {
     title: 'VGO CODE 安装包',
     description: 'Windows 桌面应用，支持一键配置模型，即开即用。',
-    href: '/downloads/vgo-code/VGO%20CODE%20Setup%201.0.0.exe',
+    href: '/downloads/vgo-code/VGO-CODE-Setup-1.0.3.exe',
     cta: '下载安装包',
     badge: '推荐',
   },
@@ -127,7 +127,7 @@ export default function TeamsPage() {
 
               <div className="rounded-[28px] border border-amber-200 bg-amber-50 p-5 md:w-[340px]">
                 <div className="text-xs uppercase tracking-[0.2em] text-amber-700">Latest Version</div>
-                <div className="mt-3 text-xl font-semibold">VGO CODE v1.0.0</div>
+                <div className="mt-3 text-xl font-semibold">VGO CODE v1.0.3</div>
                 <div className="mt-2 leading-7 text-amber-900/80">
                   云端大模型充值调用 + 本地 Ollama 免费离线，双模式自由切换。
                 </div>
@@ -197,43 +197,43 @@ export default function TeamsPage() {
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
                 <div className="text-sm font-semibold text-slate-900">GPT-5 系列</div>
-                <div className="mt-2 text-xs text-slate-600">GPT-5、GPT-4.5、GPT-4o（最新）</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">OpenAI · 业界领先</div>
+                <div className="mt-2 text-xs text-slate-600">GPT 5.4、GPT 5.4 Pro、GPT 5.4 Mini、GPT 5.4 Nano</div>
+                <div className="mt-3 rounded-xl bg-emerald-50 p-2 text-xs text-emerald-700">OpenAI · 业界领先</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
                 <div className="text-sm font-semibold text-slate-900">Claude 4 系列</div>
-                <div className="mt-2 text-xs text-slate-600">Claude Opus 4、Claude Sonnet 4</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Anthropic · 最强推理</div>
+                <div className="mt-2 text-xs text-slate-600">Claude Sonnet 4、Claude Haiku 4.5、Claude 3.7 Sonnet</div>
+                <div className="mt-3 rounded-xl bg-emerald-50 p-2 text-xs text-emerald-700">Anthropic · 最强推理</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">Gemini 3 系列</div>
-                <div className="mt-2 text-xs text-slate-600">Gemini 3 Ultra、Gemini 3 Pro</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Google AI · 多模态领先</div>
+                <div className="text-sm font-semibold text-slate-900">Gemini 系列</div>
+                <div className="mt-2 text-xs text-slate-600">Gemini 2.5 Pro、Gemini 2.0 Flash、Gemini 1.5 Pro</div>
+                <div className="mt-3 rounded-xl bg-emerald-50 p-2 text-xs text-emerald-700">Google AI · 多模态领先</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">通义千问 Qwen3</div>
-                <div className="mt-2 text-xs text-slate-600">Qwen3-Max、Qwen3-Pro、Qwen3-Plus</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">阿里云百炼 · 国产旗舰</div>
+                <div className="text-sm font-semibold text-slate-900">GPT-4 系列</div>
+                <div className="mt-2 text-xs text-slate-600">GPT-4.1、GPT-4.1 mini、GPT-4o mini</div>
+                <div className="mt-3 rounded-xl bg-emerald-50 p-2 text-xs text-emerald-700">OpenAI · 稳定可靠</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">DeepSeek V3</div>
-                <div className="mt-2 text-xs text-slate-600">DeepSeek-V3、DeepSeek-R1（推理）</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">深度求索 · 性价比之王</div>
+                <div className="text-sm font-semibold text-slate-900">国产大模型</div>
+                <div className="mt-2 text-xs text-slate-600">GLM 5、Kimi K2.5</div>
+                <div className="mt-3 rounded-xl bg-emerald-50 p-2 text-xs text-emerald-700">智谱/ Moonshot · 中文优化</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">Llama 4</div>
-                <div className="mt-2 text-xs text-slate-600">Llama-4-Sovereign、LLaMA-4-Maverick</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Meta · 开源最强</div>
+                <div className="text-sm font-semibold text-slate-900">免费体验模型</div>
+                <div className="mt-2 text-xs text-slate-600">Big Pickle、MiMo V2、Qwen3.6 Plus、Nemotron 3</div>
+                <div className="mt-3 rounded-xl bg-emerald-50 p-2 text-xs text-emerald-700">免费试用 · 即开即用</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">Gemma 4</div>
-                <div className="mt-2 text-xs text-slate-600">Gemma-4-Giant、Gemma-4-Scorpio</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">Google · 开源新王</div>
+                <div className="text-sm font-semibold text-slate-900">代码专用模型</div>
+                <div className="mt-2 text-xs text-slate-600">GPT 5.3 Codex、GPT 5.2 Codex、GPT 5.1 Codex Max</div>
+                <div className="mt-3 rounded-xl bg-emerald-50 p-2 text-xs text-emerald-700">开发助手 · 代码生成</div>
               </div>
               <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">更多模型</div>
-                <div className="mt-2 text-xs text-slate-600">Mistral Large 3、Grok、Moonshot...</div>
-                <div className="mt-3 rounded-xl bg-amber-50 p-2 text-xs text-amber-700">持续接入最新模型</div>
+                <div className="text-sm font-semibold text-slate-900">全部可用模型</div>
+                <div className="mt-2 text-xs text-slate-600">持续接入 GPT、Claude、Gemini、国产模型...</div>
+                <div className="mt-3 rounded-xl bg-emerald-50 p-2 text-xs text-emerald-700">按需调用 · 灵活计费</div>
               </div>
             </div>
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

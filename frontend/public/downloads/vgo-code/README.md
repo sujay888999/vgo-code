@@ -4,9 +4,9 @@
 
 ## 下载安装
 
-**最新版本**: 1.0.0
+**最新版本**: 1.0.3
 
-[下载 VGO CODE 安装包](https://vgoai.cn/downloads/vgo-code/VGO%20CODE%20Setup%201.0.0.exe)
+[下载 VGO CODE 安装包](https://vgoai.cn/downloads/vgo-code/VGO-CODE-Setup-1.0.3.exe)
 
 ---
 
@@ -63,7 +63,7 @@ Ollama 默认地址：`http://localhost:11434`
 ## 快速开始
 
 ### 1. 安装
-下载并运行 `VGO CODE Setup 1.0.0.exe`
+下载并运行 `VGO CODE Setup 1.0.3.exe`
 
 ### 2. 配置模型
 - **自动配置（推荐）**: 启动后选择"从 VGO AI 平台配置"，自动下载配置

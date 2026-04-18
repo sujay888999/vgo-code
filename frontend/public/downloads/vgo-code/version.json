@@ -1,7 +1,8 @@
 {
-  "version": "1.0.0",
-  "tag": "v1.0.0",
-  "download_url": "https://vgoai.cn/downloads/vgo-code/VGO%20CODE%20Setup%201.0.0.exe",
-  "release_notes": "VGO CODE 桌面应用正式发布 - 本地 Agent 工具调用，支持 Ollama 模型",
-  "published_at": "2026-04-14T12:00:00Z"
+  "version": "1.0.3",
+  "tag": "v1.0.3",
+  "download_url": "https://vgoai.cn/downloads/vgo-code/VGO-CODE-Setup-1.0.3.exe",
+  "downloadUrl": "https://vgoai.cn/downloads/vgo-code/VGO-CODE-Setup-1.0.3.exe",
+  "release_notes": "v1.0.3: Added in-app update controls in Settings and completed release channel alignment.",
+  "published_at": "2026-04-18T02:00:00Z"
 }

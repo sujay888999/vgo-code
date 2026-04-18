@@ -285,11 +285,11 @@ export default function DevelopersPage() {
               </div>
               <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-700 bg-slate-800 p-6">
                 <div className="text-center">
-                  <div className="text-lg font-semibold">VGO CODE v1.0.0</div>
+                  <div className="text-lg font-semibold">VGO CODE v1.0.3</div>
                   <div className="mt-1 text-sm text-slate-400">Windows 安装包</div>
                 </div>
                 <a
-                  href="https://vgoai.cn/downloads/vgo-code/VGO%20CODE%20Setup%201.0.0.exe"
+                  href="https://vgoai.cn/downloads/vgo-code/VGO-CODE-Setup-1.0.3.exe"
                   download
                   className="mt-5 inline-flex items-center gap-2 rounded-full bg-emerald-500 px-6 py-3 text-sm font-medium text-white transition hover:bg-emerald-600"
                 >
