@@ -2003,7 +2003,17 @@ async function runLocalPrompt({
 
     // 轻量 Agent 循环：本地/自定义通道若输出了工具调用标签，立即真实执行并回填结果，避免只显示 <vgo_tool_call> 文本。
     if (resolvedResponse.ok) {
-      const extractedToolCalls = extractToolCalls(extractAssistantRawText(resolvedPayload));
+      const assistantRawText = extractAssistantRawText(resolvedPayload);
+      const toolExtractionSource = [
+        assistantRawText,
+        resolvedText,
+        normalizedText,
+        resolvedPayload?.rawText,
+        payload?.rawText
+      ]
+        .filter((item) => typeof item === "string" && item.trim())
+        .join("\n\n");
+      const extractedToolCalls = extractToolCalls(toolExtractionSource);
       if (extractedToolCalls.length) {
         for (const call of extractedToolCalls) {
           emitEvent(onEvent, localRawEvents, {
@@ -2042,7 +2052,7 @@ async function runLocalPrompt({
                 { role: "system", content: systemPrompt },
                 ...normalizeHistoryMessages(history),
                 { role: "user", content: finalPrompt },
-                { role: "assistant", content: clampText(extractAssistantRawText(resolvedPayload), 4000) },
+                { role: "assistant", content: clampText(toolExtractionSource, 4000) },
                 { role: "user", content: clampText(toolMessage, 5000) },
                 {
                   role: "user",
@@ -2102,6 +2112,11 @@ async function runLocalPrompt({
           );
         }
       }
+    }
+
+    if (resolvedResponse.ok) {
+      const sanitizedFinalText = protocol.sanitizeAssistantText(finalText);
+      finalText = modelAdapters.stripCustomerServiceBoilerplate(sanitizedFinalText, prompt) || sanitizedFinalText;
     }
 
     return {
