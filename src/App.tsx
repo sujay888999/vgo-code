@@ -264,7 +264,7 @@ export function App() {
           timestamp,
           kind: 'progress',
           title: t('message.reasoning'),
-          collapsed: true,
+          collapsed: false,
         })
       }
 
@@ -283,7 +283,7 @@ export function App() {
             timestamp,
             kind: 'progress',
             title: t('message.reasoning'),
-            collapsed: true,
+            collapsed: false,
           })
           return
         }
@@ -296,7 +296,7 @@ export function App() {
           timestamp,
           kind: 'progress',
           title: t('message.reasoning'),
-          collapsed: true,
+          collapsed: false,
         })
       }
 

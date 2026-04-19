@@ -213,8 +213,16 @@ export function Composer() {
     }
   }
 
-  const handleStop = () => {
-    void window.vgoDesktop?.stopPrompt?.()
+  const handleStop = async () => {
+    try {
+      await window.vgoDesktop?.stopPrompt?.()
+    } finally {
+      if (pollIntervalRef.current) {
+        window.clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
+      }
+      setPromptRunning(false)
+    }
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {

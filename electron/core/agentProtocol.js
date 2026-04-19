@@ -1,6 +1,17 @@
 const LT = String.fromCharCode(60);
 const GT = String.fromCharCode(62);
 const SLASH = String.fromCharCode(47);
+const MAX_TOOL_SUMMARY_CHARS = 500;
+const MAX_TOOL_OUTPUT_CHARS = 1800;
+const MAX_TOOL_RESULT_MESSAGE_CHARS = 12000;
+
+function truncateForTransport(text = "", maxChars = 0) {
+  const source = String(text || "");
+  if (!maxChars || source.length <= maxChars) {
+    return source;
+  }
+  return `${source.slice(0, Math.max(0, maxChars - 80))}\n...[truncated ${source.length - maxChars} chars]`;
+}
 
 function looksLikeMojibake(text = "") {
   const sample = String(text || "");
@@ -307,23 +318,24 @@ function parsePlanBlock(rawText = "") {
 function buildToolResultMessage(results) {
   const blocks = results.map((result, index) => {
     const status = result.ok ? "ok" : "error";
-    const output = String(result.output || "").trim() || "(no output)";
+    const summary = truncateForTransport(String(result.summary || "").trim(), MAX_TOOL_SUMMARY_CHARS);
+    const output = truncateForTransport(String(result.output || "").trim() || "(no output)", MAX_TOOL_OUTPUT_CHARS);
     return [
       `Tool ${index + 1}`,
       `name: ${result.name}`,
       `status: ${status}`,
-      `summary: ${result.summary || ""}`,
+      `summary: ${summary}`,
       "output:",
       output
     ].join("\n");
   });
 
-  return [
+  return truncateForTransport([
     "Below are the latest tool execution results.",
     "Continue the task based on these results. If more information is needed, call more tools. If the information is sufficient, give the final answer directly.",
     "",
     ...blocks
-  ].join("\n\n");
+  ].join("\n\n"), MAX_TOOL_RESULT_MESSAGE_CHARS);
 }
 
 function buildFallbackCompletionFromResults(prompt = "", results = []) {

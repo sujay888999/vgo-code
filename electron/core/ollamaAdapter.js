@@ -25,6 +25,9 @@ const DEFAULT_MAX_TOOL_STEPS = 120;
 const MIN_TOOL_STEPS = 20;
 const MAX_TOOL_STEPS = 300;
 const DEFAULT_NUM_PREDICT = 16384;
+const OLLAMA_MAX_HISTORY_MESSAGES = 24;
+const OLLAMA_MAX_MESSAGE_CHARS = 5000;
+const OLLAMA_MAX_TOTAL_CHARS = 60000;
 
 function getMaxToolSteps(settings) {
   const configured =
@@ -697,10 +700,60 @@ function buildImageWorkflow() {
   };
 }
 
+function clampMessageText(text = "", maxChars = 0) {
+  const source = String(text || "");
+  if (!maxChars || source.length <= maxChars) {
+    return source;
+  }
+  return `${source.slice(0, Math.max(0, maxChars - 64))}\n...[trimmed ${source.length - maxChars} chars]`;
+}
+
+function compactOllamaMessages(messages = [], options = {}) {
+  const maxMessages = Number(options.maxMessages) || OLLAMA_MAX_HISTORY_MESSAGES;
+  const maxMessageChars = Number(options.maxMessageChars) || OLLAMA_MAX_MESSAGE_CHARS;
+  const maxTotalChars = Number(options.maxTotalChars) || OLLAMA_MAX_TOTAL_CHARS;
+
+  const normalized = (Array.isArray(messages) ? messages : [])
+    .map((item) => ({
+      role: item?.role || "user",
+      content: clampMessageText(item?.content || "", maxMessageChars),
+      images: Array.isArray(item?.images) ? item.images : undefined
+    }))
+    .filter((item) => String(item.content || "").trim() || (item.images && item.images.length));
+
+  if (!normalized.length) {
+    return [];
+  }
+
+  const systemMessage = normalized[0]?.role === "system" ? normalized[0] : null;
+  let rest = systemMessage ? normalized.slice(1) : normalized.slice();
+
+  if (rest.length > maxMessages) {
+    rest = rest.slice(-maxMessages);
+  }
+
+  let compacted = systemMessage ? [systemMessage, ...rest] : [...rest];
+  let totalChars = compacted.reduce((sum, item) => sum + String(item.content || "").length, 0);
+
+  while (compacted.length > (systemMessage ? 2 : 1) && totalChars > maxTotalChars) {
+    compacted.splice(systemMessage ? 1 : 0, 1);
+    totalChars = compacted.reduce((sum, item) => sum + String(item.content || "").length, 0);
+  }
+
+  if (totalChars > maxTotalChars && compacted.length) {
+    const targetIndex = compacted.length - 1;
+    const overflow = totalChars - maxTotalChars;
+    const current = String(compacted[targetIndex].content || "");
+    compacted[targetIndex].content = clampMessageText(current, Math.max(1200, current.length - overflow - 64));
+  }
+
+  return compacted;
+}
+
 function buildMessageHistory(history = [], systemPrompt = "", currentPrompt = "", attachments = []) {
   const trimmedPrompt = String(currentPrompt || "").trim();
   const normalizedPrompt = stripAttachmentContext(trimmedPrompt);
-  const normalizedHistory = Array.isArray(history) ? history.slice() : [];
+  const normalizedHistory = Array.isArray(history) ? history.slice(-OLLAMA_MAX_HISTORY_MESSAGES) : [];
 
   if (normalizedPrompt && normalizedHistory.length) {
     const lastEntry = normalizedHistory[normalizedHistory.length - 1];
@@ -715,14 +768,19 @@ function buildMessageHistory(history = [], systemPrompt = "", currentPrompt = ""
     }
   }
 
-  return [
+  const messages = [
     { role: "system", content: systemPrompt },
     ...normalizedHistory.map((item) => ({
       role: item.role === "system" ? "assistant" : item.role,
-      content: item.text
+      content: clampMessageText(item.text, OLLAMA_MAX_MESSAGE_CHARS)
     })),
     buildUserMessageContent(normalizedPrompt || trimmedPrompt, attachments)
-  ];
+  ].map((item) => ({
+    ...item,
+    content: clampMessageText(item.content, OLLAMA_MAX_MESSAGE_CHARS)
+  }));
+
+  return compactOllamaMessages(messages);
 }
 
 function detectSupplementalSkillQueries(prompt = "", workflow = null, workflowProbe = null) {
@@ -1048,6 +1106,29 @@ function hasUnfinishedRequiredReads(prompt = "", rawEvents = [], workspace = "")
   return getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace).length > 0;
 }
 
+function promptAllowsAutonomousContinuation(prompt = "") {
+  const normalized = String(prompt || "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  const autonomyPatterns = [
+    /继续/,
+    /自动/,
+    /自行/,
+    /完整落地/,
+    /完整方案/,
+    /直到完成/,
+    /修复完/,
+    /排查并修复/,
+    /持续执行/,
+    /continue/,
+    /keep going/,
+    /autonom/i,
+    /end[- ]to[- ]end/
+  ];
+  return autonomyPatterns.some((pattern) => pattern.test(normalized));
+}
+
 function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", workspace = "") {
   const normalized = String(text || "").trim();
   if (!normalized) {
@@ -1121,10 +1202,14 @@ function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", work
   }
 
   if (continuationPatterns.some((pattern) => pattern.test(normalized))) {
-    return true;
+    return unfinishedRequiredReads || promptAllowsAutonomousContinuation(prompt);
   }
 
-  return !hasToolResults && pendingActionPatterns.some((pattern) => pattern.test(normalized));
+  if (!hasToolResults && pendingActionPatterns.some((pattern) => pattern.test(normalized))) {
+    return unfinishedRequiredReads || promptAllowsAutonomousContinuation(prompt);
+  }
+
+  return false;
 }
 
 function needsForcedFinalAnswer(text = "", rawEvents = [], prompt = "", workspace = "") {
@@ -1522,6 +1607,7 @@ async function runOllamaPrompt({
   );
 
   let writeArgumentRetrySent = false;
+  let autoContinueNudgeCount = 0;
 
   for (let step = 0; step < maxToolSteps; step += 1) {
     if (signal?.aborted) {
@@ -1664,12 +1750,29 @@ async function runOllamaPrompt({
         }
 
         if (shouldContinueAutonomously(latestText, rawEvents, prompt, workspace)) {
+          if (autoContinueNudgeCount >= 4) {
+            const finalText =
+              latestText ||
+              protocol.buildFallbackCompletionFromResults(prompt, collectToolResults(rawEvents));
+            return {
+              ok: true,
+              exitCode: 0,
+              sessionId,
+              text: finalText,
+              error: "",
+              rawEvents,
+              usedModel: model,
+              actualChannel: rawEvents.some(e => e.type === "tool_result") ? "ollama-agent" : "ollama"
+            };
+          }
+          autoContinueNudgeCount += 1;
           const unfinishedReadPaths = getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace);
           const nextRequiredPath = unfinishedReadPaths[0] || "";
           logRuntime("model:auto_continue", {
             step,
             textPreview: latestText.slice(0, 200),
             unfinishedRequiredReads: unfinishedReadPaths.length > 0,
+            autoContinueNudgeCount,
             nextRequiredPath
           });
 

@@ -115,9 +115,10 @@ function createSession(title = DEFAULT_SESSION_TITLE, directory = null) {
 }
 
 function createInitialState() {
-  const session = createSession();
+  const initialWorkspace = resolveDefaultWorkspace();
+  const session = createSession(DEFAULT_SESSION_TITLE, initialWorkspace);
   return {
-    workspace: resolveDefaultWorkspace(),
+    workspace: initialWorkspace,
     activeSessionId: session.id,
     sessions: [session],
     runtime: {
@@ -145,11 +146,22 @@ function sortSessions(sessions) {
   });
 }
 
-function normalizeSession(session) {
+function normalizeSession(session, workspace = "") {
+  const normalizedDirectory = (() => {
+    if (typeof session.directory === "string" && session.directory.trim()) {
+      try {
+        return path.resolve(session.directory);
+      } catch {
+        return session.directory;
+      }
+    }
+    return workspace || null;
+  })();
+
   return {
     id: session.id || crypto.randomUUID(),
     title: sanitizeStoredText(session.title) || DEFAULT_SESSION_TITLE,
-    directory: session.directory || null,
+    directory: normalizedDirectory,
     manualTitle: Boolean(session.manualTitle),
     history: Array.isArray(session.history) ? session.history.slice(-120).map(normalizeHistoryEntry) : [],
     pinned: Boolean(session.pinned),
@@ -169,8 +181,9 @@ function normalizeSession(session) {
 
 function normalizeState(parsed) {
   const fallback = createInitialState();
+  const normalizedWorkspace = normalizeWorkspace(parsed.workspace || fallback.workspace);
   const sessions = Array.isArray(parsed.sessions)
-    ? sortSessions(parsed.sessions.map(normalizeSession).slice(-30))
+    ? sortSessions(parsed.sessions.map((session) => normalizeSession(session, normalizedWorkspace)).slice(-30))
     : fallback.sessions;
 
   const activeSessionId = sessions.some((session) => session.id === parsed.activeSessionId)
@@ -178,7 +191,7 @@ function normalizeState(parsed) {
     : sessions[0].id;
 
   return {
-    workspace: normalizeWorkspace(parsed.workspace || fallback.workspace),
+    workspace: normalizedWorkspace,
     activeSessionId,
     sessions,
     runtime: {
@@ -353,6 +366,7 @@ function appendHistory(role, text, status = "done") {
       sessions: sortSessions(state.sessions).map((item) => ({
         id: item.id,
         title: item.title,
+        directory: item.directory || "",
         manualTitle: item.manualTitle,
         pinned: item.pinned,
         compressionCount: item.compressionCount,
@@ -389,10 +403,14 @@ function appendHistory(role, text, status = "done") {
   }
 
   function switchSession(sessionId) {
-    if (!state.sessions.some((session) => session.id === sessionId)) {
+    const targetSession = state.sessions.find((session) => session.id === sessionId);
+    if (!targetSession) {
       return null;
     }
     state.activeSessionId = sessionId;
+    if (typeof targetSession.directory === "string" && targetSession.directory.trim()) {
+      state.workspace = normalizeWorkspace(targetSession.directory);
+    }
     save();
     return serialize();
   }
@@ -456,6 +474,13 @@ function appendHistory(role, text, status = "done") {
 
   function setWorkspace(workspace) {
     state.workspace = normalizeWorkspace(workspace);
+    const session = getActiveSession();
+    if (session) {
+      session.directory = state.workspace;
+      touchSession(session);
+      persistAndSort();
+      return;
+    }
     save();
   }
 

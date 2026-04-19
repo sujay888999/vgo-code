@@ -33,6 +33,7 @@ export interface Session {
   id: string
   title: string
   preview: string
+  directory?: string
   pinned: boolean
   createdAt: string
   updatedAt: string
@@ -482,16 +483,34 @@ export const useAppStore = create<AppState>((set, get) => ({
         .filter(Boolean),
     )
     const dedupedTransientMessages = transientMessages.filter((message) => {
+      // Keep transient progress messages visible in the conversation timeline,
+      // and only dedupe transient final-answer placeholders.
       if (!isFinalTransientMessage(message)) {
         return true
       }
-      return !persistedAssistantTexts.has(normalizeMessageText(message.text))
+
+      const normalizedTransientText = normalizeMessageText(message.text || '')
+      if (!normalizedTransientText) {
+        return true
+      }
+
+      // Be tolerant: backend final text may include a closing summary wrapper.
+      return !Array.from(persistedAssistantTexts).some(
+        (persistedText) =>
+          persistedText === normalizedTransientText ||
+          persistedText.includes(normalizedTransientText) ||
+          normalizedTransientText.includes(persistedText),
+      )
     })
     const messages =
       state.activeSessionId !== current.activeSessionId
         ? []
         : historyMessages.length > 0
-          ? [...historyMessages, ...dedupedTransientMessages]
+          ? [...historyMessages, ...dedupedTransientMessages].sort((a, b) => {
+              const timeDiff = Number(a.timestamp || 0) - Number(b.timestamp || 0)
+              if (timeDiff !== 0) return timeDiff
+              return String(a.id || '').localeCompare(String(b.id || ''))
+            })
           : current.messages
     
     return {

@@ -2,7 +2,6 @@ import React, { useCallback, useMemo, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { useI18n } from '../i18n'
 import {
-  MessageSquare,
   FolderOpen,
   Settings,
   Plus,
@@ -103,6 +102,7 @@ export function Sidebar() {
   } = useAppStore()
 
   const [sessionSearch, setSessionSearch] = useState('')
+  const [collapsedProjectPaths, setCollapsedProjectPaths] = useState<string[]>([])
   const [modelsExpanded, setModelsExpanded] = useState(true)
   const [showPasswordForm, setShowPasswordForm] = useState(false)
   const [loginEmail, setLoginEmail] = useState(vgoAIEmail || '')
@@ -332,15 +332,63 @@ export function Sidebar() {
     }
   }, [t, refreshState])
 
-  const filteredSessions = sessions.filter(
-    (s) =>
-      !sessionSearch ||
-      s.title.toLowerCase().includes(sessionSearch.toLowerCase()) ||
-      s.preview.toLowerCase().includes(sessionSearch.toLowerCase()),
-  )
-  const pinnedSessions = filteredSessions.filter((s) => s.pinned)
-  const recentSessions = filteredSessions.filter((s) => !s.pinned).slice(0, 5)
-  const backlogSessions = filteredSessions.filter((s) => !s.pinned).slice(5)
+  const filteredSessions = useMemo(() => {
+    const keyword = sessionSearch.trim().toLowerCase()
+    if (!keyword) return sessions
+    return sessions.filter((s) => {
+      const projectPath = String(s.directory || '').toLowerCase()
+      const projectName = projectPath.split(/[/\\]/).pop() || ''
+      return (
+        s.title.toLowerCase().includes(keyword) ||
+        s.preview.toLowerCase().includes(keyword) ||
+        projectPath.includes(keyword) ||
+        projectName.toLowerCase().includes(keyword)
+      )
+    })
+  }, [sessions, sessionSearch])
+
+  const projectGroups = useMemo(() => {
+    const map = new Map<string, { path: string; name: string; sessions: typeof sessions }>()
+    for (const session of filteredSessions) {
+      const projectPath = String(session.directory || workspace || '').trim() || '__unassigned__'
+      const projectName =
+        projectPath === '__unassigned__'
+          ? locale === 'en-US'
+            ? 'Unassigned'
+            : '未绑定目录'
+          : projectPath.split(/[/\\]/).pop() || projectPath
+
+      const current = map.get(projectPath)
+      if (!current) {
+        map.set(projectPath, { path: projectPath, name: projectName, sessions: [session] })
+        continue
+      }
+      current.sessions.push(session)
+    }
+
+    return [...map.values()]
+      .map((group) => ({
+        ...group,
+        sessions: [...group.sessions].sort((a, b) => {
+          if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+        }),
+      }))
+      .sort((a, b) => {
+        const activeInA = a.sessions.some((session) => session.id === activeSessionId)
+        const activeInB = b.sessions.some((session) => session.id === activeSessionId)
+        if (activeInA !== activeInB) return activeInA ? -1 : 1
+        const aLatest = a.sessions[0]?.updatedAt ? new Date(a.sessions[0].updatedAt).getTime() : 0
+        const bLatest = b.sessions[0]?.updatedAt ? new Date(b.sessions[0].updatedAt).getTime() : 0
+        return bLatest - aLatest
+      })
+  }, [activeSessionId, filteredSessions, locale, workspace, sessions])
+
+  const toggleProjectCollapsed = useCallback((projectPath: string) => {
+    setCollapsedProjectPaths((prev) =>
+      prev.includes(projectPath) ? prev.filter((item) => item !== projectPath) : [...prev, projectPath],
+    )
+  }, [])
 
   const currentModelDisplay = useMemo(() => {
     const activeProfile = remoteProfiles.find((p) => p.id === activeRemoteProfileId)
@@ -705,56 +753,33 @@ export function Sidebar() {
           </div>
 
           <div className="session-list">
-            {pinnedSessions.length > 0 && (
-              <div className="session-group">
-                <div className="session-group-title">
-                  <Pin size={12} /> {t('sidebar.pinned')}
+            {projectGroups.map((group) => {
+              const collapsed = collapsedProjectPaths.includes(group.path)
+              return (
+                <div key={group.path} className="session-group">
+                  <button className="session-group-title session-group-toggle" onClick={() => toggleProjectCollapsed(group.path)}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <FolderOpen size={12} />
+                      <span>{group.name}</span>
+                      <span className="active-indicator">{group.sessions.length}</span>
+                    </span>
+                    {collapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                  </button>
+                  {!collapsed &&
+                    group.sessions.map((session) => (
+                      <SessionItem
+                        key={session.id}
+                        session={session}
+                        isActive={session.id === activeSessionId}
+                        onClick={() => void handleSwitchSession(session.id)}
+                        onDelete={() => void handleDeleteSession(session.id)}
+                      />
+                    ))}
                 </div>
-                {pinnedSessions.map((session) => (
-                  <SessionItem
-                    key={session.id}
-                    session={session}
-                    isActive={session.id === activeSessionId}
-                    onClick={() => void handleSwitchSession(session.id)}
-                    onDelete={() => void handleDeleteSession(session.id)}
-                  />
-                ))}
-              </div>
-            )}
+              )
+            })}
 
-            {recentSessions.length > 0 && (
-              <div className="session-group">
-                <div className="session-group-title">
-                  <MessageSquare size={12} /> {t('sidebar.recent')}
-                </div>
-                {recentSessions.map((session) => (
-                  <SessionItem
-                    key={session.id}
-                    session={session}
-                    isActive={session.id === activeSessionId}
-                    onClick={() => void handleSwitchSession(session.id)}
-                    onDelete={() => void handleDeleteSession(session.id)}
-                  />
-                ))}
-              </div>
-            )}
-
-            {backlogSessions.length > 0 && (
-              <div className="session-group">
-                <div className="session-group-title">{t('sidebar.more')}</div>
-                {backlogSessions.map((session) => (
-                  <SessionItem
-                    key={session.id}
-                    session={session}
-                    isActive={session.id === activeSessionId}
-                    onClick={() => void handleSwitchSession(session.id)}
-                    onDelete={() => void handleDeleteSession(session.id)}
-                  />
-                ))}
-              </div>
-            )}
-
-            {filteredSessions.length === 0 && <div className="helper-text" style={{ padding: '1rem', textAlign: 'center' }}>暂无匹配的线程</div>}
+            {filteredSessions.length === 0 && <div className="helper-text" style={{ padding: '1rem', textAlign: 'center' }}>暂无匹配线程</div>}
           </div>
 
           <div className="session-actions">
@@ -916,4 +941,3 @@ function SessionItem({ session, isActive, onClick, onDelete }: SessionItemProps)
     </div>
   )
 }
-

@@ -27,6 +27,7 @@ let authWindow = null;
 let authCheckInFlight = false;
 const pendingPermissionRequests = new Map();
 const activePromptControllers = new Map();
+const userAbortedSessions = new Set();
 const PERMISSION_REQUEST_TTL = 300000;
 const DEFAULT_MAX_TASK_RUNTIME_MINUTES = 240;
 const MIN_TASK_RUNTIME_MINUTES = 30;
@@ -292,7 +293,11 @@ function resolveEngineIdForProfile(profile = {}) {
   const baseUrl = String(profile.baseUrl || "").toLowerCase();
   const ollamaUrl = String(profile.ollamaUrl || "").toLowerCase();
 
-  if (provider.includes("ollama") || ollamaUrl.includes("11434") || baseUrl.includes("11434")) {
+  if (provider) {
+    return provider.includes("ollama") ? "ollama" : "vgo-remote";
+  }
+
+  if (ollamaUrl.includes("11434") || baseUrl.includes("11434")) {
     return "ollama";
   }
 
@@ -680,6 +685,82 @@ function formatAgentEvent(event) {
   return "";
 }
 
+function collectMutatedPathsFromEvents(rawEvents = []) {
+  const paths = [];
+  for (const event of Array.isArray(rawEvents) ? rawEvents : []) {
+    if (event?.type !== "tool_result" || !event?.ok) {
+      continue;
+    }
+    if (!["write_file", "move_file", "rename_file", "copy_file", "delete_file", "make_dir", "delete_dir"].includes(event.tool)) {
+      continue;
+    }
+    const summary = String(event.summary || "");
+    const pathMatch =
+      summary.match(/^(?:Wrote|Moved|Renamed|Copied|Deleted|Created directory)\s+(.+?)\.$/i) ||
+      summary.match(/\bpath=([^\s|]+)/i);
+    if (pathMatch?.[1]) {
+      paths.push(pathMatch[1]);
+    }
+  }
+  return [...new Set(paths)].slice(0, 3);
+}
+
+function buildSessionClosingSummary(result = {}, prompt = "") {
+  const text = String(result?.text || "").trim();
+  if (!text) {
+    return text;
+  }
+  if (text.includes("【任务收尾】") || text.includes("下一步建议")) {
+    return text;
+  }
+
+  const rawEvents = Array.isArray(result?.rawEvents) ? result.rawEvents : [];
+  const toolResults = rawEvents.filter((event) => event?.type === "tool_result");
+  const successCount = toolResults.filter((event) => event?.ok).length;
+  const failCount = toolResults.filter((event) => event?.ok === false).length;
+  const mutatedPaths = collectMutatedPathsFromEvents(rawEvents);
+  const shortPrompt = String(prompt || "").trim().slice(0, 42);
+
+  const keyResultParts = [];
+  if (mutatedPaths.length) {
+    keyResultParts.push(`已落地变更 ${mutatedPaths.length} 项`);
+  }
+  if (successCount > 0) {
+    keyResultParts.push(`工具成功 ${successCount} 次`);
+  }
+  if (failCount > 0) {
+    keyResultParts.push(`失败 ${failCount} 次`);
+  }
+  if (!keyResultParts.length) {
+    keyResultParts.push(result.ok ? "本轮任务已完成" : "本轮任务未完成");
+  }
+
+  const suggestions = [];
+  if (!result.ok) {
+    suggestions.push("先按最后一次失败点重试，我可自动带修复参数继续。");
+    suggestions.push("如需我接管，可直接说“继续并修复到可用为止”。");
+  } else if (mutatedPaths.length) {
+    suggestions.push("先做一次构建/运行验证，再决定是否打包发布。");
+    suggestions.push("我可以直接生成下一版变更清单与回归测试项。");
+  } else {
+    suggestions.push("可继续下一步：让我直接落地代码改动而不只分析。");
+    suggestions.push("也可以指定目标文件，我按文件夹逐项完成。");
+  }
+
+  const closing = [
+    "【任务收尾】",
+    `重要结果：${keyResultParts.join("，")}。`,
+    shortPrompt ? `任务主题：${shortPrompt}${shortPrompt.length >= 42 ? "..." : ""}` : "",
+    "下一步建议：",
+    `1. ${suggestions[0]}`,
+    `2. ${suggestions[1]}`
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return `${text}\n\n${closing}`.trim();
+}
+
 async function requestToolPermission(call = {}, notify = () => {}) {
   const permissionMode = settings.permissions?.mode || "default";
   const args = call.arguments && typeof call.arguments === "object" ? call.arguments : {};
@@ -999,14 +1080,16 @@ function syncRemoteProfileState(nextRemote, extraProfileFields = {}, currentVgoA
 
 function createRemoteProfileState(payload = {}, { activate = true } = {}) {
   const profileId = `profile-${Date.now()}`;
+  const normalizedProvider = (payload.provider || "").trim() || "VGO Remote";
+  const isOllamaProvider = normalizedProvider.toLowerCase().includes("ollama");
   const profile = {
     id: profileId,
     name: (payload.name || "").trim() || `杩滅▼閰嶇疆 ${(settings.remoteProfiles || []).length + 1}`,
-    provider: (payload.provider || "").trim() || "VGO Remote",
+    provider: normalizedProvider,
     baseUrl: payload.baseUrl || settings.remote.baseUrl,
     modelListUrl: payload.modelListUrl || "",
     modelCatalog: Array.isArray(payload.modelCatalog) ? payload.modelCatalog : [],
-    ollamaUrl: payload.ollamaUrl || settings.remote.ollamaUrl || "",
+    ollamaUrl: isOllamaProvider ? payload.ollamaUrl || settings.remote.ollamaUrl || "" : "",
     model: payload.model || settings.remote.model,
     apiKey: payload.apiKey || "",
     systemPrompt: payload.systemPrompt || settings.remote.systemPrompt
@@ -1041,6 +1124,7 @@ function selectRemoteProfileState(profileId) {
   if (!profile) {
     return serializeState();
   }
+  const isOllamaProvider = String(profile.provider || "").toLowerCase().includes("ollama");
 
   saveAllSettings({
     ...settings,
@@ -1049,7 +1133,7 @@ function selectRemoteProfileState(profileId) {
       provider: profile.provider || "VGO Remote",
       baseUrl: profile.baseUrl,
       modelListUrl: profile.modelListUrl || "",
-      ollamaUrl: profile.ollamaUrl || "",
+      ollamaUrl: isOllamaProvider ? profile.ollamaUrl || "" : "",
       model: profile.model,
       apiKey: profile.apiKey,
       systemPrompt: profile.systemPrompt
@@ -1065,10 +1149,20 @@ function updateRemoteProfileState(profileId, payload = {}, { activate = false } 
     return serializeState();
   }
 
+  const incomingApiKey = typeof payload.apiKey === "string" ? payload.apiKey : null;
+  const nextApiKey =
+    incomingApiKey === null
+      ? profile.apiKey
+      : incomingApiKey.trim() === "********"
+        ? profile.apiKey
+        : incomingApiKey;
+  const nextProvider = (payload.provider || "").trim() || profile.provider || "VGO Remote";
+  const nextIsOllamaProvider = String(nextProvider).toLowerCase().includes("ollama");
+
   const nextProfile = {
     ...profile,
     name: (payload.name || "").trim() || profile.name,
-    provider: (payload.provider || "").trim() || profile.provider || "VGO Remote",
+    provider: nextProvider,
     baseUrl: payload.baseUrl || profile.baseUrl,
     modelListUrl:
       typeof payload.modelListUrl === "string"
@@ -1078,12 +1172,9 @@ function updateRemoteProfileState(profileId, payload = {}, { activate = false } 
       Array.isArray(payload.modelCatalog)
         ? payload.modelCatalog
         : profile.modelCatalog || [],
-    ollamaUrl: payload.ollamaUrl || profile.ollamaUrl || "",
+    ollamaUrl: nextIsOllamaProvider ? payload.ollamaUrl || profile.ollamaUrl || "" : "",
     model: payload.model || profile.model,
-    apiKey:
-      typeof payload.apiKey === "string"
-        ? payload.apiKey
-        : profile.apiKey,
+    apiKey: nextApiKey,
     systemPrompt:
       typeof payload.systemPrompt === "string"
         ? payload.systemPrompt
@@ -2407,6 +2498,7 @@ app.whenReady().then(async () => {
     const compression = maybeCompressActiveSession();
     session = store.getActiveSession();
     const controller = new AbortController();
+    userAbortedSessions.delete(session.id);
     activePromptControllers.set(session.id, {
       controller,
       createdAt: Date.now(),
@@ -2450,11 +2542,23 @@ app.whenReady().then(async () => {
       activePromptControllers.delete(session.id);
     }
 
+    if (userAbortedSessions.has(session.id)) {
+      userAbortedSessions.delete(session.id);
+      result = {
+        ...result,
+        ok: false,
+        exitCode: 130,
+        text: "已手动停止本轮任务。",
+        error: "aborted_by_user"
+      };
+    }
+
     if (!String(result.text || "").trim()) {
       result.text = result.ok
         ? "本轮任务已结束，但没有生成最终文本结果。请查看上方工具步骤，并根据需要继续追问。"
         : "本轮任务执行失败，而且没有返回可显示的错误文本。";
     }
+    result.text = buildSessionClosingSummary(result, normalizedPrompt);
 
     if (result.usedModel) {
       savePreferredModelIfChanged(result.usedModel);
@@ -2510,6 +2614,7 @@ app.whenReady().then(async () => {
         return { ok: false, reason: "no_active_prompt" };
       }
       const [fallbackSessionId, fallbackController] = fallback;
+      userAbortedSessions.add(fallbackSessionId);
       fallbackController.controller.abort(new Error("aborted_by_user"));
       activePromptControllers.delete(fallbackSessionId);
       sendAgentEvent({
@@ -2521,6 +2626,7 @@ app.whenReady().then(async () => {
       return { ok: true, sessionId: fallbackSessionId };
     }
 
+    userAbortedSessions.add(session.id);
     controller.controller.abort(new Error("aborted_by_user"));
     activePromptControllers.delete(session.id);
     sendAgentEvent({

@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { executeToolCall } = require("./toolRuntime");
 const protocol = require("./agentProtocol");
 const modelAdapters = require("./modelAdapterRegistry");
@@ -10,6 +11,12 @@ const DEFAULT_MAX_AGENT_STEPS = 120;
 const MIN_AGENT_STEPS = 20;
 const MAX_AGENT_STEPS = 300;
 const UPSTREAM_RETRYABLE_PATTERN = /Failed to connect to upstream channel/i;
+const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 90000;
+const DEFAULT_REMOTE_NETWORK_RETRIES = 3;
+const DEFAULT_VGO_PROFILE_ID = "default";
+const REMOTE_MAX_HISTORY_MESSAGES = 24;
+const REMOTE_MAX_MESSAGE_CHARS = 5000;
+const REMOTE_MAX_TOTAL_CHARS = 60000;
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "vgo-remote.log");
 
@@ -36,6 +43,103 @@ async function parseJsonResponse(response) {
 function toNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function toBase64Url(input) {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function isBigModelHost(requestUrl = "") {
+  const raw = String(requestUrl || "").trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    return /(^|\.)open\.bigmodel\.cn$/i.test(parsed.hostname);
+  } catch {
+    return /open\.bigmodel\.cn/i.test(raw);
+  }
+}
+
+function looksLikeJwtToken(value = "") {
+  return /^[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$/.test(String(value || "").trim());
+}
+
+function looksLikeBigModelApiKey(value = "") {
+  const key = String(value || "").trim();
+  return key.includes(".") && key.split(".").length === 2;
+}
+
+function buildBigModelJwtFromApiKey(apiKey = "") {
+  const [apiKeyId, apiKeySecret] = String(apiKey || "").trim().split(".");
+  if (!apiKeyId || !apiKeySecret) {
+    return String(apiKey || "").trim();
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const header = toBase64Url(JSON.stringify({ alg: "HS256", sign_type: "SIGN" }));
+  const payload = toBase64Url(
+    JSON.stringify({
+      api_key: apiKeyId,
+      exp: nowSeconds + 300,
+      timestamp: Date.now()
+    })
+  );
+  const data = `${header}.${payload}`;
+  const signature = crypto
+    .createHmac("sha256", apiKeySecret)
+    .update(data)
+    .digest("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+
+  return `${data}.${signature}`;
+}
+
+function resolveAuthorizationHeaderValue(remote = {}, requestUrl = "") {
+  const rawApiKey = String(remote?.apiKey || "").trim();
+  if (!rawApiKey) {
+    return "";
+  }
+
+  if (!isBigModelHost(requestUrl)) {
+    return `Bearer ${rawApiKey}`;
+  }
+
+  if (looksLikeBigModelApiKey(rawApiKey)) {
+    return `Bearer ${buildBigModelJwtFromApiKey(rawApiKey)}`;
+  }
+
+  if (looksLikeJwtToken(rawApiKey)) {
+    return `Bearer ${rawApiKey}`;
+  }
+
+  return `Bearer ${rawApiKey}`;
+}
+
+function isQuotaLikeFailure(status, errorText = "") {
+  const text = String(errorText || "").toLowerCase();
+  return (
+    Number(status) === 429 &&
+    (
+      text.includes("余额不足") ||
+      text.includes("无可用资源包") ||
+      text.includes("quota") ||
+      text.includes("insufficient") ||
+      text.includes("balance")
+    )
+  );
+}
+
+function buildBigModelFallbackModels(primaryModel = "") {
+  const preferred = String(primaryModel || "").trim();
+  return ["glm-4.7-flash", "glm-4.5-air", "glm-4-flash-250414"].filter(
+    (item) => item && item !== preferred
+  );
 }
 
 function getMaxAgentSteps(settings) {
@@ -132,6 +236,20 @@ function isRealVgoLogin(settings) {
   return Boolean(settings?.vgoAI?.loggedIn && settings?.vgoAI?.accessToken);
 }
 
+function shouldUseRealVgoChannel(settings) {
+  if (!isRealVgoLogin(settings)) {
+    return false;
+  }
+
+  const activeProfileId = String(settings?.activeRemoteProfileId || "").trim();
+  const provider = String(settings?.remote?.provider || "").toLowerCase();
+  const isDefaultProfile = !activeProfileId || activeProfileId === DEFAULT_VGO_PROFILE_ID;
+  const isOfficialProvider =
+    provider.includes("vgo remote") || provider.includes("vgo ai") || provider.includes("official");
+
+  return isDefaultProfile || isOfficialProvider;
+}
+
 function getCatalogModels(settings) {
   return Array.isArray(settings?.vgoAI?.modelCatalog) ? settings.vgoAI.modelCatalog : [];
 }
@@ -223,15 +341,81 @@ function extractToolCalls(rawText = "") {
   return [];
 }
 
+function clampText(text = "", maxChars = 0) {
+  const source = String(text || "");
+  if (!maxChars || source.length <= maxChars) {
+    return source;
+  }
+  return `${source.slice(0, Math.max(0, maxChars - 64))}\n...[trimmed ${source.length - maxChars} chars]`;
+}
+
+function compactConversationMessages(messages = [], options = {}) {
+  const maxMessages = Number(options.maxMessages) || REMOTE_MAX_HISTORY_MESSAGES;
+  const maxMessageChars = Number(options.maxMessageChars) || REMOTE_MAX_MESSAGE_CHARS;
+  const maxTotalChars = Number(options.maxTotalChars) || REMOTE_MAX_TOTAL_CHARS;
+  const preserveSystem = options.preserveSystem !== false;
+
+  if (!Array.isArray(messages) || !messages.length) {
+    return [];
+  }
+
+  const normalized = messages
+    .map((item) => ({
+      role: item?.role || "user",
+      content: clampText(item?.content || "", maxMessageChars)
+    }))
+    .filter((item) => String(item.content || "").trim());
+
+  if (!normalized.length) {
+    return [];
+  }
+
+  let systemMessage = null;
+  let rest = normalized;
+  if (preserveSystem && normalized[0]?.role === "system") {
+    systemMessage = normalized[0];
+    rest = normalized.slice(1);
+  }
+
+  if (rest.length > maxMessages) {
+    rest = rest.slice(-maxMessages);
+  }
+
+  let compacted = systemMessage ? [systemMessage, ...rest] : [...rest];
+  let totalChars = compacted.reduce((sum, item) => sum + String(item.content || "").length, 0);
+
+  while (compacted.length > (systemMessage ? 2 : 1) && totalChars > maxTotalChars) {
+    const dropIndex = systemMessage ? 1 : 0;
+    compacted.splice(dropIndex, 1);
+    totalChars = compacted.reduce((sum, item) => sum + String(item.content || "").length, 0);
+  }
+
+  if (totalChars > maxTotalChars) {
+    const targetIndex = systemMessage ? compacted.length - 1 : Math.max(0, compacted.length - 1);
+    if (targetIndex >= 0) {
+      const overflow = totalChars - maxTotalChars;
+      const current = String(compacted[targetIndex].content || "");
+      compacted[targetIndex].content = clampText(current, Math.max(1200, current.length - overflow - 64));
+    }
+  }
+
+  return compacted;
+}
+
+function compactActiveHistoryInPlace(activeHistory = [], options = {}) {
+  const compacted = compactConversationMessages(activeHistory, options);
+  activeHistory.splice(0, activeHistory.length, ...compacted);
+}
+
 function buildMessageHistory(history, systemPrompt, currentPrompt = "", attachments = []) {
   const trimmedHistory = (history || [])
     .filter((item) => item && (item.role === "user" || item.role === "assistant"))
     .map((item) => ({
       role: item.role,
-      content: String(item.text || "").trim()
+      content: clampText(String(item.text || "").trim(), REMOTE_MAX_MESSAGE_CHARS)
     }))
     .filter((item) => item.content)
-    .slice(-20);
+    .slice(-REMOTE_MAX_HISTORY_MESSAGES);
 
   const attachmentSummary = attachments.length
     ? `\n\n[Attachments]\n${attachments.map((item, index) => `${index + 1}. ${item.name} | ${item.path}`).join("\n")}`
@@ -240,7 +424,7 @@ function buildMessageHistory(history, systemPrompt, currentPrompt = "", attachme
   const messages = [
     {
       role: "system",
-      content: systemPrompt
+      content: clampText(systemPrompt, REMOTE_MAX_MESSAGE_CHARS)
     },
     ...trimmedHistory
   ];
@@ -250,11 +434,11 @@ function buildMessageHistory(history, systemPrompt, currentPrompt = "", attachme
   if (!hasUserMessage && normalizedPrompt) {
     messages.push({
       role: "user",
-      content: normalizedPrompt + attachmentSummary
+      content: clampText(normalizedPrompt + attachmentSummary, REMOTE_MAX_MESSAGE_CHARS)
     });
   }
 
-  return messages;
+  return compactConversationMessages(messages);
 }
 
 function buildSkillPreflightNudge(skills = []) {
@@ -285,27 +469,135 @@ async function sendRealVgoRequest({ token, model, activeHistory, signal }) {
     conversationId: "",
     messageCount: Array.isArray(activeHistory) ? activeHistory.length : 0
   });
-  const response = await fetch("https://vgoai.cn/api/v1/chat/send", {
-    method: "POST",
-    signal,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      model,
-      messages: activeHistory
-    })
-  });
 
-  const payload = await parseJsonResponse(response);
-  logRuntime("request:end", {
-    model,
-    ok: response.ok,
-    status: response.status,
-    message: String(payload?.message || payload?.error || payload?.rawText || "").slice(0, 500)
-  });
-  return { response, payload };
+  const timeoutController = new AbortController();
+  const abortRelay = () => timeoutController.abort(new Error("aborted_by_user"));
+  if (signal) {
+    signal.addEventListener("abort", abortRelay, { once: true });
+  }
+  const timer = setTimeout(
+    () => timeoutController.abort(new Error("remote_request_timeout")),
+    DEFAULT_REMOTE_REQUEST_TIMEOUT_MS
+  );
+
+  try {
+    const response = await fetch("https://vgoai.cn/api/v1/chat/send", {
+      method: "POST",
+      signal: timeoutController.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: activeHistory
+      })
+    });
+
+    const payload = await parseJsonResponse(response);
+    logRuntime("request:end", {
+      model,
+      ok: response.ok,
+      status: response.status,
+      message: String(payload?.message || payload?.error || payload?.rawText || "").slice(0, 500)
+    });
+    return { response, payload };
+  } catch (error) {
+    logRuntime("request:error", {
+      model,
+      message: String(error?.message || error || "").slice(0, 500)
+    });
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (signal) {
+      signal.removeEventListener("abort", abortRelay);
+    }
+  }
+}
+
+function isNetworkFetchFailure(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return (
+    message.includes("fetch failed") ||
+    message.includes("network") ||
+    message.includes("socket") ||
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("econnreset") ||
+    message.includes("enotfound") ||
+    message.includes("eai_again")
+  );
+}
+
+function resolveLocalProviderEndpoint(baseUrl = "", provider = "") {
+  const normalized = String(baseUrl || "").trim().replace(/\/+$/, "");
+  const lower = normalized.toLowerCase();
+  const providerLower = String(provider || "").toLowerCase();
+
+  if (providerLower.includes("ollama") || /localhost:11434|127\.0\.0\.1:11434/.test(lower)) {
+    return {
+      mode: "ollama",
+      requestUrl: /\/api\/chat$/.test(lower) ? normalized : `${normalized}/api/chat`
+    };
+  }
+
+  if (/\/chat\/completions$/.test(lower)) {
+    return {
+      mode: "openai",
+      requestUrl: normalized
+    };
+  }
+
+  if (/\/v1$/.test(lower) || /\/openai\/v1$/.test(lower)) {
+    return {
+      mode: "openai",
+      requestUrl: `${normalized}/chat/completions`
+    };
+  }
+
+  return {
+    mode: "legacy",
+    requestUrl: `${normalized}/chat`
+  };
+}
+
+function normalizeHistoryMessages(history = []) {
+  if (!Array.isArray(history) || !history.length) {
+    return [];
+  }
+
+  return history
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      role: String(item.role || "").trim().toLowerCase(),
+      content: typeof item.content === "string" ? item.content : String(item.content || "")
+    }))
+    .filter((item) => ["system", "user", "assistant"].includes(item.role) && item.content.trim());
+}
+
+function extractOpenAiMessageText(payload = {}) {
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") {
+          return part;
+        }
+        if (part && typeof part === "object") {
+          return part.text || part.content || "";
+        }
+        return "";
+      })
+      .join("")
+      .trim();
+  }
+
+  return String(payload?.output_text || payload?.text || "");
 }
 
 function isRetryableUpstreamFailure(response, payload) {
@@ -458,6 +750,29 @@ function hasUnfinishedRequiredReads(prompt = "", rawEvents = [], workspace = "")
   return getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace).length > 0;
 }
 
+function promptAllowsAutonomousContinuation(prompt = "") {
+  const normalized = String(prompt || "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  const autonomyPatterns = [
+    /继续/,
+    /自动/,
+    /自行/,
+    /完整落地/,
+    /完整方案/,
+    /直到完成/,
+    /修复完/,
+    /排查并修复/,
+    /持续执行/,
+    /continue/,
+    /keep going/,
+    /autonom/i,
+    /end[- ]to[- ]end/
+  ];
+  return autonomyPatterns.some((pattern) => pattern.test(normalized));
+}
+
 function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", workspace = "") {
   const normalized = String(text || "").trim();
   if (!normalized) {
@@ -493,7 +808,7 @@ function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", work
   ];
 
   if (!hasToolResults && continuationPatterns.some((pattern) => pattern.test(normalized))) {
-    return true;
+    return unfinishedRequiredReads || promptAllowsAutonomousContinuation(prompt);
   }
 
   if (finalPatterns.some((pattern) => pattern.test(normalized))) {
@@ -504,11 +819,15 @@ function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", work
   }
 
   if (protocol.looksLikeContinuationIntent(normalized)) {
-    return true;
+    return unfinishedRequiredReads || promptAllowsAutonomousContinuation(prompt);
   }
 
   if (unfinishedRequiredReads) {
     return true;
+  }
+
+  if (!promptAllowsAutonomousContinuation(prompt)) {
+    return false;
   }
 
   return false;
@@ -813,6 +1132,41 @@ async function runRealVgoPrompt({
   let dependencyVerificationNudgeSent = false;
   let upstreamRetryUsed = false;
   let upstreamFallbackModelUsed = false;
+  let payloadTooLargeRetryCount = 0;
+  let autoContinueNudgeCount = 0;
+  let networkRetryUsed = 0;
+
+  const requestWithRetry = async (targetModel) => {
+    let attempt = 0;
+    let lastError = null;
+    while (attempt < DEFAULT_REMOTE_NETWORK_RETRIES) {
+      attempt += 1;
+      try {
+        return await sendRealVgoRequest({
+          token,
+          model: targetModel,
+          activeHistory,
+          signal
+        });
+      } catch (error) {
+        lastError = error;
+        if (signal?.aborted || error?.name === "AbortError" || error?.message === "aborted_by_user") {
+          throw error;
+        }
+        if (!isNetworkFetchFailure(error) || attempt >= DEFAULT_REMOTE_NETWORK_RETRIES) {
+          throw error;
+        }
+        networkRetryUsed += 1;
+        emitEvent(onEvent, rawEvents, {
+          type: "task_status",
+          status: "retrying",
+          message: `网络波动，正在自动重试（${attempt}/${DEFAULT_REMOTE_NETWORK_RETRIES}）...`
+        });
+        await wait(500 * attempt);
+      }
+    }
+    throw lastError || new Error("remote_request_failed");
+  };
 
   const maxAgentSteps = getMaxAgentSteps(settings);
   for (let step = 0; step < maxAgentSteps; step += 1) {
@@ -841,12 +1195,41 @@ async function runRealVgoPrompt({
       message: step === 0 ? "正在请求远程模型..." : `正在继续第 ${step + 1} 轮推理...`
     });
 
-    let { response, payload: nextPayload } = await sendRealVgoRequest({
-      token,
-      model: usedModel,
-      activeHistory,
-      signal
+    compactActiveHistoryInPlace(activeHistory, {
+      maxMessages: REMOTE_MAX_HISTORY_MESSAGES,
+      maxMessageChars: REMOTE_MAX_MESSAGE_CHARS,
+      maxTotalChars: REMOTE_MAX_TOTAL_CHARS
     });
+
+    let response;
+    let nextPayload;
+    try {
+      ({ response, payload: nextPayload } = await requestWithRetry(usedModel));
+    } catch (error) {
+      if (rawEvents.some((event) => event?.type === "tool_result")) {
+        return {
+          ok: true,
+          exitCode: 0,
+          sessionId,
+          text: [
+            "远程网络中断，已基于本轮已执行结果先输出可用结论。",
+            protocol.buildFallbackCompletionFromResults(prompt, extractToolResultSummaries(rawEvents)),
+            "建议：网络恢复后可继续同一任务做补充验证。"
+          ].join("\n\n"),
+          error: "",
+          rawEvents,
+          remoteConversationId: "",
+          remoteTitle: "",
+          usedModel,
+          actualChannel: "real-remote-agent-degraded",
+          actualContextWindow: contextWindow,
+          usageInputTokens: usage.inputTokens,
+          usageOutputTokens: usage.outputTokens,
+          usageTotalTokens: usage.totalTokens
+        };
+      }
+      throw error;
+    }
     payload = nextPayload;
 
     let messageText = formatRemoteServiceError(settings, response, payload);
@@ -858,12 +1241,7 @@ async function runRealVgoPrompt({
         message: "上游通道连接失败，正在自动重试..."
       });
       await wait(1200);
-      ({ response, payload } = await sendRealVgoRequest({
-        token,
-        model: usedModel,
-        activeHistory,
-        signal
-      }));
+      ({ response, payload } = await requestWithRetry(usedModel));
       messageText = formatRemoteServiceError(settings, response, payload);
     }
 
@@ -877,12 +1255,7 @@ async function runRealVgoPrompt({
           message: `上游通道仍不可用，正在切换备用模型：${fallbackUpstreamModel}`
         });
         usedModel = fallbackUpstreamModel;
-        ({ response, payload } = await sendRealVgoRequest({
-          token,
-          model: usedModel,
-          activeHistory,
-          signal
-        }));
+        ({ response, payload } = await requestWithRetry(usedModel));
         messageText = formatRemoteServiceError(settings, response, payload);
       }
     }
@@ -890,13 +1263,30 @@ async function runRealVgoPrompt({
     const fallbackModel = getCatalogModels(settings).find((item) => item.id !== usedModel)?.id;
     if (!response.ok && fallbackModel && /No available channel for this model/i.test(messageText)) {
       usedModel = fallbackModel;
-      ({ response, payload } = await sendRealVgoRequest({
-        token,
-        model: usedModel,
-        activeHistory,
-        signal
-      }));
+      ({ response, payload } = await requestWithRetry(usedModel));
       messageText = formatRemoteServiceError(settings, response, payload);
+    }
+
+    if (!response.ok && Number(response.status) === 413) {
+      if (payloadTooLargeRetryCount < 2) {
+        payloadTooLargeRetryCount += 1;
+        emitEvent(onEvent, rawEvents, {
+          type: "task_status",
+          status: "retrying",
+          message: "上下文过长，正在自动压缩并重试..."
+        });
+        compactActiveHistoryInPlace(activeHistory, {
+          maxMessages: 12,
+          maxMessageChars: 2200,
+          maxTotalChars: 22000
+        });
+        activeHistory.push({
+          role: "user",
+          content:
+            "Context limit reached. Continue with concise reasoning and minimal output. Use only essential tool results."
+        });
+        continue;
+      }
     }
 
     const data = payload?.data || payload;
@@ -1088,12 +1478,39 @@ async function runRealVgoPrompt({
       }
 
       if (shouldContinueAutonomously(latestText, rawEvents, prompt, workspace)) {
+        if (autoContinueNudgeCount >= 4) {
+          return {
+            ok: true,
+            exitCode: 0,
+            sessionId,
+            text:
+              latestText ||
+              protocol.buildFallbackCompletionFromResults(
+                prompt,
+                extractToolResultSummaries(rawEvents)
+              ),
+            error: "",
+            rawEvents,
+            remoteConversationId: "",
+            remoteTitle: "",
+            usedModel,
+            actualChannel: rawEvents.some((event) => Array.isArray(event.toolCalls) && event.toolCalls.length)
+              ? "real-remote-agent"
+              : "real-remote",
+            actualContextWindow: contextWindow,
+            usageInputTokens: usage.inputTokens,
+            usageOutputTokens: usage.outputTokens,
+            usageTotalTokens: usage.totalTokens
+          };
+        }
+        autoContinueNudgeCount += 1;
         const unfinishedReadPaths = getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace);
         const nextRequiredPath = unfinishedReadPaths[0] || "";
         logRuntime("model:auto_continue", {
           step,
           textPreview: latestText.slice(0, 200),
           unfinishedRequiredReads: unfinishedReadPaths.length > 0,
+          autoContinueNudgeCount,
           nextRequiredPath
         });
 
@@ -1291,11 +1708,11 @@ async function runRealVgoPrompt({
 
     activeHistory.push({
       role: "assistant",
-      content: rawText
+      content: clampText(rawText, 4000)
     });
     activeHistory.push({
       role: "user",
-      content: protocol.buildToolResultMessage(results)
+      content: clampText(protocol.buildToolResultMessage(results), 5000)
     });
 
     if (protocol.promptRequiresWrite(prompt) && hasWriteArgumentFailure && !writeArgumentRetrySent) {
@@ -1329,6 +1746,7 @@ async function runRealVgoPrompt({
 async function runLocalPrompt({ workspace, sessionId, prompt, settings, history, sessionMeta, attachments = [] }) {
   const remote = settings?.remote || {};
   const baseUrl = (remote.baseUrl || "").trim().replace(/\/+$/, "");
+  const endpointPlan = resolveLocalProviderEndpoint(baseUrl, remote.provider);
   const activeSkills = skillRegistry.detectRelevantSkills(prompt);
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
   const skillWorkflowNudge = skillRegistry.buildSkillWorkflowNudge(activeSkills);
@@ -1349,43 +1767,202 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
   }
 
   try {
-    const response = await fetch(`${baseUrl}/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(remote.apiKey ? { Authorization: `Bearer ${remote.apiKey}` } : {})
-      },
-      body: JSON.stringify({
-        model: remote.model,
-        systemPrompt: buildSafeSystemPrompt(settings, sessionMeta, activeSkills),
-        workspace,
-        sessionId,
-        prompt: [prompt, skillPreflightNudge, skillWorkflowNudge, attachmentSummary].filter(Boolean).join("\n\n"),
-        history
-      })
-    });
+    const finalPrompt = [prompt, skillPreflightNudge, skillWorkflowNudge, attachmentSummary].filter(Boolean).join("\n\n");
+    const systemPrompt = buildSafeSystemPrompt(settings, sessionMeta, activeSkills);
+    const requestPayload = {
+      model: remote.model,
+      systemPrompt,
+      workspace,
+      sessionId,
+      prompt: finalPrompt,
+      history
+    };
+    const openAiPayload = {
+      model: remote.model,
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        ...normalizeHistoryMessages(history),
+        {
+          role: "user",
+          content: finalPrompt
+        }
+      ],
+      stream: false
+    };
+    const ollamaPayload = {
+      model: remote.model,
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        ...normalizeHistoryMessages(history),
+        {
+          role: "user",
+          content: finalPrompt
+        }
+      ],
+      stream: false
+    };
+    const authorizationHeader = resolveAuthorizationHeaderValue(remote, endpointPlan.requestUrl);
+    let response = null;
+    let lastError = null;
+    for (let attempt = 1; attempt <= DEFAULT_REMOTE_NETWORK_RETRIES; attempt += 1) {
+      const timeoutController = new AbortController();
+      const timer = setTimeout(
+        () => timeoutController.abort(new Error("remote_local_prompt_timeout")),
+        DEFAULT_REMOTE_REQUEST_TIMEOUT_MS
+      );
+      try {
+        response = await fetch(endpointPlan.requestUrl, {
+          method: "POST",
+          signal: timeoutController.signal,
+          headers: {
+            "Content-Type": "application/json",
+            ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
+          },
+          body: JSON.stringify(
+            endpointPlan.mode === "openai"
+              ? openAiPayload
+              : endpointPlan.mode === "ollama"
+                ? ollamaPayload
+                : requestPayload
+          )
+        });
+        clearTimeout(timer);
+        break;
+      } catch (error) {
+        clearTimeout(timer);
+        lastError = error;
+        if (!isNetworkFetchFailure(error) || attempt >= DEFAULT_REMOTE_NETWORK_RETRIES) {
+          throw error;
+        }
+        await wait(350 * attempt);
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error("remote_local_prompt_failed");
+    }
 
     const payload = await parseJsonResponse(response);
     const text =
+      extractOpenAiMessageText(payload) ||
+      payload?.message?.content ||
       payload.output ||
       payload.text ||
       payload.message ||
       payload.rawText ||
       (response.ok ? "本地测试引擎已响应，但没有返回文本。" : "本地测试引擎调用失败。");
 
+    const errorDetail = payload?.error?.message || payload?.error || payload?.message || `http_${response.status}`;
+    const errorText = String(errorDetail || "");
+    const isAuthFailure =
+      !response.ok &&
+      (response.status === 401 ||
+        response.status === 403 ||
+        /token|api[\s_-]?key|auth|unauthor|forbidden|令牌|鉴权|验证/i.test(errorText));
+    let resolvedResponse = response;
+    let resolvedPayload = payload;
+    let resolvedText = text;
+    let resolvedErrorDetail = errorDetail;
+    let resolvedErrorText = errorText;
+    let resolvedUsedModel = payload.model || remote.model;
+
+    if (
+      !response.ok &&
+      endpointPlan.mode === "openai" &&
+      isBigModelHost(endpointPlan.requestUrl) &&
+      isQuotaLikeFailure(response.status, errorText)
+    ) {
+      const fallbackModels = buildBigModelFallbackModels(remote.model);
+      for (const fallbackModel of fallbackModels) {
+        try {
+          const fallbackOpenAiPayload = {
+            ...openAiPayload,
+            model: fallbackModel
+          };
+          const fallbackResponse = await fetch(endpointPlan.requestUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
+            },
+            body: JSON.stringify(fallbackOpenAiPayload)
+          });
+          const fallbackPayload = await parseJsonResponse(fallbackResponse);
+          const fallbackText =
+            extractOpenAiMessageText(fallbackPayload) ||
+            fallbackPayload?.message?.content ||
+            fallbackPayload.output ||
+            fallbackPayload.text ||
+            fallbackPayload.message ||
+            fallbackPayload.rawText ||
+            "";
+          const fallbackErrorDetail =
+            fallbackPayload?.error?.message ||
+            fallbackPayload?.error ||
+            fallbackPayload?.message ||
+            `http_${fallbackResponse.status}`;
+
+          if (fallbackResponse.ok) {
+            resolvedResponse = fallbackResponse;
+            resolvedPayload = fallbackPayload;
+            resolvedText = `[自动切换模型] ${remote.model} 余额/资源不可用，已切换到 ${fallbackModel}\n\n${fallbackText}`.trim();
+            resolvedErrorDetail = "";
+            resolvedErrorText = "";
+            resolvedUsedModel = fallbackPayload.model || fallbackModel;
+            break;
+          }
+
+          if (!isQuotaLikeFailure(fallbackResponse.status, fallbackErrorDetail)) {
+            resolvedResponse = fallbackResponse;
+            resolvedPayload = fallbackPayload;
+            resolvedText = fallbackText;
+            resolvedErrorDetail = fallbackErrorDetail;
+            resolvedErrorText = String(fallbackErrorDetail || "");
+            resolvedUsedModel = fallbackPayload.model || fallbackModel;
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    const finalAuthFailure =
+      !resolvedResponse.ok &&
+      (resolvedResponse.status === 401 ||
+        resolvedResponse.status === 403 ||
+        /token|api[\s_-]?key|auth|unauthor|forbidden|令牌|鉴权|验证/i.test(resolvedErrorText));
+    const failureText = finalAuthFailure
+      ? `Custom HTTP Provider auth failed (${endpointPlan.requestUrl}): ${resolvedErrorText}`
+      : `Custom HTTP Provider request failed (${endpointPlan.requestUrl}): ${resolvedErrorText}`;
+    const finalText = resolvedResponse.ok ? resolvedText : failureText;
+
     return {
-      ok: response.ok,
-      exitCode: response.ok ? 0 : 1,
+      ok: resolvedResponse.ok,
+      exitCode: resolvedResponse.ok ? 0 : 1,
       sessionId,
-      text,
-      error: response.ok ? "" : payload.error || `http_${response.status}`,
-      rawEvents: payload.events || [],
-      usedModel: payload.model || remote.model,
-      actualChannel: payload.channel || "local-mock",
-      actualContextWindow: toNumber(payload?.contextWindow),
-      usageInputTokens: toNumber(payload?.usage?.inputTokens),
-      usageOutputTokens: toNumber(payload?.usage?.outputTokens),
-      usageTotalTokens: toNumber(payload?.usage?.totalTokens)
+      text: finalText,
+      error:
+        resolvedResponse.ok
+          ? ""
+          : resolvedErrorDetail,
+      rawEvents: resolvedPayload.events || [],
+      usedModel: resolvedUsedModel,
+      actualChannel:
+        resolvedPayload.channel ||
+        (endpointPlan.mode === "openai"
+          ? "custom-openai"
+          : endpointPlan.mode === "ollama"
+            ? "custom-ollama"
+            : "local-mock"),
+      actualContextWindow: toNumber(resolvedPayload?.contextWindow),
+      usageInputTokens: toNumber(resolvedPayload?.usage?.inputTokens || resolvedPayload?.usage?.prompt_tokens),
+      usageOutputTokens: toNumber(resolvedPayload?.usage?.outputTokens || resolvedPayload?.usage?.completion_tokens),
+      usageTotalTokens: toNumber(resolvedPayload?.usage?.totalTokens || resolvedPayload?.usage?.total_tokens)
     };
   } catch (error) {
     return {
@@ -1393,6 +1970,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
       exitCode: 1,
       sessionId,
       text: `无法连接远程引擎：${error.message}`,
+      text: `Unable to reach remote provider: ${error.message}`,
       error: error.message,
       rawEvents: []
     };
@@ -1411,7 +1989,7 @@ async function runPrompt(args) {
     };
   }
 
-  if (isRealVgoLogin(args.settings)) {
+  if (shouldUseRealVgoChannel(args.settings)) {
     try {
       return await runRealVgoPrompt(args);
     } catch (error) {
@@ -1440,7 +2018,7 @@ async function runPrompt(args) {
 }
 
 async function runHealthCheck(_workspace, settings) {
-  if (isRealVgoLogin(settings)) {
+  if (shouldUseRealVgoChannel(settings)) {
     try {
       const response = await fetch("https://vgoai.cn/api/v1/user/profile", {
         headers: {
@@ -1473,6 +2051,7 @@ async function runHealthCheck(_workspace, settings) {
 
   const remote = settings?.remote || {};
   const baseUrl = (remote.baseUrl || "").trim().replace(/\/+$/, "");
+  const endpointPlan = resolveLocalProviderEndpoint(baseUrl, remote.provider);
   if (!baseUrl) {
     return {
       ok: false,
@@ -1481,12 +2060,80 @@ async function runHealthCheck(_workspace, settings) {
     };
   }
 
+  if (endpointPlan.mode === "openai") {
+    const apiKey = String(remote.apiKey || "").trim();
+    if (!apiKey) {
+      return {
+        ok: false,
+        exitCode: 1,
+        sessionId,
+        text: "Custom HTTP Provider 缺少 API Key。",
+        error: "missing_api_key",
+        rawEvents: []
+      };
+    }
+    if (apiKey === "********") {
+      return {
+        ok: false,
+        exitCode: 1,
+        sessionId,
+        text: "Custom HTTP Provider 的 API Key 被占位符覆盖，请在设置页重新填写真实 Key。",
+        error: "masked_api_key_placeholder",
+        rawEvents: []
+      };
+    }
+  }
+
+  if (endpointPlan.mode === "openai") {
+    const apiKey = String(remote.apiKey || "").trim();
+    if (!apiKey) {
+      return {
+        ok: false,
+        exitCode: 1,
+        sessionId,
+        text: "Custom HTTP Provider API key is missing.",
+        error: "missing_api_key",
+        rawEvents: []
+      };
+    }
+    if (apiKey === "********") {
+      return {
+        ok: false,
+        exitCode: 1,
+        sessionId,
+        text: "Custom HTTP Provider API key is a masked placeholder. Re-enter the real key in Settings.",
+        error: "masked_api_key_placeholder",
+        rawEvents: []
+      };
+    }
+  }
+
+  const healthAuthHeader = resolveAuthorizationHeaderValue(
+    remote,
+    endpointPlan.mode === "openai" ? endpointPlan.requestUrl : `${baseUrl}/health`
+  );
+
   try {
-    const response = await fetch(`${baseUrl}/health`, {
-      headers: {
-        ...(remote.apiKey ? { Authorization: `Bearer ${remote.apiKey}` } : {})
-      }
-    });
+    const response =
+      endpointPlan.mode === "openai"
+        ? await fetch(endpointPlan.requestUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(healthAuthHeader ? { Authorization: healthAuthHeader } : {})
+            },
+            body: JSON.stringify({
+              model: remote.model,
+              messages: [{ role: "user", content: "ping" }],
+              max_tokens: 1,
+              stream: false
+            })
+          })
+        : await fetch(`${baseUrl}/health`, {
+            headers: {
+              ...(healthAuthHeader ? { Authorization: healthAuthHeader } : {})
+            }
+          });
     const payload = await parseJsonResponse(response);
     return response.ok
       ? {
@@ -1497,7 +2144,7 @@ async function runHealthCheck(_workspace, settings) {
       : {
           ok: false,
           title: "本地测试引擎异常",
-          details: payload.error || payload.message || `HTTP ${response.status}`
+          details: payload?.error?.message || payload.error || payload.message || `HTTP ${response.status}`
         };
   } catch (error) {
     return {
