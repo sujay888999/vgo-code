@@ -59,6 +59,108 @@ function logMainEvent(event, payload = {}) {
   } catch {}
 }
 
+function toBase64Url(input) {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function isBigModelHost(requestUrl = "") {
+  const raw = String(requestUrl || "").trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    return /(^|\.)open\.bigmodel\.cn$/i.test(parsed.hostname);
+  } catch {
+    return /open\.bigmodel\.cn/i.test(raw);
+  }
+}
+
+function looksLikeBigModelApiKey(value = "") {
+  const key = String(value || "").trim();
+  return key.includes(".") && key.split(".").length === 2;
+}
+
+function buildBigModelJwtFromApiKey(apiKey = "") {
+  const [apiKeyId, apiKeySecret] = String(apiKey || "").trim().split(".");
+  if (!apiKeyId || !apiKeySecret) {
+    return String(apiKey || "").trim();
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const header = toBase64Url(JSON.stringify({ alg: "HS256", sign_type: "SIGN" }));
+  const payload = toBase64Url(
+    JSON.stringify({
+      api_key: apiKeyId,
+      exp: nowSeconds + 300,
+      timestamp: Date.now()
+    })
+  );
+  const data = `${header}.${payload}`;
+  const signature = crypto
+    .createHmac("sha256", apiKeySecret)
+    .update(data)
+    .digest("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+
+  return `${data}.${signature}`;
+}
+
+function resolveCustomProviderAuthHeader(apiKey = "", requestUrl = "") {
+  const rawApiKey = String(apiKey || "").trim();
+  if (!rawApiKey || rawApiKey === "********") {
+    return "";
+  }
+  if (!isBigModelHost(requestUrl)) {
+    return `Bearer ${rawApiKey}`;
+  }
+  return `Bearer ${looksLikeBigModelApiKey(rawApiKey) ? buildBigModelJwtFromApiKey(rawApiKey) : rawApiKey}`;
+}
+
+function normalizeExternalModelId(modelId = "") {
+  const raw = String(modelId || "").trim();
+  if (!raw) return raw;
+  if (/^glm[-_.]/i.test(raw)) {
+    return raw.replace(/_/g, "-").toLowerCase();
+  }
+  return raw;
+}
+
+function normalizeModelCatalogCandidates(baseUrl = "", modelListUrl = "") {
+  const candidates = [];
+  const append = (url) => {
+    const cleaned = String(url || "").trim().replace(/\/+$/, "");
+    if (!cleaned || candidates.includes(cleaned)) return;
+    candidates.push(cleaned);
+  };
+
+  const normalizedBaseUrl = String(baseUrl || "").trim().replace(/\/+$/, "");
+  const normalizedModelListUrl = String(modelListUrl || "").trim().replace(/\/+$/, "");
+
+  if (normalizedModelListUrl) {
+    append(normalizedModelListUrl);
+    if (/\/chat\/completions$/i.test(normalizedModelListUrl)) {
+      append(normalizedModelListUrl.replace(/\/chat\/completions$/i, "/models"));
+    }
+  }
+
+  if (normalizedBaseUrl) {
+    append(`${normalizedBaseUrl}/v1/models`);
+    append(`${normalizedBaseUrl}/models`);
+    if (/\/chat\/completions$/i.test(normalizedBaseUrl)) {
+      const parent = normalizedBaseUrl.replace(/\/chat\/completions$/i, "");
+      append(`${parent}/models`);
+      append(`${parent}/v1/models`);
+    }
+  }
+
+  return candidates;
+}
+
 function cleanupExpiredMapEntries() {
   const now = Date.now();
   for (const [key, data] of activePromptControllers) {
@@ -475,7 +577,7 @@ function resolveInstallerFileName(downloadUrl = "", latestVersion = "") {
   return `VGO CODE Setup ${normalizedVersion}.exe`;
 }
 
-function downloadInstallerFile(downloadUrl, targetPath) {
+function downloadInstallerFile(downloadUrl, targetPath, onProgress) {
   return new Promise((resolve, reject) => {
     const fetchFile = (url, redirectCount = 0) => {
       if (redirectCount > 5) {
@@ -503,6 +605,38 @@ function downloadInstallerFile(downloadUrl, targetPath) {
 
         fs.mkdirSync(path.dirname(targetPath), { recursive: true });
         const output = fs.createWriteStream(targetPath);
+        const totalBytes = Number(response.headers?.["content-length"] || 0);
+        let downloadedBytes = 0;
+        const startedAt = Date.now();
+        let lastEmitAt = 0;
+        const emitProgress = (force = false) => {
+          if (typeof onProgress !== "function") {
+            return;
+          }
+          const now = Date.now();
+          if (!force && now - lastEmitAt < 200) {
+            return;
+          }
+          lastEmitAt = now;
+          const elapsedMs = Math.max(1, now - startedAt);
+          const speedBytesPerSec = Math.max(0, Math.round((downloadedBytes * 1000) / elapsedMs));
+          const progressPercent = totalBytes > 0 ? Math.min(100, (downloadedBytes / totalBytes) * 100) : 0;
+          onProgress({
+            downloadedBytes,
+            totalBytes,
+            speedBytesPerSec,
+            progressPercent
+          });
+        };
+
+        response.on("data", (chunk) => {
+          downloadedBytes += chunk?.length || 0;
+          emitProgress(false);
+        });
+        response.on("end", () => {
+          emitProgress(true);
+        });
+
         response.pipe(output);
         output.on("finish", () => {
           output.close(() => resolve(targetPath));
@@ -559,6 +693,7 @@ function launchWindowsUpgradeScript(installerPath) {
     windowsHide: true
   });
   processHandle.unref();
+  return true;
 }
 
 async function installUpdatePackage(payload = {}) {
@@ -583,10 +718,26 @@ async function installUpdatePackage(payload = {}) {
     sendUpdateEvent("update:status", { status: "downloading", ...updateInfo });
     const fileName = resolveInstallerFileName(updateInfo.downloadUrl, updateInfo.latestVersion);
     const targetPath = path.join(app.getPath("userData"), "updates", fileName);
-    await downloadInstallerFile(updateInfo.downloadUrl, targetPath);
+    await downloadInstallerFile(updateInfo.downloadUrl, targetPath, (progress) => {
+      sendUpdateEvent("update:status", {
+        status: "downloading",
+        ...updateInfo,
+        ...progress
+      });
+    });
 
+    const installerStat = fs.statSync(targetPath);
+    if (!installerStat?.size || installerStat.size < 1024 * 1024) {
+      throw new Error("Downloaded installer is invalid or incomplete");
+    }
+
+    sendUpdateEvent("update:status", { status: "downloaded", installerPath: targetPath, ...updateInfo });
     sendUpdateEvent("update:status", { status: "installing", installerPath: targetPath, ...updateInfo });
-    launchWindowsUpgradeScript(targetPath);
+    const launched = launchWindowsUpgradeScript(targetPath);
+    if (!launched) {
+      throw new Error("Failed to launch updater script");
+    }
+    sendUpdateEvent("update:status", { status: "restarting", installerPath: targetPath, ...updateInfo });
 
     setTimeout(() => {
       app.isQuitting = true;
@@ -1082,6 +1233,12 @@ function createRemoteProfileState(payload = {}, { activate = true } = {}) {
   const profileId = `profile-${Date.now()}`;
   const normalizedProvider = (payload.provider || "").trim() || "VGO Remote";
   const isOllamaProvider = normalizedProvider.toLowerCase().includes("ollama");
+  const incomingApiKey = typeof payload.apiKey === "string" ? payload.apiKey.trim() : "";
+  const currentApiKey = String(settings.remote.apiKey || "").trim();
+  const resolvedApiKey =
+    incomingApiKey === "********"
+      ? (currentApiKey === "********" ? "" : currentApiKey)
+      : incomingApiKey;
   const profile = {
     id: profileId,
     name: (payload.name || "").trim() || `杩滅▼閰嶇疆 ${(settings.remoteProfiles || []).length + 1}`,
@@ -1090,8 +1247,8 @@ function createRemoteProfileState(payload = {}, { activate = true } = {}) {
     modelListUrl: payload.modelListUrl || "",
     modelCatalog: Array.isArray(payload.modelCatalog) ? payload.modelCatalog : [],
     ollamaUrl: isOllamaProvider ? payload.ollamaUrl || settings.remote.ollamaUrl || "" : "",
-    model: payload.model || settings.remote.model,
-    apiKey: payload.apiKey || "",
+    model: normalizeExternalModelId(payload.model || settings.remote.model),
+    apiKey: resolvedApiKey,
     systemPrompt: payload.systemPrompt || settings.remote.systemPrompt
   };
 
@@ -1173,7 +1330,7 @@ function updateRemoteProfileState(profileId, payload = {}, { activate = false } 
         ? payload.modelCatalog
         : profile.modelCatalog || [],
     ollamaUrl: nextIsOllamaProvider ? payload.ollamaUrl || profile.ollamaUrl || "" : "",
-    model: payload.model || profile.model,
+    model: normalizeExternalModelId(payload.model || profile.model),
     apiKey: nextApiKey,
     systemPrompt:
       typeof payload.systemPrompt === "string"
@@ -1368,23 +1525,16 @@ async function fetchRemoteProfileModelCatalog(profile = {}) {
     return [];
   }
 
-  const candidates = [];
-  if (modelListUrl) {
-    candidates.push(modelListUrl);
-  }
-  if (baseUrl) {
-    candidates.push(`${baseUrl}/v1/models`);
-    candidates.push(`${baseUrl}/models`);
-  }
-
-  const headers = {};
-  if (apiKey) {
-    headers.Authorization = `Bearer ${apiKey}`;
-  }
+  const candidates = normalizeModelCatalogCandidates(baseUrl, modelListUrl);
 
   let lastError = null;
   for (const url of candidates) {
     try {
+      const headers = {};
+      const authHeader = resolveCustomProviderAuthHeader(apiKey, url);
+      if (authHeader) {
+        headers.Authorization = authHeader;
+      }
       const payload = await fetchJson(url, { headers });
       const models = mapGenericModelCatalog(payload);
       if (models.length) {
@@ -2212,6 +2362,7 @@ app.whenReady().then(async () => {
     const nextRemote = {
       ...settings.remote,
       ...payload,
+      model: normalizeExternalModelId(payload.model || settings.remote.model),
       apiKey:
         typeof payload.apiKey === "string" && payload.apiKey.trim() === "********"
           ? settings.remote.apiKey

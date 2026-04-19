@@ -142,6 +142,15 @@ function buildBigModelFallbackModels(primaryModel = "") {
   );
 }
 
+function normalizeRemoteModelId(modelId = "") {
+  const raw = String(modelId || "").trim();
+  if (!raw) return raw;
+  if (/^glm[-_.]/i.test(raw)) {
+    return raw.replace(/_/g, "-").toLowerCase();
+  }
+  return raw;
+}
+
 function getMaxAgentSteps(settings) {
   const configured =
     Number(settings?.agent?.maxToolSteps) || Number(settings?.remote?.maxToolSteps) || DEFAULT_MAX_AGENT_STEPS;
@@ -546,6 +555,13 @@ function resolveLocalProviderEndpoint(baseUrl = "", provider = "") {
     return {
       mode: "openai",
       requestUrl: normalized
+    };
+  }
+
+  if (/\/api\/paas\/v4$/.test(lower)) {
+    return {
+      mode: "openai",
+      requestUrl: `${normalized}/chat/completions`
     };
   }
 
@@ -1745,6 +1761,7 @@ async function runRealVgoPrompt({
 
 async function runLocalPrompt({ workspace, sessionId, prompt, settings, history, sessionMeta, attachments = [] }) {
   const remote = settings?.remote || {};
+  const normalizedModelId = normalizeRemoteModelId(remote.model);
   const baseUrl = (remote.baseUrl || "").trim().replace(/\/+$/, "");
   const endpointPlan = resolveLocalProviderEndpoint(baseUrl, remote.provider);
   const activeSkills = skillRegistry.detectRelevantSkills(prompt);
@@ -1770,7 +1787,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
     const finalPrompt = [prompt, skillPreflightNudge, skillWorkflowNudge, attachmentSummary].filter(Boolean).join("\n\n");
     const systemPrompt = buildSafeSystemPrompt(settings, sessionMeta, activeSkills);
     const requestPayload = {
-      model: remote.model,
+      model: normalizedModelId,
       systemPrompt,
       workspace,
       sessionId,
@@ -1778,7 +1795,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
       history
     };
     const openAiPayload = {
-      model: remote.model,
+      model: normalizedModelId,
       messages: [
         {
           role: "system",
@@ -1793,7 +1810,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
       stream: false
     };
     const ollamaPayload = {
-      model: remote.model,
+      model: normalizedModelId,
       messages: [
         {
           role: "system",
@@ -1870,7 +1887,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
     let resolvedText = text;
     let resolvedErrorDetail = errorDetail;
     let resolvedErrorText = errorText;
-    let resolvedUsedModel = payload.model || remote.model;
+    let resolvedUsedModel = payload.model || normalizedModelId;
 
     if (
       !response.ok &&
@@ -1878,7 +1895,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
       isBigModelHost(endpointPlan.requestUrl) &&
       isQuotaLikeFailure(response.status, errorText)
     ) {
-      const fallbackModels = buildBigModelFallbackModels(remote.model);
+      const fallbackModels = buildBigModelFallbackModels(normalizedModelId);
       for (const fallbackModel of fallbackModels) {
         try {
           const fallbackOpenAiPayload = {
@@ -1911,7 +1928,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
           if (fallbackResponse.ok) {
             resolvedResponse = fallbackResponse;
             resolvedPayload = fallbackPayload;
-            resolvedText = `[自动切换模型] ${remote.model} 余额/资源不可用，已切换到 ${fallbackModel}\n\n${fallbackText}`.trim();
+            resolvedText = `[自动切换模型] ${normalizedModelId} 余额/资源不可用，已切换到 ${fallbackModel}\n\n${fallbackText}`.trim();
             resolvedErrorDetail = "";
             resolvedErrorText = "";
             resolvedUsedModel = fallbackPayload.model || fallbackModel;
@@ -2123,7 +2140,7 @@ async function runHealthCheck(_workspace, settings) {
               ...(healthAuthHeader ? { Authorization: healthAuthHeader } : {})
             },
             body: JSON.stringify({
-              model: remote.model,
+              model: normalizeRemoteModelId(remote.model),
               messages: [{ role: "user", content: "ping" }],
               max_tokens: 1,
               stream: false

@@ -24,6 +24,13 @@ type UpdateInfo = {
   releaseNotes?: string
   releaseDate?: string
 }
+type UpdateProgress = {
+  status: string
+  downloadedBytes: number
+  totalBytes: number
+  speedBytesPerSec: number
+  progressPercent: number
+}
 
 function TabsComponent({ t }: { t: (key: string) => string }) {
   return [
@@ -124,6 +131,7 @@ export function SettingsModal() {
   const [updateBusy, setUpdateBusy] = useState(false)
   const [updateStatus, setUpdateStatus] = useState('')
   const [updateCandidate, setUpdateCandidate] = useState<UpdateInfo | null>(null)
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null)
   const [modelCatalogBusy, setModelCatalogBusy] = useState(false)
 
   const activeProfile = useMemo(
@@ -205,6 +213,19 @@ export function SettingsModal() {
     }
   }, [t])
 
+  const formatBytes = useCallback((bytes: number) => {
+    const value = Number(bytes) || 0
+    if (value <= 0) return '0 B'
+    const units = ['B', 'KB', 'MB', 'GB']
+    let size = value
+    let unitIndex = 0
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024
+      unitIndex += 1
+    }
+    return `${size >= 100 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`
+  }, [])
+
   const loadUpdateSettings = useCallback(async () => {
     try {
       const settings = await window.vgoDesktop?.getUpdateSettings?.()
@@ -234,10 +255,53 @@ export function SettingsModal() {
     const handleUpdateStatus = (event: Event) => {
       const payload = (event as CustomEvent).detail || {}
       if (payload?.status === 'downloading') {
-        setUpdateStatus(t('settings.update.downloadingPkg'))
+        const downloadedBytes = Number(payload.downloadedBytes) || 0
+        const totalBytes = Number(payload.totalBytes) || 0
+        const progressPercent = Number(payload.progressPercent) || 0
+        const speedBytesPerSec = Number(payload.speedBytesPerSec) || 0
+        setUpdateProgress({
+          status: 'downloading',
+          downloadedBytes,
+          totalBytes,
+          progressPercent,
+          speedBytesPerSec,
+        })
+        if (totalBytes > 0) {
+          setUpdateStatus(
+            `正在下载更新包：${progressPercent.toFixed(1)}%（${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}）`,
+          )
+        } else {
+          setUpdateStatus(`正在下载更新包：${formatBytes(downloadedBytes)}`)
+        }
+      } else if (payload?.status === 'downloaded') {
+        setUpdateProgress((prev) => ({
+          status: 'downloaded',
+          downloadedBytes: prev?.downloadedBytes || 0,
+          totalBytes: prev?.totalBytes || prev?.downloadedBytes || 0,
+          speedBytesPerSec: prev?.speedBytesPerSec || 0,
+          progressPercent: 100,
+        }))
+        setUpdateStatus('更新包下载完成，正在准备安装...')
       } else if (payload?.status === 'installing') {
+        setUpdateProgress((prev) => ({
+          status: 'installing',
+          downloadedBytes: prev?.downloadedBytes || 0,
+          totalBytes: prev?.totalBytes || prev?.downloadedBytes || 0,
+          speedBytesPerSec: prev?.speedBytesPerSec || 0,
+          progressPercent: 100,
+        }))
         setUpdateStatus(t('settings.update.installingPkg'))
+      } else if (payload?.status === 'restarting') {
+        setUpdateProgress((prev) => ({
+          status: 'restarting',
+          downloadedBytes: prev?.downloadedBytes || 0,
+          totalBytes: prev?.totalBytes || prev?.downloadedBytes || 0,
+          speedBytesPerSec: prev?.speedBytesPerSec || 0,
+          progressPercent: 100,
+        }))
+        setUpdateStatus('安装程序已启动，应用即将重启完成升级...')
       } else if (payload?.status === 'failed') {
+        setUpdateProgress((prev) => (prev ? { ...prev, status: 'failed' } : null))
         setUpdateStatus(payload?.error || t('settings.operationFailed'))
       }
     }
@@ -248,7 +312,7 @@ export function SettingsModal() {
       window.removeEventListener('vgoUpdateAvailable', handleUpdateAvailable)
       window.removeEventListener('vgoUpdateStatus', handleUpdateStatus)
     }
-  }, [t])
+  }, [formatBytes, t])
 
   const withUpdateStatus = async (message: string, fn: () => Promise<void>) => {
     setUpdateStatus(message)
@@ -263,6 +327,7 @@ export function SettingsModal() {
   }
 
   const handleCheckForUpdatesNow = async () => {
+    setUpdateProgress(null)
     await withUpdateStatus(t('settings.update.checking'), async () => {
       const result = await window.vgoDesktop?.checkForUpdates?.({ force: true })
       await loadUpdateSettings()
@@ -295,6 +360,13 @@ export function SettingsModal() {
       setUpdateStatus(t('settings.update.noCandidate'))
       return
     }
+    setUpdateProgress({
+      status: 'starting',
+      downloadedBytes: 0,
+      totalBytes: 0,
+      speedBytesPerSec: 0,
+      progressPercent: 0,
+    })
     await withUpdateStatus(t('settings.update.installing'), async () => {
       const result = await window.vgoDesktop?.installUpdate?.({
         downloadUrl: updateCandidate.downloadUrl,
@@ -895,6 +967,31 @@ export function SettingsModal() {
                       {t('settings.update.resetSkip')}
                     </button>
                   </div>
+
+                  {updateProgress && (
+                    <div className="update-progress-card">
+                      <div className="update-progress-head">
+                        <span>更新进度</span>
+                        <span>{Math.max(0, Math.min(100, updateProgress.progressPercent)).toFixed(1)}%</span>
+                      </div>
+                      <div className="update-progress-track">
+                        <div
+                          className="update-progress-fill"
+                          style={{ width: `${Math.max(0, Math.min(100, updateProgress.progressPercent))}%` }}
+                        />
+                      </div>
+                      <div className="update-progress-meta">
+                        <span>
+                          {updateProgress.totalBytes > 0
+                            ? `${formatBytes(updateProgress.downloadedBytes)} / ${formatBytes(updateProgress.totalBytes)}`
+                            : formatBytes(updateProgress.downloadedBytes)}
+                        </span>
+                        {updateProgress.speedBytesPerSec > 0 && (
+                          <span>{`${formatBytes(updateProgress.speedBytesPerSec)}/s`}</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {updateStatus && <p className="manual-config-status">{updateStatus}</p>}
                 </div>
