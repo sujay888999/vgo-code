@@ -107,8 +107,8 @@ function activeEngine() {
 
 function getWindowIconPath() {
   return app.isPackaged
-    ? path.join(process.resourcesPath, "app.asar", "ui", "logo.png")
-    : path.join(app.getAppPath(), "ui", "logo.png");
+    ? path.join(process.resourcesPath, "app.asar", "ui", "logo.ico")
+    : path.join(app.getAppPath(), "ui", "logo.ico");
 }
 
 function saveAllSettings(nextSettings) {
@@ -899,13 +899,14 @@ function createWindow() {
   });
 
   const isDev = !app.isPackaged;
-  let distWebPath;
-  if (isDev) {
-    distWebPath = path.join(__dirname, "..", "dist-web", "index.html");
+  const distWebPath = path.join(app.getAppPath(), "dist-web", "index.html");
+  const fallbackUiPath = path.join(app.getAppPath(), "ui", "index.html");
+  if (fs.existsSync(distWebPath)) {
+    win.loadFile(distWebPath);
   } else {
-    distWebPath = path.join(process.resourcesPath, "dist-web", "index.html");
+    logMainEvent("renderer_missing_dist_web", { distWebPath, fallbackUiPath });
+    win.loadFile(fallbackUiPath);
   }
-  win.loadFile(distWebPath);
   return win;
 }
 

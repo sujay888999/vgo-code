@@ -24,4 +24,20 @@ module.exports = async function afterPack(context) {
 
   const stat = fs.statSync(exePath);
   console.log(`[afterPack] verified executable: ${exePath} (${stat.size} bytes)`);
+
+  const iconPath = path.join(context.packager.projectDir, "build", "icon.ico");
+  if (!fs.existsSync(iconPath)) {
+    console.warn(`[afterPack] icon not found, skip rcedit: ${iconPath}`);
+    return;
+  }
+
+  try {
+    const { rcedit } = await import("rcedit");
+    await rcedit(exePath, {
+      icon: iconPath
+    });
+    console.log(`[afterPack] rcedit icon applied: ${iconPath}`);
+  } catch (error) {
+    console.warn(`[afterPack] rcedit failed: ${error?.message || error}`);
+  }
 };
