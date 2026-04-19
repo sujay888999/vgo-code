@@ -667,6 +667,23 @@ function resolveUpgradeScriptTemplatePath() {
   return path.join(app.getAppPath(), "electron", "core", "scripts", "install-update.ps1");
 }
 
+function resolveUpdaterLogPath() {
+  const updateDir = path.join(app.getPath("userData"), "updates");
+  fs.mkdirSync(updateDir, { recursive: true });
+  return path.join(updateDir, "install-update.log");
+}
+
+function launchWindowsInstallerDirect(installerPath) {
+  const child = spawn(installerPath, ["/S"], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+    cwd: path.dirname(installerPath)
+  });
+  child.unref();
+  return Boolean(child?.pid);
+}
+
 function launchWindowsUpgradeScript(installerPath) {
   const updateDir = path.join(app.getPath("userData"), "updates");
   fs.mkdirSync(updateDir, { recursive: true });
@@ -674,6 +691,14 @@ function launchWindowsUpgradeScript(installerPath) {
   const scriptContent = fs.readFileSync(scriptTemplatePath, "utf8");
   const tempScriptPath = path.join(updateDir, `install-update-${Date.now()}.ps1`);
   fs.writeFileSync(tempScriptPath, scriptContent, "utf8");
+  const logPath = resolveUpdaterLogPath();
+  try {
+    fs.appendFileSync(
+      logPath,
+      `${new Date().toISOString()} launch script=${tempScriptPath} installer=${installerPath}\n`,
+      "utf8"
+    );
+  } catch {}
 
   const args = [
     "-NoProfile",
@@ -684,7 +709,9 @@ function launchWindowsUpgradeScript(installerPath) {
     "-InstallerPath",
     installerPath,
     "-AppExePath",
-    process.execPath
+    process.execPath,
+    "-LogPath",
+    logPath
   ];
 
   const processHandle = spawn("powershell.exe", args, {
@@ -693,7 +720,7 @@ function launchWindowsUpgradeScript(installerPath) {
     windowsHide: true
   });
   processHandle.unref();
-  return true;
+  return Boolean(processHandle?.pid);
 }
 
 async function installUpdatePackage(payload = {}) {
@@ -733,7 +760,15 @@ async function installUpdatePackage(payload = {}) {
 
     sendUpdateEvent("update:status", { status: "downloaded", installerPath: targetPath, ...updateInfo });
     sendUpdateEvent("update:status", { status: "installing", installerPath: targetPath, ...updateInfo });
-    const launched = launchWindowsUpgradeScript(targetPath);
+    let launched = false;
+    try {
+      launched = launchWindowsInstallerDirect(targetPath);
+      if (!launched) {
+        launched = launchWindowsUpgradeScript(targetPath);
+      }
+    } catch {
+      launched = launchWindowsUpgradeScript(targetPath);
+    }
     if (!launched) {
       throw new Error("Failed to launch updater script");
     }
@@ -741,8 +776,8 @@ async function installUpdatePackage(payload = {}) {
 
     setTimeout(() => {
       app.isQuitting = true;
-      app.quit();
-    }, 300);
+      app.exit(0);
+    }, 1500);
 
     return { ok: true, mode: "auto_upgrade", installerPath: targetPath };
   } catch (error) {
