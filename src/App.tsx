@@ -137,6 +137,7 @@ export function App() {
     addTaskStep,
     updateTaskStep,
     settleTaskSteps,
+    setTaskPanelCollapsed,
     theme,
     compactMode,
     uiMode,
@@ -371,6 +372,7 @@ export function App() {
           if (status === 'completed') {
             settleTaskSteps('completed')
             setPromptRunning(false)
+            setTaskPanelCollapsed(true)
             upsertTaskStep('task-status-final', {
               title: taskCopy.title,
               detail: taskCopy.detail,
@@ -382,6 +384,7 @@ export function App() {
           if (status === 'error' || status === 'failed') {
             settleTaskSteps('error')
             setPromptRunning(false)
+            setTaskPanelCollapsed(true)
             upsertTaskStep('task-status-final', {
               title: taskCopy.title,
               detail: taskCopy.detail,
@@ -522,7 +525,7 @@ export function App() {
       window.removeEventListener('vgoAgentEvent', handleAgentEvent)
       window.clearInterval(pollInterval)
     }
-  }, [activeSessionId, hydrate, setPromptRunning, addMessage, updateMessage, addTaskStep, updateTaskStep, settleTaskSteps])
+  }, [activeSessionId, hydrate, setPromptRunning, addMessage, updateMessage, addTaskStep, updateTaskStep, settleTaskSteps, setTaskPanelCollapsed])
 
   useEffect(() => {
     const handleStateRefresh = (e: Event) => {

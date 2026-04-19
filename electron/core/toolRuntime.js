@@ -23,7 +23,28 @@ function getDesktopPath() {
   return path.join(os.homedir(), "Desktop");
 }
 
+const ACCESS_SCOPES = new Set(["workspace-only", "workspace-and-desktop", "full-system"]);
+
+function normalizeAccessScope(scope = "") {
+  const value = String(scope || "").trim();
+  return ACCESS_SCOPES.has(value) ? value : "workspace-and-desktop";
+}
+
+function assertSafeInputPath(inputPath = "") {
+  const raw = String(inputPath || "");
+  if (!raw.trim()) {
+    return;
+  }
+  if (raw.includes("\0")) {
+    throw new Error("Invalid path: contains null byte");
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(raw)) {
+    throw new Error("Invalid path: URL-like values are not allowed");
+  }
+}
+
 function resolveInputPath(workspace, inputPath = ".") {
+  assertSafeInputPath(inputPath);
   const raw = String(inputPath || ".").trim();
   if (!raw || raw === ".") {
     return path.resolve(workspace);
@@ -43,7 +64,7 @@ function resolveInputPath(workspace, inputPath = ".") {
 
 function ensureWorkspacePath(workspace, inputPath = ".", options = {}) {
   const targetPath = resolveInputPath(workspace, inputPath);
-  const scope = options.accessScope || "workspace-and-desktop";
+  const scope = normalizeAccessScope(options.accessScope);
   const workspacePath = path.resolve(workspace);
   const desktopPath = getDesktopPath();
 

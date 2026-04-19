@@ -4,6 +4,50 @@ const { app } = require("electron");
 
 const DEFAULT_PROFILE_ID = "default";
 
+const GUEST_MODEL_LABELS = {
+  "glm-4.7-flash": "GLM-4.7-Flash（免费）",
+  "glm-4v-flash": "GLM-4V-Flash（免费）",
+  "glm-4.1v-thinking-flash": "GLM-4.1V-Thinking-Flash（免费）",
+  "glm-4-flash-250414": "GLM-4-Flash-250414（免费）"
+};
+
+const MOJIBAKE_PATTERN = /[锛鏃鍏璐鐧诲綍鏈]/;
+
+function buildGuestModelCatalog() {
+  return Object.entries(GUEST_MODEL_LABELS).map(([id, label]) => ({
+    id,
+    label,
+    description: "",
+    contextWindow: 0
+  }));
+}
+
+function normalizeModelCatalog(catalog, { isLoggedIn = false } = {}) {
+  const items = Array.isArray(catalog) ? catalog : [];
+  const normalized = items
+    .map((item) => {
+      const id = String(item?.id || "").trim();
+      if (!id) {
+        return null;
+      }
+      const fallbackLabel = GUEST_MODEL_LABELS[id] || "";
+      const rawLabel = String(item?.label || item?.name || "").trim();
+      const shouldUseFallback = fallbackLabel && (!rawLabel || rawLabel === id || MOJIBAKE_PATTERN.test(rawLabel));
+      return {
+        id,
+        label: shouldUseFallback ? fallbackLabel : rawLabel || id,
+        description: String(item?.description || ""),
+        contextWindow: Number(item?.contextWindow || item?.contextTokens || item?.maxContextTokens || 0)
+      };
+    })
+    .filter(Boolean);
+
+  if (!isLoggedIn && normalized.length === 0) {
+    return buildGuestModelCatalog();
+  }
+  return normalized;
+}
+
 const DEFAULT_SETTINGS = {
   permissions: {
     mode: "default"
@@ -23,7 +67,7 @@ const DEFAULT_SETTINGS = {
   behavior: {
     enterToSend: true,
     autoScroll: true,
-    showTaskPanel: true,
+    showTaskPanel: false,
     confirmDangerousOps: true
   },
   agent: {
@@ -221,7 +265,10 @@ function loadSettings() {
       activeRemoteProfileId: normalized.activeRemoteProfileId,
       vgoAI: {
         ...DEFAULT_SETTINGS.vgoAI,
-        ...(parsed.vgoAI || {})
+        ...(parsed.vgoAI || {}),
+        modelCatalog: normalizeModelCatalog(parsed.vgoAI?.modelCatalog, {
+          isLoggedIn: Boolean(parsed.vgoAI?.loggedIn)
+        })
       }
     };
   } catch {

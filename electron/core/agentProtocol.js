@@ -40,6 +40,11 @@ function sanitizeAssistantText(text = "") {
   let cleaned = tryRecoverMojibake(String(text || ""));
   cleaned = cleaned.replace(/\uFFFD/g, "");
   cleaned = cleaned.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+  cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, "");
+  cleaned = cleaned.replace(/<(script|iframe|object|embed|style|link|meta|svg|math)\b[\s\S]*?<\/\1>/gi, "");
+  cleaned = cleaned.replace(/<\/?(script|iframe|object|embed|style|link|meta|svg|math)\b[^>]*>/gi, "");
+  cleaned = cleaned.replace(/\b(on\w+)\s*=\s*(['"]).*?\2/gi, "");
+  cleaned = cleaned.replace(/\b(?:javascript|vbscript|data):/gi, "");
   cleaned = cleaned.replace(/<vgo_plan>[\s\S]*?<\/vgo_plan>/gi, "");
   cleaned = cleaned.replace(/<vgo_tool_call>[\s\S]*?<\/vgo_tool_call>/gi, "");
   cleaned = cleaned.replace(/<vgo_tool_call>[\s\S]*$/gi, "");
@@ -341,23 +346,29 @@ function buildToolResultMessage(results) {
 function buildFallbackCompletionFromResults(prompt = "", results = []) {
   const completed = results.filter((result) => result.ok);
   const failed = results.filter((result) => !result.ok);
-  const lines = ["This Agent round has finished tool execution."];
+  const lines = ["本轮已完成工具执行，以下是可确认的结果："];
 
   if (prompt) {
-    lines.push(`User task: ${prompt}`);
+    lines.push(`任务主题：${prompt}`);
   }
 
   if (completed.length) {
-    lines.push("", "Completed:");
-    lines.push(...completed.map((result) => `- ${result.name}: ${result.summary || "success"}`));
+    lines.push("", "已完成：");
+    lines.push(...completed.map((result) => `- ${result.name}: ${result.summary || "成功"}`));
   }
 
   if (failed.length) {
-    lines.push("", "Failed or incomplete:");
-    lines.push(...failed.map((result) => `- ${result.name}: ${result.summary || "failed"}`));
+    lines.push("", "失败或未完成：");
+    lines.push(...failed.map((result) => `- ${result.name}: ${result.summary || "失败"}`));
   }
 
-  lines.push("", "Please inspect the execution results above before continuing with the next step.");
+  if (completed.length && !failed.length) {
+    lines.push("", "结论：已拿到可用执行结果，可基于以上结果继续下一步。");
+  } else if (completed.length && failed.length) {
+    lines.push("", "结论：本轮部分成功，建议优先处理失败项后再继续。");
+  } else {
+    lines.push("", "结论：本轮未获得有效结果，请重试或调整模型/权限后继续。");
+  }
   return lines.join("\n");
 }
 

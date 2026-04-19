@@ -242,6 +242,7 @@ export interface AppState {
   toggleAutoScroll: () => void
   toggleShowTaskPanel: () => void
   toggleTaskPanelCollapsed: () => void
+  setTaskPanelCollapsed: (collapsed: boolean) => void
   toggleConfirmDangerousOps: () => void
   toggleAutoSummarize: () => void
   toggleShowRuntimeMeta: () => void
@@ -408,6 +409,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleShowTaskPanel: () => set((state) => ({ showTaskPanel: !state.showTaskPanel })),
   toggleTaskPanelCollapsed: () =>
     set((state) => ({ taskPanelCollapsed: !state.taskPanelCollapsed })),
+  setTaskPanelCollapsed: (collapsed) => set({ taskPanelCollapsed: Boolean(collapsed) }),
   toggleConfirmDangerousOps: () => set((state) => ({ confirmDangerousOps: !state.confirmDangerousOps })),
   toggleAutoSummarize: () => set((state) => ({ autoSummarizeContext: !state.autoSummarizeContext })),
   toggleShowRuntimeMeta: () => set((state) => ({ showRuntimeMeta: !state.showRuntimeMeta })),

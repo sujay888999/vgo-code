@@ -331,6 +331,22 @@ function parseMarkdownWithCode(text: string) {
 }
 
 function formatInlineMarkdown(text: string): string {
+  const escapeHtmlAttr = (value: string) =>
+    String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+
+  const sanitizeHref = (href: string) => {
+    const normalized = String(href || '').trim().replace(/[\u0000-\u001F\u007F\s]+/g, '')
+    if (!normalized) return '#'
+    if (/^(javascript|data|vbscript|file):/i.test(normalized)) return '#'
+    if (/^(https?:|mailto:|tel:)/i.test(normalized)) return normalized
+    return '#'
+  }
+
   let html = text
 
   html = html.replace(/&/g, '&amp;')
@@ -342,10 +358,10 @@ function formatInlineMarkdown(text: string): string {
   html = html.replace(/^# (.*$)/gm, '<h1>$1</h1>')
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>')
-  html = html.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noreferrer">$1</a>',
-  )
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, href: string) => {
+    const safeHref = escapeHtmlAttr(sanitizeHref(href))
+    return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${label}</a>`
+  })
   html = html.replace(/^\- (.*$)/gm, '<li>$1</li>')
   html = html.replace(/^\d+\. (.*$)/gm, '<li>$1</li>')
   html = html.replace(/\n/g, '<br>')

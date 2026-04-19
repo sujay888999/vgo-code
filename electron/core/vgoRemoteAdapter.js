@@ -1486,11 +1486,43 @@ async function runRealVgoPrompt({
         continue;
       }
 
+      if (hadToolResults && protocol.looksLikeGenericAcknowledgement(latestText) && !finalAnswerNudgeSent) {
+        finalAnswerNudgeSent = true;
+        activeHistory.push({ role: "assistant", content: rawText });
+        activeHistory.push({
+          role: "user",
+          content:
+            "Do not output generic completion text. Based on the tool results in this round, provide concrete findings and conclusions: what you checked, what you found, what is still unresolved, and your next actionable step."
+        });
+        continue;
+      }
+
       if (hadToolResults && !latestText && !finalAnswerNudgeSent) {
         finalAnswerNudgeSent = true;
         activeHistory.push({ role: "assistant", content: rawText });
         activeHistory.push({ role: "user", content: toolNudges.finalAnswerNudge });
         continue;
+      }
+
+      if (hadToolResults && protocol.looksLikeGenericAcknowledgement(latestText) && finalAnswerNudgeSent) {
+        return {
+          ok: true,
+          exitCode: 0,
+          sessionId,
+          text: protocol.buildFallbackCompletionFromResults(prompt, extractToolResultSummaries(rawEvents)),
+          error: "",
+          rawEvents,
+          remoteConversationId: "",
+          remoteTitle: "",
+          usedModel,
+          actualChannel: rawEvents.some((event) => Array.isArray(event.toolCalls) && event.toolCalls.length)
+            ? "real-remote-agent"
+            : "real-remote",
+          actualContextWindow: contextWindow,
+          usageInputTokens: usage.inputTokens,
+          usageOutputTokens: usage.outputTokens,
+          usageTotalTokens: usage.totalTokens
+        };
       }
 
       if (shouldContinueAutonomously(latestText, rawEvents, prompt, workspace)) {
@@ -1759,7 +1791,16 @@ async function runRealVgoPrompt({
   };
 }
 
-async function runLocalPrompt({ workspace, sessionId, prompt, settings, history, sessionMeta, attachments = [] }) {
+async function runLocalPrompt({
+  workspace,
+  sessionId,
+  prompt,
+  settings,
+  history,
+  sessionMeta,
+  attachments = [],
+  onEvent
+}) {
   const remote = settings?.remote || {};
   const normalizedModelId = normalizeRemoteModelId(remote.model);
   const baseUrl = (remote.baseUrl || "").trim().replace(/\/+$/, "");
@@ -1875,6 +1916,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
       payload.rawText ||
       (response.ok ? "本地测试引擎已响应，但没有返回文本。" : "本地测试引擎调用失败。");
 
+    const normalizedText = protocol.tryRecoverMojibake(String(text || ""));
     const errorDetail = payload?.error?.message || payload?.error || payload?.message || `http_${response.status}`;
     const errorText = String(errorDetail || "");
     const isAuthFailure =
@@ -1884,7 +1926,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
         /token|api[\s_-]?key|auth|unauthor|forbidden|令牌|鉴权|验证/i.test(errorText));
     let resolvedResponse = response;
     let resolvedPayload = payload;
-    let resolvedText = text;
+    let resolvedText = normalizedText || text;
     let resolvedErrorDetail = errorDetail;
     let resolvedErrorText = errorText;
     let resolvedUsedModel = payload.model || normalizedModelId;
@@ -1928,7 +1970,7 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
           if (fallbackResponse.ok) {
             resolvedResponse = fallbackResponse;
             resolvedPayload = fallbackPayload;
-            resolvedText = `[自动切换模型] ${normalizedModelId} 余额/资源不可用，已切换到 ${fallbackModel}\n\n${fallbackText}`.trim();
+            resolvedText = `[Auto fallback] ${normalizedModelId} quota/resource unavailable, switched to ${fallbackModel}.\n\n${fallbackText}`.trim();
             resolvedErrorDetail = "";
             resolvedErrorText = "";
             resolvedUsedModel = fallbackPayload.model || fallbackModel;
@@ -1956,7 +1998,111 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
     const failureText = finalAuthFailure
       ? `Custom HTTP Provider auth failed (${endpointPlan.requestUrl}): ${resolvedErrorText}`
       : `Custom HTTP Provider request failed (${endpointPlan.requestUrl}): ${resolvedErrorText}`;
-    const finalText = resolvedResponse.ok ? resolvedText : failureText;
+    let finalText = resolvedResponse.ok ? resolvedText : failureText;
+    const localRawEvents = Array.isArray(resolvedPayload?.events) ? [...resolvedPayload.events] : [];
+
+    // 轻量 Agent 循环：本地/自定义通道若输出了工具调用标签，立即真实执行并回填结果，避免只显示 <vgo_tool_call> 文本。
+    if (resolvedResponse.ok) {
+      const extractedToolCalls = extractToolCalls(extractAssistantRawText(resolvedPayload));
+      if (extractedToolCalls.length) {
+        for (const call of extractedToolCalls) {
+          emitEvent(onEvent, localRawEvents, {
+            type: "task_status",
+            status: "tool_running",
+            message: `正在执行工具：${call.name}`
+          });
+          const toolResult = await executeToolCall(workspace, call, {
+            accessScope: settings?.access?.scope || "workspace-and-desktop"
+          });
+          emitEvent(onEvent, localRawEvents, {
+            type: "tool_result",
+            tool: call.name,
+            ok: toolResult.ok,
+            summary: toolResult.summary,
+            output: toolResult.output
+          });
+        }
+
+        const toolMessage = protocol.buildToolResultMessage(
+          localRawEvents
+            .filter((event) => event?.type === "tool_result")
+            .map((event) => ({
+              ok: event.ok,
+              name: event.tool,
+              summary: event.summary,
+              output: event.output
+            }))
+        );
+
+        if (endpointPlan.mode === "openai" || endpointPlan.mode === "ollama") {
+          try {
+            const followupPayload = {
+              model: resolvedUsedModel || normalizedModelId,
+              messages: [
+                { role: "system", content: systemPrompt },
+                ...normalizeHistoryMessages(history),
+                { role: "user", content: finalPrompt },
+                { role: "assistant", content: clampText(extractAssistantRawText(resolvedPayload), 4000) },
+                { role: "user", content: clampText(toolMessage, 5000) },
+                {
+                  role: "user",
+                  content:
+                    "Based on the tool results above, provide a concrete final answer with key findings and direct conclusion. Do not output tool tags. Do not reply with generic completion text."
+                },
+                {
+                  role: "user",
+                  content:
+                    "基于以上工具结果，直接给出最终结论与关键发现，不要输出工具调用标签，不要只说已完成。"
+                }
+              ],
+              stream: false
+            };
+            const followupResponse = await fetch(endpointPlan.requestUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
+              },
+              body: JSON.stringify(followupPayload)
+            });
+            const followupData = await parseJsonResponse(followupResponse);
+            if (followupResponse.ok) {
+              const followupText =
+                extractOpenAiMessageText(followupData) ||
+                followupData?.message?.content ||
+                followupData?.output ||
+                followupData?.text ||
+                "";
+              const cleanedFollowup = modelAdapters.stripCustomerServiceBoilerplate(
+                protocol.sanitizeAssistantText(followupText),
+                prompt
+              );
+              finalText =
+                cleanedFollowup ||
+                protocol.buildFallbackCompletionFromResults(
+                  prompt,
+                  extractToolResultSummaries(localRawEvents)
+                );
+            } else {
+              finalText = protocol.buildFallbackCompletionFromResults(
+                prompt,
+                extractToolResultSummaries(localRawEvents)
+              );
+            }
+          } catch {
+            finalText = protocol.buildFallbackCompletionFromResults(
+              prompt,
+              extractToolResultSummaries(localRawEvents)
+            );
+          }
+        } else {
+          finalText = protocol.buildFallbackCompletionFromResults(
+            prompt,
+            extractToolResultSummaries(localRawEvents)
+          );
+        }
+      }
+    }
 
     return {
       ok: resolvedResponse.ok,
@@ -1967,14 +2113,14 @@ async function runLocalPrompt({ workspace, sessionId, prompt, settings, history,
         resolvedResponse.ok
           ? ""
           : resolvedErrorDetail,
-      rawEvents: resolvedPayload.events || [],
+      rawEvents: localRawEvents,
       usedModel: resolvedUsedModel,
       actualChannel:
         resolvedPayload.channel ||
         (endpointPlan.mode === "openai"
-          ? "custom-openai"
+          ? "custom-openai-agent"
           : endpointPlan.mode === "ollama"
-            ? "custom-ollama"
+            ? "custom-ollama-agent"
             : "local-mock"),
       actualContextWindow: toNumber(resolvedPayload?.contextWindow),
       usageInputTokens: toNumber(resolvedPayload?.usage?.inputTokens || resolvedPayload?.usage?.prompt_tokens),

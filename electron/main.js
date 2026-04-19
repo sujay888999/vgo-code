@@ -836,7 +836,7 @@ function formatAgentEvent(event) {
   return "";
 }
 
-function collectMutatedPathsFromEvents(rawEvents = []) {
+function collectMutatedPathsFromEvents(rawEvents = [], limit = 12) {
   const paths = [];
   for (const event of Array.isArray(rawEvents) ? rawEvents : []) {
     if (event?.type !== "tool_result" || !event?.ok) {
@@ -853,63 +853,127 @@ function collectMutatedPathsFromEvents(rawEvents = []) {
       paths.push(pathMatch[1]);
     }
   }
-  return [...new Set(paths)].slice(0, 3);
+  return [...new Set(paths)].slice(0, Math.max(1, limit));
 }
 
 function buildSessionClosingSummary(result = {}, prompt = "") {
   const text = String(result?.text || "").trim();
-  if (!text) {
-    return text;
-  }
-  if (text.includes("【任务收尾】") || text.includes("下一步建议")) {
-    return text;
-  }
-
   const rawEvents = Array.isArray(result?.rawEvents) ? result.rawEvents : [];
   const toolResults = rawEvents.filter((event) => event?.type === "tool_result");
   const successCount = toolResults.filter((event) => event?.ok).length;
   const failCount = toolResults.filter((event) => event?.ok === false).length;
   const mutatedPaths = collectMutatedPathsFromEvents(rawEvents);
-  const shortPrompt = String(prompt || "").trim().slice(0, 42);
-
-  const keyResultParts = [];
-  if (mutatedPaths.length) {
-    keyResultParts.push(`已落地变更 ${mutatedPaths.length} 项`);
-  }
-  if (successCount > 0) {
-    keyResultParts.push(`工具成功 ${successCount} 次`);
-  }
-  if (failCount > 0) {
-    keyResultParts.push(`失败 ${failCount} 次`);
-  }
-  if (!keyResultParts.length) {
-    keyResultParts.push(result.ok ? "本轮任务已完成" : "本轮任务未完成");
-  }
-
-  const suggestions = [];
-  if (!result.ok) {
-    suggestions.push("先按最后一次失败点重试，我可自动带修复参数继续。");
-    suggestions.push("如需我接管，可直接说“继续并修复到可用为止”。");
-  } else if (mutatedPaths.length) {
-    suggestions.push("先做一次构建/运行验证，再决定是否打包发布。");
-    suggestions.push("我可以直接生成下一版变更清单与回归测试项。");
-  } else {
-    suggestions.push("可继续下一步：让我直接落地代码改动而不只分析。");
-    suggestions.push("也可以指定目标文件，我按文件夹逐项完成。");
-  }
-
-  const closing = [
-    "【任务收尾】",
-    `重要结果：${keyResultParts.join("，")}。`,
-    shortPrompt ? `任务主题：${shortPrompt}${shortPrompt.length >= 42 ? "..." : ""}` : "",
-    "下一步建议：",
-    `1. ${suggestions[0]}`,
-    `2. ${suggestions[1]}`
+  const conciseEvidence = [
+    mutatedPaths.length ? `变更文件 ${mutatedPaths.length} 项` : "",
+    successCount > 0 ? `工具成功 ${successCount} 次` : "",
+    failCount > 0 ? `失败 ${failCount} 次` : ""
   ]
     .filter(Boolean)
-    .join("\n");
+    .join("，");
 
-  return `${text}\n\n${closing}`.trim();
+  if (!text) {
+    if (conciseEvidence) {
+      return `本轮执行完成。${conciseEvidence}。`;
+    }
+    return result.ok ? "本轮任务已完成。" : "本轮任务未完成。";
+  }
+
+  // 避免把僵硬模板再拼接到模型原始回答后面，优先保留模型自然输出。
+  if (text.includes("【任务收尾】") || text.includes("下一步建议")) {
+    return text;
+  }
+
+  // 只在模型回答极短且信息不足时，补一行证据，不再强制固定大模板。
+  if (text.length <= 24 && conciseEvidence) {
+    return `${text}\n\n执行摘要：${conciseEvidence}。`;
+  }
+
+  return text;
+}
+
+function collectConcreteToolFindingsV2(rawEvents = [], limit = 5) {
+  const findings = [];
+  for (const event of Array.isArray(rawEvents) ? rawEvents : []) {
+    if (event?.type !== "tool_result") continue;
+    const summary = String(event.summary || "").trim();
+    const output = String(event.output || "").trim();
+    const firstOutputLine = output.split(/\r?\n/).find((line) => String(line || "").trim()) || "";
+    const base = summary || firstOutputLine;
+    if (!base) continue;
+    if (/^(success|ok|done|completed?)$/i.test(base)) continue;
+    findings.push(`${event.ok ? "[OK]" : "[ERR]"} ${event.tool || "tool"}: ${base}`);
+  }
+  return [...new Set(findings)].slice(0, Math.max(1, limit));
+}
+
+function stripClosingTemplateV2(text = "") {
+  let cleaned = String(text || "").trim();
+  if (!cleaned) return "";
+  cleaned = cleaned.replace(/【任务收尾】[\s\S]*$/i, "").trim();
+  cleaned = cleaned.replace(/\b(?:下一步建议|可继续下一步|我可以继续修复)\b[\s\S]*$/i, "").trim();
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  return cleaned;
+}
+
+function buildSessionClosingSummaryV2(result = {}, prompt = "") {
+  const text = String(result?.text || "").trim();
+  const rawEvents = Array.isArray(result?.rawEvents) ? result.rawEvents : [];
+  const toolResults = rawEvents.filter((event) => event?.type === "tool_result");
+  const successCount = toolResults.filter((event) => event?.ok).length;
+  const failCount = toolResults.filter((event) => event?.ok === false).length;
+  const mutatedPaths = collectMutatedPathsFromEvents(rawEvents, 12);
+  const concreteFindings = collectConcreteToolFindingsV2(rawEvents);
+  const strippedText = stripClosingTemplateV2(text);
+  const conciseEvidence = [
+    mutatedPaths.length ? `变更文件 ${mutatedPaths.length} 项` : "",
+    successCount > 0 ? `工具成功 ${successCount} 次` : "",
+    failCount > 0 ? `失败 ${failCount} 次` : ""
+  ]
+    .filter(Boolean)
+    .join("，");
+
+  const changedFilesSection = mutatedPaths.length
+    ? `\n\n已修改文件（${mutatedPaths.length}）：\n${mutatedPaths
+        .map((item, index) => `${index + 1}. ${item}`)
+        .join("\n")}`
+    : "";
+
+  if (!text && concreteFindings.length) {
+    return `已完成本轮执行，关键结果：\n${concreteFindings
+      .map((item, index) => `${index + 1}. ${item}`)
+      .join("\n")}${changedFilesSection}`;
+  }
+
+  if (!text) {
+    if (conciseEvidence) {
+      return `本轮执行已完成。${conciseEvidence}。`;
+    }
+    return result.ok ? "本轮任务已完成。" : "本轮任务未完成。";
+  }
+
+  const looksTemplateLike =
+    /【任务收尾】|下一步建议|本轮任务已完成|可继续下一步/i.test(text) && strippedText.length <= 24;
+  if (looksTemplateLike && concreteFindings.length) {
+    return `已完成本轮执行，关键结果：\n${concreteFindings
+      .map((item, index) => `${index + 1}. ${item}`)
+      .join("\n")}${changedFilesSection}`;
+  }
+
+  if (strippedText && strippedText.length > 24) {
+    return `${strippedText}${changedFilesSection}`;
+  }
+
+  if (text.length <= 24 && concreteFindings.length) {
+    return `${text}\n\n关键结果：\n${concreteFindings
+      .map((item, index) => `${index + 1}. ${item}`)
+      .join("\n")}${changedFilesSection}`;
+  }
+
+  if (text.length <= 24 && conciseEvidence) {
+    return `${text}\n\n执行摘要：${conciseEvidence}。${changedFilesSection}`;
+  }
+
+  return `${text}${changedFilesSection}`;
 }
 
 async function requestToolPermission(call = {}, notify = () => {}) {
@@ -2709,7 +2773,7 @@ app.whenReady().then(async () => {
         ? "本轮任务已结束，但没有生成最终文本结果。请查看上方工具步骤，并根据需要继续追问。"
         : "本轮任务执行失败，而且没有返回可显示的错误文本。";
     }
-    result.text = buildSessionClosingSummary(result, normalizedPrompt);
+    result.text = buildSessionClosingSummaryV2(result, normalizedPrompt);
 
     if (result.usedModel) {
       savePreferredModelIfChanged(result.usedModel);
