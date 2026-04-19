@@ -38,6 +38,7 @@ function tryRecoverMojibake(text = "") {
 
 function sanitizeAssistantText(text = "") {
   let cleaned = tryRecoverMojibake(String(text || ""));
+  cleaned = normalizeEscapedToolMarkup(cleaned);
   cleaned = cleaned.replace(/\uFFFD/g, "");
   cleaned = cleaned.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
   cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, "");
@@ -135,11 +136,7 @@ function collectToolCalls(parsed) {
 
 function parseToolCalls(rawText = "") {
   const source = String(rawText || "");
-  const normalizedSource = source
-    .replace(/\\</g, "<")
-    .replace(/\\>/g, ">")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">");
+  const normalizedSource = normalizeEscapedToolMarkup(source);
   const calls = [];
   
   const minimaxCalls = parseMinimaxToolCalls(normalizedSource);
@@ -372,6 +369,16 @@ function buildToolResultMessage(results) {
     "",
     ...blocks
   ].join("\n\n"), MAX_TOOL_RESULT_MESSAGE_CHARS);
+}
+
+function normalizeEscapedToolMarkup(input = "") {
+  let normalized = String(input || "");
+  normalized = normalized.replace(/\\</g, "<");
+  normalized = normalized.replace(/\\>/g, ">");
+  normalized = normalized.replace(/&lt;/gi, "<");
+  normalized = normalized.replace(/&gt;/gi, ">");
+  normalized = normalized.replace(/<\\+\/\s*/g, "</");
+  return normalized;
 }
 
 function buildFallbackCompletionFromResults(prompt = "", results = []) {
