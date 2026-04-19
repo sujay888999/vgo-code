@@ -45,13 +45,32 @@ function sanitizeAssistantText(text = "") {
   cleaned = cleaned.replace(/<\/?(script|iframe|object|embed|style|link|meta|svg|math)\b[^>]*>/gi, "");
   cleaned = cleaned.replace(/\b(on\w+)\s*=\s*(['"]).*?\2/gi, "");
   cleaned = cleaned.replace(/\b(?:javascript|vbscript|data):/gi, "");
+  cleaned = cleaned.replace(/\\</g, "<");
+  cleaned = cleaned.replace(/\\>/g, ">");
+  cleaned = cleaned.replace(/&lt;/gi, "<");
+  cleaned = cleaned.replace(/&gt;/gi, ">");
   cleaned = cleaned.replace(/<vgo_plan>[\s\S]*?<\/vgo_plan>/gi, "");
-  cleaned = cleaned.replace(/<vgo_tool_call>[\s\S]*?<\/vgo_tool_call>/gi, "");
-  cleaned = cleaned.replace(/<vgo_tool_call>[\s\S]*$/gi, "");
-  cleaned = cleaned.replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/gi, "");
-  cleaned = cleaned.replace(/<minimax:tool_call>[\s\S]*$/gi, "");
-  cleaned = cleaned.replace(/<invoke\b[\s\S]*?<\/invoke>/gi, "");
-  cleaned = cleaned.replace(/<invoke\b[\s\S]*$/gi, "");
+  cleaned = cleaned.replace(/(^|\n)\s*<vgo_tool_call>[\s\S]*?<\/vgo_tool_call>\s*(?=\n|$)/gi, "$1");
+  cleaned = cleaned.replace(/(^|\n)\s*<vgo_tool_call>[\s\S]*$/gi, "$1");
+  cleaned = cleaned.replace(/(^|\n)\s*<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>\s*(?=\n|$)/gi, "$1");
+  cleaned = cleaned.replace(/(^|\n)\s*<minimax:tool_call>[\s\S]*$/gi, "$1");
+  cleaned = cleaned.replace(/(^|\n)\s*<invoke\b[\s\S]*?<\/invoke>\s*(?=\n|$)/gi, "$1");
+  cleaned = cleaned.replace(/(^|\n)\s*<invoke\b[\s\S]*$/gi, "$1");
+  cleaned = cleaned.replace(/<vgo_tool_call>([\s\S]*?)<\/vgo_tool_call>/gi, (match, body) => {
+    const parsed = parseJsonObjectBlock(body);
+    const calls = collectToolCalls(parsed).filter((call) => call && typeof call === "object" && call.name);
+    return calls.length ? "" : match;
+  });
+  cleaned = cleaned.replace(/<minimax:tool_call>([\s\S]*?)<\/minimax:tool_call>/gi, (match, body) => {
+    const invokeMatch = body.match(/<invoke\b[^>]*name=["'][^"']+["'][^>]*>[\s\S]*?<\/invoke>/i);
+    return invokeMatch ? "" : match;
+  });
+  cleaned = cleaned.replace(/<invoke\b[^>]*name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/invoke>/gi, (match, name, body) => {
+    if (!name) return match;
+    const parsed = parseJsonObjectBlock(body);
+    const validArgs = parsed && typeof parsed === "object";
+    return validArgs ? "" : match;
+  });
   cleaned = cleaned.replace(/<\/?tool_call[^>]*>/gi, "");
   cleaned = cleaned.replace(/^\s*<[^>]+>\s*$/gm, "");
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
@@ -116,9 +135,14 @@ function collectToolCalls(parsed) {
 
 function parseToolCalls(rawText = "") {
   const source = String(rawText || "");
+  const normalizedSource = source
+    .replace(/\\</g, "<")
+    .replace(/\\>/g, ">")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
   const calls = [];
   
-  const minimaxCalls = parseMinimaxToolCalls(source);
+  const minimaxCalls = parseMinimaxToolCalls(normalizedSource);
   if (minimaxCalls.length) {
     return minimaxCalls;
   }
@@ -134,7 +158,7 @@ function parseToolCalls(rawText = "") {
 
   for (const tagName of tagPatterns) {
     const pattern = new RegExp(LT + tagName + ">([\\s\\S]*?)" + LT + SLASH + tagName + GT, "gi");
-    const matches = [...source.matchAll(pattern)];
+    const matches = [...normalizedSource.matchAll(pattern)];
     for (const match of matches) {
       const parsed = parseJsonObjectBlock(match[1]);
       calls.push(...collectToolCalls(parsed));
@@ -145,14 +169,14 @@ function parseToolCalls(rawText = "") {
     return calls.filter((call) => call && typeof call === "object" && call.name);
   }
 
-  const codeBlockMatch = source.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const codeBlockMatch = normalizedSource.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (codeBlockMatch) {
     const parsed = parseJsonObjectBlock(codeBlockMatch[1]);
     const blockCalls = collectToolCalls(parsed).filter((call) => call && typeof call === "object" && call.name);
     if (blockCalls.length) return blockCalls;
   }
 
-  const jsonMatch = source.match(/\{\s*"name"\s*:\s*"([^"]+)"[\s\S]*?\}/);
+  const jsonMatch = normalizedSource.match(/\{\s*"name"\s*:\s*"([^"]+)"[\s\S]*?\}/);
   if (jsonMatch) {
     const parsed = parseJsonObjectBlock(jsonMatch[0]);
     const jsonCalls = collectToolCalls(parsed).filter((call) => call && typeof call === "object" && call.name);
@@ -160,7 +184,7 @@ function parseToolCalls(rawText = "") {
   }
 
   const invokeMatches = [
-    ...source.matchAll(/<invoke\b[^>]*name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/invoke>/gi)
+    ...normalizedSource.matchAll(/<invoke\b[^>]*name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/invoke>/gi)
   ];
   if (invokeMatches.length) {
     return invokeMatches.map((match) => {
@@ -176,6 +200,13 @@ function parseToolCalls(rawText = "") {
   const toolLineMatches = [
     ...source.matchAll(/(?:^|\n)\s*[-*]?\s*(?:Agent\s*)?(?:正在调用工具[:：]?)?\s*(read_file|list_dir|search_code|write_file|run_command|open_path)\s*\|\s*([^\n]+)/gim)
   ];
+  if (normalizedSource !== source) {
+    toolLineMatches.push(
+      ...normalizedSource.matchAll(
+        /(?:^|\n)\s*[-*]?\s*(?:Agent\s*)?(?:.*?[:：])?\s*(read_file|list_dir|search_code|write_file|run_command|open_path)\s*\|\s*([^\n]+)/gim
+      )
+    );
+  }
   for (const match of toolLineMatches) {
     const name = String(match[1] || "").trim();
     const argsText = String(match[2] || "").trim();
@@ -209,12 +240,12 @@ function parseToolCalls(rawText = "") {
   }
   
   if (lineBasedCalls.length) {
-    const allCodeBlocks = [...source.matchAll(/```(?:\w+)?\s*([\s\S]*?)```/gi)];
+    const allCodeBlocks = [...normalizedSource.matchAll(/```(?:\w+)?\s*([\s\S]*?)```/gi)];
     let codeBlockIndex = 0;
     
     for (const call of lineBasedCalls) {
       if ((call.name === "write_file" || call.name === "append_file") && !call.arguments.content) {
-        const afterMatch = source.slice(call.matchIndex || 0);
+        const afterMatch = normalizedSource.slice(call.matchIndex || 0);
         
         const codeBlockMatch = afterMatch.match(/```(?:\w+)?\s*([\s\S]*?)```/i);
         if (codeBlockMatch?.[1]) {
