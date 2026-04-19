@@ -1,6 +1,6 @@
 {
   "name": "vgo-code",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "VGO CODE desktop agent workspace.",
   "main": "electron/main.js",
   "author": "VGO CODE",
@@ -15,7 +15,8 @@
     "plan:next": "node ./scripts/auto-plan.js",
     "audit:brand": "node ./scripts/brand-audit.js",
     "test:release-smoke": "node ./scripts/release-smoke.js",
-    "verify:release": "powershell -ExecutionPolicy Bypass -File ./scripts/release-check.ps1"
+    "verify:release": "powershell -ExecutionPolicy Bypass -File ./scripts/release-check.ps1",
+    "release:single": "powershell -ExecutionPolicy Bypass -File ./scripts/publish-single-version-release.ps1"
   },
   "build": {
     "appId": "com.vgo.code",

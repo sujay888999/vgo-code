@@ -105,6 +105,7 @@ export function SettingsModal() {
   const [configName, setConfigName] = useState('')
   const [provider, setProvider] = useState<ManualProvider>('Ollama')
   const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:11434')
+  const [modelListUrl, setModelListUrl] = useState('')
   const [model, setModel] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
@@ -115,6 +116,7 @@ export function SettingsModal() {
   const [updateSkipVersion, setUpdateSkipVersion] = useState('')
   const [updateBusy, setUpdateBusy] = useState(false)
   const [updateStatus, setUpdateStatus] = useState('')
+  const [modelCatalogBusy, setModelCatalogBusy] = useState(false)
 
   const activeProfile = useMemo(
     () => remoteProfiles.find((item) => item.id === activeRemoteProfileId) || null,
@@ -156,6 +158,7 @@ export function SettingsModal() {
       setConfigName('')
       setProvider('Ollama')
       setBaseUrl('http://127.0.0.1:11434')
+      setModelListUrl('')
       setModel('')
       setApiKey('')
       setSystemPrompt('')
@@ -170,6 +173,7 @@ export function SettingsModal() {
       profile.baseUrl ||
         (nextProvider === 'Ollama' ? 'http://127.0.0.1:11434' : 'http://127.0.0.1:3210'),
     )
+    setModelListUrl(profile.modelListUrl || '')
     setModel(profile.model || '')
     setApiKey(profile.apiKey || '')
     setSystemPrompt(profile.systemPrompt || '')
@@ -323,6 +327,7 @@ export function SettingsModal() {
       name: configName.trim() || t('settings.unnamedConfig'),
       provider,
       baseUrl: baseUrl.trim(),
+      modelListUrl: provider === 'Ollama' ? '' : modelListUrl.trim(),
       ollamaUrl: provider === 'Ollama' ? baseUrl.trim() : undefined,
       model: model.trim(),
       apiKey: apiKey.trim(),
@@ -349,6 +354,7 @@ export function SettingsModal() {
       name: configName.trim() || t('settings.newConfig'),
       provider,
       baseUrl: baseUrl.trim(),
+      modelListUrl: provider === 'Ollama' ? '' : modelListUrl.trim(),
       ollamaUrl: provider === 'Ollama' ? baseUrl.trim() : undefined,
       model: model.trim(),
       apiKey: apiKey.trim(),
@@ -369,6 +375,24 @@ export function SettingsModal() {
       const result = await window.vgoDesktop?.deleteRemoteProfile?.(editableActiveProfile.id)
       if (result) hydrate(result)
     })
+  }
+
+  const handleRefreshProfileModels = async () => {
+    if (provider === 'Ollama' || !editableActiveProfile) return
+    setModelCatalogBusy(true)
+    try {
+      const result = await window.vgoDesktop?.refreshRemoteProfileModels?.(editableActiveProfile.id)
+      if (result) {
+        hydrate(result)
+      } else {
+        await refreshState()
+      }
+      setStatus('云模型列表已刷新')
+    } catch (error: any) {
+      setStatus(error?.message || '刷新云模型列表失败')
+    } finally {
+      setModelCatalogBusy(false)
+    }
   }
 
   const handleActivateProfile = async (profileId: string, profileProvider: string) => {
@@ -822,6 +846,7 @@ export function SettingsModal() {
                             ? 'http://127.0.0.1:11434'
                             : 'http://127.0.0.1:3210',
                         )
+                        setModelListUrl(nextProvider === 'Ollama' ? '' : 'http://127.0.0.1:3210/v1/models')
                       }}
                     >
                       <option value="Ollama">{t('settings.localOllama')}</option>
@@ -841,6 +866,18 @@ export function SettingsModal() {
                         setDraftDirty(true)
                       }}
                     />
+
+                    {provider !== 'Ollama' && (
+                      <input
+                        className="text-input"
+                        placeholder="Model list URL (optional), e.g. https://api.example.com/v1/models"
+                        value={modelListUrl}
+                        onChange={(event) => {
+                          setModelListUrl(event.target.value)
+                          setDraftDirty(true)
+                        }}
+                      />
+                    )}
 
                     <input
                       className="text-input"
@@ -874,6 +911,42 @@ export function SettingsModal() {
                       }}
                     />
                   </div>
+
+                  {provider !== 'Ollama' && editableActiveProfile && (
+                    <div className="manual-config-card" style={{ marginTop: 12 }}>
+                      <div className="button-row manual-config-actions">
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => void handleRefreshProfileModels()}
+                          disabled={modelCatalogBusy || busy}
+                        >
+                          {modelCatalogBusy ? <Loader2 size={14} className="spin" /> : <Wrench size={14} />}
+                          刷新云模型列表
+                        </button>
+                      </div>
+                      {Array.isArray(editableActiveProfile.modelCatalog) && editableActiveProfile.modelCatalog.length > 0 && (
+                        <div className="remote-profiles" style={{ marginTop: 8 }}>
+                          {editableActiveProfile.modelCatalog.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className={`profile-item ${model === item.id ? 'active' : ''}`}
+                              onClick={() => {
+                                setModel(item.id)
+                                setDraftDirty(true)
+                              }}
+                            >
+                              <div className="profile-info">
+                                <span className="profile-name">{item.label || item.id}</span>
+                                <span className="profile-model">{item.id}</span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="button-row manual-config-actions">
                     <button type="button" className="primary-button" onClick={() => void handleSaveCurrentProfile()} disabled={busy}>

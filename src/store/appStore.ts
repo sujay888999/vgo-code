@@ -56,6 +56,8 @@ export interface RemoteProfile {
   name: string
   provider: string
   baseUrl: string
+  modelListUrl?: string
+  modelCatalog?: ModelItem[]
   model: string
   apiKey: string
   systemPrompt: string

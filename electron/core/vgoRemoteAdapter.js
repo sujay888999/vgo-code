@@ -6,7 +6,9 @@ const modelAdapters = require("./modelAdapterRegistry");
 const familyTools = require("./modelFamilyToolAdapters");
 const skillRegistry = require("./skillRegistry");
 
-const MAX_AGENT_STEPS = 50;
+const DEFAULT_MAX_AGENT_STEPS = 120;
+const MIN_AGENT_STEPS = 20;
+const MAX_AGENT_STEPS = 300;
 const UPSTREAM_RETRYABLE_PATTERN = /Failed to connect to upstream channel/i;
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "vgo-remote.log");
@@ -34,6 +36,12 @@ async function parseJsonResponse(response) {
 function toNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function getMaxAgentSteps(settings) {
+  const configured =
+    Number(settings?.agent?.maxToolSteps) || Number(settings?.remote?.maxToolSteps) || DEFAULT_MAX_AGENT_STEPS;
+  return Math.max(MIN_AGENT_STEPS, Math.min(MAX_AGENT_STEPS, Math.floor(configured)));
 }
 
 function safeParseJson(value) {
@@ -806,7 +814,8 @@ async function runRealVgoPrompt({
   let upstreamRetryUsed = false;
   let upstreamFallbackModelUsed = false;
 
-  for (let step = 0; step < MAX_AGENT_STEPS; step += 1) {
+  const maxAgentSteps = getMaxAgentSteps(settings);
+  for (let step = 0; step < maxAgentSteps; step += 1) {
     if (signal?.aborted) {
       return {
         ok: false,
@@ -1303,7 +1312,7 @@ async function runRealVgoPrompt({
     ok: false,
     exitCode: 1,
     sessionId,
-    text: latestText || "Agent reached the maximum tool-call steps without producing a final answer.",
+    text: latestText || `Agent reached the maximum tool-call steps (${maxAgentSteps}) without producing a final answer.`,
     error: "agent_step_limit_reached",
     rawEvents,
     remoteConversationId: "",

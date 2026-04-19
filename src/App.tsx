@@ -333,6 +333,17 @@ export function App() {
       if (eventType === 'task_status') {
         const taskCopy = getTaskCopy(status, payload, t)
         if (taskCopy) {
+          if (
+            status === 'planning' ||
+            status === 'thinking' ||
+            status === 'continuing' ||
+            status === 'tool_running' ||
+            status === 'retrying' ||
+            status === 'fallback_model'
+          ) {
+            setPromptRunning(true)
+          }
+
           if (status === 'planning') {
             upsertLiveMessage(progressBlock || payload?.message || t('task.analyzing'), 'loading')
             upsertTaskStep('task-status-running', {
@@ -461,22 +472,15 @@ export function App() {
 
       if (eventType === 'model_response' && payload.text) {
         settleLiveMessage('done')
-        const hasPendingToolCalls = Array.isArray(payload.toolCalls) && payload.toolCalls.length > 0
-        if (!hasPendingToolCalls) {
-          setPromptRunning(false)
-        }
         upsertFinalMessage(payload.text, 'done')
       }
 
       if (eventType === 'model_stream_delta' && payload.text) {
         if (payload.done) {
           settleLiveMessage('done')
-          const hasPendingToolCalls = Array.isArray(payload.toolCalls) && payload.toolCalls.length > 0
-          if (!hasPendingToolCalls) {
-            setPromptRunning(false)
-          }
           upsertFinalMessage(payload.text, 'done')
         } else {
+          setPromptRunning(true)
           upsertFinalMessage(payload.text, 'loading')
         }
       }

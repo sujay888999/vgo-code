@@ -51,6 +51,8 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
   deleteRemoteProfile: (profileId) =>
     ipcRenderer.invoke("settings:deleteRemoteProfile", profileId),
   selectRemoteProfile: (profileId) => ipcRenderer.invoke("settings:selectRemoteProfile", profileId),
+  refreshRemoteProfileModels: (profileId) =>
+    ipcRenderer.invoke("settings:refreshRemoteProfileModels", profileId),
   
   // Runtime
   setEngine: (engineId) => ipcRenderer.invoke("runtime:setEngine", engineId),

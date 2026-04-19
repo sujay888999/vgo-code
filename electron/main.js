@@ -28,7 +28,9 @@ let authCheckInFlight = false;
 const pendingPermissionRequests = new Map();
 const activePromptControllers = new Map();
 const PERMISSION_REQUEST_TTL = 300000;
-const CONTROLLER_TTL = 600000;
+const DEFAULT_MAX_TASK_RUNTIME_MINUTES = 240;
+const MIN_TASK_RUNTIME_MINUTES = 30;
+const MAX_TASK_RUNTIME_MINUTES = 720;
 let browserAuthState = {
   status: "idle",
   message: "",
@@ -42,12 +44,26 @@ let mockServerInfo = {
 let lastDetectedUpdate = null;
 const AUTH_PARTITION = "persist:vgo-auth";
 let tray = null;
+const MAIN_LOG_DIR = path.join(process.cwd(), "logs");
+const MAIN_LOG_FILE = path.join(MAIN_LOG_DIR, "main-process.log");
+
+function logMainEvent(event, payload = {}) {
+  try {
+    fs.mkdirSync(MAIN_LOG_DIR, { recursive: true });
+    fs.appendFileSync(
+      MAIN_LOG_FILE,
+      `${JSON.stringify({ ts: new Date().toISOString(), event, ...payload })}\n`,
+      "utf8"
+    );
+  } catch {}
+}
 
 function cleanupExpiredMapEntries() {
   const now = Date.now();
   for (const [key, data] of activePromptControllers) {
-    if (now - data.createdAt > CONTROLLER_TTL) {
-      data.controller.abort();
+    const maxRuntimeMs = Number(data.maxRuntimeMs) > 0 ? Number(data.maxRuntimeMs) : DEFAULT_MAX_TASK_RUNTIME_MINUTES * 60000;
+    if (now - data.createdAt > maxRuntimeMs) {
+      data.controller.abort(new Error("task_runtime_limit_reached"));
       activePromptControllers.delete(key);
     }
   }
@@ -406,6 +422,26 @@ function sendStateRefresh() {
       win.webContents.send("app:stateRefresh", serializeState());
     }
   }
+}
+
+function resolveTaskRuntimeLimitMs(targetSettings = settings) {
+  const configuredMinutes = Number(targetSettings?.agent?.maxTaskRuntimeMinutes);
+  const runtimeMinutes = Number.isFinite(configuredMinutes)
+    ? Math.max(MIN_TASK_RUNTIME_MINUTES, Math.min(MAX_TASK_RUNTIME_MINUTES, configuredMinutes))
+    : DEFAULT_MAX_TASK_RUNTIME_MINUTES;
+  return runtimeMinutes * 60000;
+}
+
+function touchActivePromptController(sessionId) {
+  const key = String(sessionId || "").trim();
+  if (!key) {
+    return;
+  }
+  const entry = activePromptControllers.get(key);
+  if (!entry) {
+    return;
+  }
+  entry.lastTouchedAt = Date.now();
 }
 
 function sendUpdateEvent(channel, payload = {}) {
@@ -920,6 +956,14 @@ function syncRemoteProfileState(nextRemote, extraProfileFields = {}, currentVgoA
           ...extraProfileFields,
           provider: extraProfileFields.provider || nextRemote.provider || profile.provider || "VGO Remote",
           baseUrl: nextRemote.baseUrl,
+          modelListUrl:
+            typeof nextRemote.modelListUrl === "string"
+              ? nextRemote.modelListUrl
+              : profile.modelListUrl || "",
+          modelCatalog:
+            Array.isArray(extraProfileFields.modelCatalog)
+              ? extraProfileFields.modelCatalog
+              : profile.modelCatalog || [],
           ollamaUrl: nextRemote.ollamaUrl || profile.ollamaUrl || "",
           model: nextRemote.model,
           apiKey: nextRemote.apiKey,
@@ -938,6 +982,11 @@ function syncRemoteProfileState(nextRemote, extraProfileFields = {}, currentVgoA
         nextRemote.provider ||
         profiles.find((profile) => profile.id === activeProfileId)?.provider ||
         "VGO Remote",
+      modelListUrl:
+        typeof nextRemote.modelListUrl === "string"
+          ? nextRemote.modelListUrl
+          : profiles.find((profile) => profile.id === activeProfileId)?.modelListUrl ||
+            "",
       ollamaUrl:
         nextRemote.ollamaUrl ||
         profiles.find((profile) => profile.id === activeProfileId)?.ollamaUrl ||
@@ -954,6 +1003,8 @@ function createRemoteProfileState(payload = {}, { activate = true } = {}) {
     name: (payload.name || "").trim() || `杩滅▼閰嶇疆 ${(settings.remoteProfiles || []).length + 1}`,
     provider: (payload.provider || "").trim() || "VGO Remote",
     baseUrl: payload.baseUrl || settings.remote.baseUrl,
+    modelListUrl: payload.modelListUrl || "",
+    modelCatalog: Array.isArray(payload.modelCatalog) ? payload.modelCatalog : [],
     ollamaUrl: payload.ollamaUrl || settings.remote.ollamaUrl || "",
     model: payload.model || settings.remote.model,
     apiKey: payload.apiKey || "",
@@ -966,6 +1017,7 @@ function createRemoteProfileState(payload = {}, { activate = true } = {}) {
       ? {
           provider: profile.provider || "VGO Remote",
           baseUrl: profile.baseUrl,
+          modelListUrl: profile.modelListUrl || "",
           ollamaUrl: profile.ollamaUrl || "",
           model: profile.model,
           apiKey: profile.apiKey,
@@ -995,6 +1047,7 @@ function selectRemoteProfileState(profileId) {
     remote: {
       provider: profile.provider || "VGO Remote",
       baseUrl: profile.baseUrl,
+      modelListUrl: profile.modelListUrl || "",
       ollamaUrl: profile.ollamaUrl || "",
       model: profile.model,
       apiKey: profile.apiKey,
@@ -1016,6 +1069,14 @@ function updateRemoteProfileState(profileId, payload = {}, { activate = false } 
     name: (payload.name || "").trim() || profile.name,
     provider: (payload.provider || "").trim() || profile.provider || "VGO Remote",
     baseUrl: payload.baseUrl || profile.baseUrl,
+    modelListUrl:
+      typeof payload.modelListUrl === "string"
+        ? payload.modelListUrl
+        : profile.modelListUrl || "",
+    modelCatalog:
+      Array.isArray(payload.modelCatalog)
+        ? payload.modelCatalog
+        : profile.modelCatalog || [],
     ollamaUrl: payload.ollamaUrl || profile.ollamaUrl || "",
     model: payload.model || profile.model,
     apiKey:
@@ -1040,6 +1101,7 @@ function updateRemoteProfileState(profileId, payload = {}, { activate = false } 
       ? {
           provider: nextProfile.provider || "VGO Remote",
           baseUrl: nextProfile.baseUrl,
+          modelListUrl: nextProfile.modelListUrl || "",
           ollamaUrl: nextProfile.ollamaUrl || "",
           model: nextProfile.model,
           apiKey: nextProfile.apiKey,
@@ -1065,6 +1127,8 @@ function deleteRemoteProfileState(profileId) {
           name: "默认 VGO AI",
           provider: "VGO Remote",
           baseUrl: settings.remote.baseUrl,
+          modelListUrl: settings.remote.modelListUrl || "",
+          modelCatalog: [],
           ollamaUrl: settings.remote.ollamaUrl || "",
           model: settings.remote.model,
           apiKey: settings.remote.apiKey,
@@ -1081,6 +1145,7 @@ function deleteRemoteProfileState(profileId) {
     remote: {
       provider: activeProfile.provider || "VGO Remote",
       baseUrl: activeProfile.baseUrl,
+      modelListUrl: activeProfile.modelListUrl || "",
       ollamaUrl: activeProfile.ollamaUrl || "",
       model: activeProfile.model,
       apiKey: activeProfile.apiKey,
@@ -1124,7 +1189,10 @@ async function fetchJson(url, options = {}) {
     }
     return payload;
   } catch (error) {
-    console.error(`fetchJson error for ${url}:`, error);
+    logMainEvent("fetch_json_error", {
+      url: String(url || ""),
+      message: error instanceof Error ? error.message : String(error)
+    });
     throw error;
   }
 }
@@ -1166,6 +1234,127 @@ async function fetchRealVgoModels(accessToken) {
 async function fetchModelCatalog(baseUrl) {
   const payload = await fetchJson(`${baseUrl.replace(/\/+$/, "")}/models`);
   return Array.isArray(payload.items) ? payload.items : [];
+}
+
+function mapGenericModelCatalog(payload = {}) {
+  const items = payload?.items || payload?.data || payload?.models || [];
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .map((item) => ({
+      id: String(item?.id || "").trim(),
+      label: String(item?.name || item?.label || item?.id || "").trim(),
+      description: String(item?.description || ""),
+      contextWindow: Number(
+        item?.contextWindow ||
+          item?.contextTokens ||
+          item?.maxContextTokens ||
+          item?.max_input_tokens ||
+          item?.maxTokens ||
+          0
+      )
+    }))
+    .filter((item) => item.id)
+    .map((item) => ({
+      ...item,
+      label: item.label || item.id
+    }));
+}
+
+async function fetchRemoteProfileModelCatalog(profile = {}) {
+  if (!profile || profile.provider === "Ollama") {
+    return [];
+  }
+
+  const baseUrl = String(profile.baseUrl || "").trim().replace(/\/+$/, "");
+  const modelListUrl = String(profile.modelListUrl || "").trim();
+  const apiKey = String(profile.apiKey || "").trim();
+
+  if (!baseUrl && !modelListUrl) {
+    return [];
+  }
+
+  const candidates = [];
+  if (modelListUrl) {
+    candidates.push(modelListUrl);
+  }
+  if (baseUrl) {
+    candidates.push(`${baseUrl}/v1/models`);
+    candidates.push(`${baseUrl}/models`);
+  }
+
+  const headers = {};
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  let lastError = null;
+  for (const url of candidates) {
+    try {
+      const payload = await fetchJson(url, { headers });
+      const models = mapGenericModelCatalog(payload);
+      if (models.length) {
+        return models;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  return [];
+}
+
+async function refreshRemoteProfileModelCatalogState(profileId, { activateModelIfMissing = true } = {}) {
+  const profile = (settings.remoteProfiles || []).find((item) => item.id === profileId);
+  if (!profile || profile.provider === "Ollama") {
+    return serializeState();
+  }
+
+  const models = await fetchRemoteProfileModelCatalog(profile).catch(() => []);
+  const resolvedModel =
+    profile.model && models.some((item) => item.id === profile.model)
+      ? profile.model
+      : activateModelIfMissing && models.length
+      ? models[0].id
+      : profile.model;
+
+  const nextProfiles = (settings.remoteProfiles || []).map((item) =>
+    item.id === profileId
+      ? {
+          ...item,
+          modelCatalog: models,
+          model: resolvedModel
+        }
+      : item
+  );
+
+  const isActive = settings.activeRemoteProfileId === profileId;
+  const activeProfile =
+    nextProfiles.find((item) => item.id === settings.activeRemoteProfileId) || nextProfiles[0];
+
+  saveAllSettings({
+    ...settings,
+    remoteProfiles: nextProfiles,
+    remote: isActive
+      ? {
+          ...settings.remote,
+          provider: activeProfile.provider || settings.remote.provider,
+          baseUrl: activeProfile.baseUrl || settings.remote.baseUrl,
+          modelListUrl: activeProfile.modelListUrl || settings.remote.modelListUrl || "",
+          ollamaUrl: activeProfile.ollamaUrl || settings.remote.ollamaUrl || "",
+          model: activeProfile.model || settings.remote.model,
+          apiKey: activeProfile.apiKey,
+          systemPrompt: activeProfile.systemPrompt
+        }
+      : settings.remote
+  });
+
+  return serializeState();
 }
 
 function setRuntimeToRemoteEngine() {
@@ -1892,7 +2081,15 @@ app.whenReady().then(async () => {
       autoSearchSkillsOnApproval:
         typeof payload.autoSearchSkillsOnApproval === "boolean"
           ? payload.autoSearchSkillsOnApproval
-          : settings.agent?.autoSearchSkillsOnApproval
+          : settings.agent?.autoSearchSkillsOnApproval,
+      maxToolSteps:
+        typeof payload.maxToolSteps === "number"
+          ? Math.max(20, Math.min(300, Math.floor(payload.maxToolSteps)))
+          : settings.agent?.maxToolSteps,
+      maxTaskRuntimeMinutes:
+        typeof payload.maxTaskRuntimeMinutes === "number"
+          ? Math.max(MIN_TASK_RUNTIME_MINUTES, Math.min(MAX_TASK_RUNTIME_MINUTES, Math.floor(payload.maxTaskRuntimeMinutes)))
+          : settings.agent?.maxTaskRuntimeMinutes
     })
   );
   ipcMain.handle("settings:updateSkillState", (_event, payload = {}) => {
@@ -1971,17 +2168,39 @@ app.whenReady().then(async () => {
     return { ok: true };
   });
 
-  ipcMain.handle("settings:createRemoteProfile", (_event, payload = {}) =>
-    createRemoteProfileState(payload, { activate: true })
-  );
+  ipcMain.handle("settings:createRemoteProfile", async (_event, payload = {}) => {
+    const result = createRemoteProfileState(payload, { activate: true });
+    const profileId = result?.settings?.activeRemoteProfileId;
+    if (!profileId) {
+      return result;
+    }
+    return await refreshRemoteProfileModelCatalogState(profileId);
+  });
 
-  ipcMain.handle("settings:updateRemoteProfile", (_event, payload = {}) =>
-    updateRemoteProfileState(payload.profileId, payload.payload || {}, { activate: true })
-  );
+  ipcMain.handle("settings:updateRemoteProfile", async (_event, payload = {}) => {
+    const result = updateRemoteProfileState(payload.profileId, payload.payload || {}, { activate: true });
+    const profileId = payload.profileId || result?.settings?.activeRemoteProfileId;
+    if (!profileId) {
+      return result;
+    }
+    return await refreshRemoteProfileModelCatalogState(profileId);
+  });
 
-  ipcMain.handle("settings:selectRemoteProfile", (_event, profileId) =>
-    selectRemoteProfileState(profileId)
-  );
+  ipcMain.handle("settings:selectRemoteProfile", async (_event, profileId) => {
+    const result = selectRemoteProfileState(profileId);
+    if (!profileId) {
+      return result;
+    }
+    return await refreshRemoteProfileModelCatalogState(profileId, { activateModelIfMissing: false });
+  });
+
+  ipcMain.handle("settings:refreshRemoteProfileModels", async (_event, profileId) => {
+    const targetProfileId = profileId || settings.activeRemoteProfileId;
+    if (!targetProfileId) {
+      return serializeState();
+    }
+    return await refreshRemoteProfileModelCatalogState(targetProfileId);
+  });
 
   ipcMain.handle("settings:deleteRemoteProfile", (_event, profileId) =>
     deleteRemoteProfileState(profileId)
@@ -2143,7 +2362,7 @@ app.whenReady().then(async () => {
     let session = store.getActiveSession();
     const prompt = typeof payload === "string" ? payload : String(payload?.text || "");
     const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
-    const selectedModel = getSelectedModelId();
+    const normalizedPrompt = String(prompt || "").trim();
     if (!session) {
       return {
         ok: false,
@@ -2155,12 +2374,23 @@ app.whenReady().then(async () => {
       };
     }
 
+    if (!normalizedPrompt && attachments.length === 0) {
+      return {
+        ok: false,
+        exitCode: 1,
+        sessionId: session.id,
+        text: "empty_prompt_ignored",
+        error: "empty_prompt_ignored",
+        rawEvents: []
+      };
+    }
+
     const attachmentSummary = attachments.length
       ? `\n\n[附件]\n${attachments.map((item, index) => `${index + 1}. ${item.name} | ${item.path}`).join("\n")}`
       : "";
-    store.renameSessionFromFirstPrompt(prompt);
-    store.appendHistory("user", `${prompt}${attachmentSummary}`);
-    const taskWorkspace = deriveTaskWorkspace(prompt, current.workspace, session.directory || "");
+    store.renameSessionFromFirstPrompt(normalizedPrompt);
+    store.appendHistory("user", `${normalizedPrompt}${attachmentSummary}`);
+    const taskWorkspace = deriveTaskWorkspace(normalizedPrompt, current.workspace, session.directory || "");
     store.updateSessionMeta(session.id, {
       directory: taskWorkspace
     });
@@ -2176,7 +2406,12 @@ app.whenReady().then(async () => {
     const compression = maybeCompressActiveSession();
     session = store.getActiveSession();
     const controller = new AbortController();
-    activePromptControllers.set(session.id, { controller, createdAt: Date.now() });
+    activePromptControllers.set(session.id, {
+      controller,
+      createdAt: Date.now(),
+      lastTouchedAt: Date.now(),
+      maxRuntimeMs: resolveTaskRuntimeLimitMs(settings)
+    });
 
     let result;
     try {
@@ -2184,18 +2419,27 @@ app.whenReady().then(async () => {
         workspace: taskWorkspace,
         sessionId: session.id,
         conversationId: "",
-        prompt,
+        prompt: normalizedPrompt,
         settings,
         attachments,
         signal: controller.signal,
-        requestToolPermission: (call) => requestToolPermission(call, (event) => sendAgentEvent({
-          sessionId: session.id,
-          ...event
-        })),
-        onEvent: (event) => sendAgentEvent({
-          sessionId: session.id,
-          ...event
-        }),
+        requestToolPermission: (call) => {
+          touchActivePromptController(session.id);
+          return requestToolPermission(call, (event) => {
+            touchActivePromptController(session.id);
+            sendAgentEvent({
+              sessionId: session.id,
+              ...event
+            });
+          });
+        },
+        onEvent: (event) => {
+          touchActivePromptController(session.id);
+          sendAgentEvent({
+            sessionId: session.id,
+            ...event
+          });
+        },
         sessionMeta: {
           contextSummary: session.contextSummary || ""
         },
@@ -2260,10 +2504,24 @@ app.whenReady().then(async () => {
 
     const controller = activePromptControllers.get(session.id);
     if (!controller) {
-      return { ok: false, reason: "no_active_prompt" };
+      const fallback = [...activePromptControllers.entries()][0];
+      if (!fallback) {
+        return { ok: false, reason: "no_active_prompt" };
+      }
+      const [fallbackSessionId, fallbackController] = fallback;
+      fallbackController.controller.abort(new Error("aborted_by_user"));
+      activePromptControllers.delete(fallbackSessionId);
+      sendAgentEvent({
+        sessionId: fallbackSessionId,
+        type: "task_status",
+        status: "failed",
+        message: "已手动停止本轮任务。"
+      });
+      return { ok: true, sessionId: fallbackSessionId };
     }
 
-    controller.abort(new Error("aborted_by_user"));
+    controller.controller.abort(new Error("aborted_by_user"));
+    activePromptControllers.delete(session.id);
     sendAgentEvent({
       sessionId: session.id,
       type: "task_status",

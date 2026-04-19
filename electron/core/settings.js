@@ -33,13 +33,16 @@ const DEFAULT_SETTINGS = {
     showExecutionPlan: true,
     fallbackModel: "",
     suggestSkillAugmentation: true,
-    autoSearchSkillsOnApproval: true
+    autoSearchSkillsOnApproval: true,
+    maxToolSteps: 120,
+    maxTaskRuntimeMinutes: 240
   },
   skills: {
     disabled: []
   },
   remote: {
     baseUrl: "http://127.0.0.1:3210",
+    modelListUrl: "",
     ollamaUrl: "",
     provider: "VGO Remote",
     model: "vgo-coder-pro",
@@ -52,7 +55,9 @@ const DEFAULT_SETTINGS = {
       name: "默认 VGO AI",
       provider: "VGO Remote",
       baseUrl: "http://127.0.0.1:3210",
+      modelListUrl: "",
       ollamaUrl: "",
+      modelCatalog: [],
       model: "vgo-coder-pro",
       apiKey: "",
       systemPrompt: "You are VGO CODE, a practical coding agent deeply integrated with VGO AI."
@@ -62,7 +67,9 @@ const DEFAULT_SETTINGS = {
       name: "Gemma4 本地模型",
       provider: "Ollama",
       baseUrl: "http://localhost:11434",
+      modelListUrl: "",
       ollamaUrl: "http://localhost:11434",
+      modelCatalog: [],
       model: "gemma4:latest",
       apiKey: "",
       systemPrompt: ""
@@ -72,7 +79,9 @@ const DEFAULT_SETTINGS = {
       name: "Gemma4 E4B 本地模型",
       provider: "Ollama",
       baseUrl: "http://localhost:11434",
+      modelListUrl: "",
       ollamaUrl: "http://localhost:11434",
+      modelCatalog: [],
       model: "gemma4:e4b",
       apiKey: "",
       systemPrompt: ""
@@ -115,7 +124,9 @@ function normalizeProfiles(parsed) {
           name: profile.name || `远程配置 ${index + 1}`,
           provider: profile.provider || "VGO Remote",
           baseUrl: profile.baseUrl || DEFAULT_SETTINGS.remote.baseUrl,
+          modelListUrl: profile.modelListUrl || "",
           ollamaUrl: profile.ollamaUrl || "",
+          modelCatalog: Array.isArray(profile.modelCatalog) ? profile.modelCatalog : [],
           model: profile.model || DEFAULT_SETTINGS.remote.model,
           apiKey: profile.apiKey || "",
           systemPrompt: profile.systemPrompt || DEFAULT_SETTINGS.remote.systemPrompt
@@ -153,6 +164,7 @@ function normalizeProfiles(parsed) {
       ...(parsed.remote || {}),
       provider: activeProfile.provider,
       baseUrl: activeProfile.baseUrl,
+      modelListUrl: activeProfile.modelListUrl || "",
       ollamaUrl: activeProfile.ollamaUrl || "",
       model: activeProfile.model,
       apiKey: activeProfile.apiKey,

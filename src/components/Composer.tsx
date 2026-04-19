@@ -113,6 +113,9 @@ export function Composer() {
     removeAttachmentAt,
     clearAttachments,
     vgoAILoggedIn,
+    remoteProfiles,
+    activeRemoteProfileId,
+    runtimeEngineId,
     hydrate,
     permissionMode,
     setPermissionMode,
@@ -212,7 +215,6 @@ export function Composer() {
 
   const handleStop = () => {
     void window.vgoDesktop?.stopPrompt?.()
-    setPromptRunning(false)
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
@@ -289,7 +291,16 @@ export function Composer() {
     removeAttachmentAt(index)
   }
 
-  const canSend = (input.trim().length > 0 || attachments.length > 0) && !promptRunning && vgoAILoggedIn
+  const activeProfile = remoteProfiles.find((profile) => profile.id === activeRemoteProfileId) || null
+  const canUseCurrentProfile = Boolean(
+    activeProfile &&
+      (activeProfile.provider === 'Ollama' ||
+        activeProfile.id !== 'default' ||
+        vgoAILoggedIn ||
+        runtimeEngineId === 'ollama'),
+  )
+
+  const canSend = (input.trim().length > 0 || attachments.length > 0) && !promptRunning && canUseCurrentProfile
 
   return (
     <div className="composer">
@@ -399,12 +410,12 @@ export function Composer() {
         <textarea
           ref={textareaRef}
           className="composer-textarea"
-          placeholder={vgoAILoggedIn ? t('composer.placeholder') : t('composer.loginRequired')}
+          placeholder={canUseCurrentProfile ? t('composer.placeholder') : t('composer.loginRequired')}
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={(event) => void handlePaste(event)}
-          disabled={!vgoAILoggedIn}
+          disabled={!canUseCurrentProfile}
           rows={1}
         />
 

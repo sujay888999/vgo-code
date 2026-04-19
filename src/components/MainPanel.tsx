@@ -17,7 +17,6 @@ export function MainPanel() {
     showTaskPanel,
     taskPanelCollapsed,
     toggleTaskPanelCollapsed,
-    vgoAILoggedIn,
     vgoAIPreferredModel,
     modelCatalog,
     remoteProfiles,
@@ -38,11 +37,14 @@ export function MainPanel() {
     const activeProfile = remoteProfiles.find((profile) => profile.id === activeRemoteProfileId) || null
     const isCloudEngineSelected = runtimeEngineId === 'vgo-remote'
     const isLocalProfile = activeProfile?.provider === 'Ollama'
+    const isManualCloudProfile = Boolean(activeProfile && activeProfile.id !== 'default' && !isLocalProfile)
 
-    if (activeProfile && (isLocalProfile || !isCloudEngineSelected)) {
+    if (activeProfile && (isLocalProfile || isManualCloudProfile || !isCloudEngineSelected)) {
       return {
         name: activeProfile.model || activeProfile.name || t('mainPanel.noModelSelected'),
-        provider: runtimeProviderLabel || 'Local LLM via Ollama',
+        provider: isLocalProfile
+          ? runtimeProviderLabel || 'Local LLM via Ollama'
+          : activeProfile.provider || runtimeProviderLabel || 'Custom Cloud',
       }
     }
 
@@ -190,7 +192,7 @@ export function MainPanel() {
         </div>
 
         <div className="header-center">
-          {vgoAILoggedIn && (
+          {currentModelBadge.name && (
             <div className="model-badge">
               <span className="model-name">{currentModelBadge.name}</span>
               {currentModelBadge.provider && (

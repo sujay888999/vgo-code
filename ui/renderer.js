@@ -755,40 +755,30 @@ function renderEngines(state) {
     engineSelect.appendChild(option);
   }
 }
-
 function renderModelCatalog(state) {
-  const items = getCatalog(state);
-  const source = items.length
-    ? items
-    : [
-        { id: "vgo-coder-pro", label: "VGO AI Pro" },
-        { id: "vgo-coder-fast", label: "VGO AI Fast" },
-        { id: "vgo-architect-max", label: "VGO Architect Max" }
-      ];
-  const current = state.settings?.vgoAI?.preferredModel || state.settings?.remote?.model || source[0].id;
+    const vgoCatalog = getCatalog(state);
+    const remoteProfiles = state?.settings?.remoteProfiles || [];
+    const defaultCatalog = [
+      { id: "vgo-coder-pro", label: "VGO AI Pro" },
+      { id: "vgo-coder-fast", label: "VGO AI Fast" },
+      { id: "vgo-architect-max", label: "VGO Architect Max" }
+    ];
+    const customModels = remoteProfiles.map(p => ({
+      id: p.model,
+      label: p.name ? p.name + " (" + p.model + ")" : p.model,
+      isCustom: true
+    }));
+    const source = vgoCatalog.length ? [...vgoCatalog, ...customModels] : [...defaultCatalog, ...customModels];
+    const current = getActiveConfiguredModelId(state) || source[0]?.id;
 
-  vgoAiModelSelect.innerHTML = "";
-  for (const item of source) {
-    const option = document.createElement("option");
-    option.value = item.id;
-    option.textContent = item.label || item.id;
-    option.selected = item.id === current;
-    vgoAiModelSelect.appendChild(option);
-  }
-}
-
-function renderRemoteProfiles(state) {
-  const settings = state.settings || {};
-  const profiles = settings.remoteProfiles || [];
-  const activeId = settings.activeRemoteProfileId;
-
-  remoteProfileSelect.innerHTML = "";
-  for (const profile of profiles) {
-    const option = document.createElement("option");
-    option.value = profile.id;
-    option.textContent = `${profile.name} | ${profile.provider}`;
-    option.selected = profile.id === activeId;
-    remoteProfileSelect.appendChild(option);
+    vgoAiModelSelect.innerHTML = "";
+    for (const item of source) {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.label || item.id;
+      option.selected = item.id === current;
+      vgoAiModelSelect.appendChild(option);
+    }
   }
 
   const active = profiles.find((item) => item.id === activeId) || profiles[0];
@@ -1646,3 +1636,5 @@ refreshState().then(() => {
     addMessage("system", "VGO-CODE 已就绪。左侧管理账户、模型和线程，右侧直接发起任务。", "tool-event");
   }
 });
+
+

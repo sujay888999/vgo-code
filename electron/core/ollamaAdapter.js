@@ -21,11 +21,15 @@ const {
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "ollama-engine.log");
 
-const DEFAULT_MAX_TOOL_STEPS = 50;
+const DEFAULT_MAX_TOOL_STEPS = 120;
+const MIN_TOOL_STEPS = 20;
+const MAX_TOOL_STEPS = 300;
 const DEFAULT_NUM_PREDICT = 16384;
 
 function getMaxToolSteps(settings) {
-  return Number(settings?.remote?.maxToolSteps) || DEFAULT_MAX_TOOL_STEPS;
+  const configured =
+    Number(settings?.agent?.maxToolSteps) || Number(settings?.remote?.maxToolSteps) || DEFAULT_MAX_TOOL_STEPS;
+  return Math.max(MIN_TOOL_STEPS, Math.min(MAX_TOOL_STEPS, Math.floor(configured)));
 }
 
 function getNumPredict(settings) {
@@ -1832,7 +1836,7 @@ async function runOllamaPrompt({
       latestText ||
       (rawEvents.some((event) => event.type === "tool_result")
         ? protocol.buildFallbackCompletionFromResults(prompt, collectToolResults(rawEvents))
-        : "Ollama 达到最大工具调用次数。"),
+        : `Ollama reached the maximum tool-call steps (${maxToolSteps}).`),
     error: "ollama_step_limit_reached",
     rawEvents,
     usedModel: model,
