@@ -17,6 +17,13 @@ import { useI18n, setI18nLocale } from '../i18n'
 
 type SettingsTab = 'appearance' | 'language' | 'behavior' | 'agent' | 'runtime'
 type ManualProvider = 'Ollama' | 'Custom HTTP Provider'
+type UpdateInfo = {
+  currentVersion?: string
+  latestVersion?: string
+  downloadUrl?: string
+  releaseNotes?: string
+  releaseDate?: string
+}
 
 function TabsComponent({ t }: { t: (key: string) => string }) {
   return [
@@ -116,6 +123,7 @@ export function SettingsModal() {
   const [updateSkipVersion, setUpdateSkipVersion] = useState('')
   const [updateBusy, setUpdateBusy] = useState(false)
   const [updateStatus, setUpdateStatus] = useState('')
+  const [updateCandidate, setUpdateCandidate] = useState<UpdateInfo | null>(null)
   const [modelCatalogBusy, setModelCatalogBusy] = useState(false)
 
   const activeProfile = useMemo(
@@ -216,6 +224,32 @@ export function SettingsModal() {
     }
   }, [activeSettingsTab, loadUpdateSettings])
 
+  useEffect(() => {
+    const handleUpdateAvailable = (event: Event) => {
+      const info = (event as CustomEvent).detail || {}
+      if (info?.latestVersion && info?.downloadUrl) {
+        setUpdateCandidate(info)
+      }
+    }
+    const handleUpdateStatus = (event: Event) => {
+      const payload = (event as CustomEvent).detail || {}
+      if (payload?.status === 'downloading') {
+        setUpdateStatus(t('settings.update.downloadingPkg'))
+      } else if (payload?.status === 'installing') {
+        setUpdateStatus(t('settings.update.installingPkg'))
+      } else if (payload?.status === 'failed') {
+        setUpdateStatus(payload?.error || t('settings.operationFailed'))
+      }
+    }
+
+    window.addEventListener('vgoUpdateAvailable', handleUpdateAvailable)
+    window.addEventListener('vgoUpdateStatus', handleUpdateStatus)
+    return () => {
+      window.removeEventListener('vgoUpdateAvailable', handleUpdateAvailable)
+      window.removeEventListener('vgoUpdateStatus', handleUpdateStatus)
+    }
+  }, [t])
+
   const withUpdateStatus = async (message: string, fn: () => Promise<void>) => {
     setUpdateStatus(message)
     setUpdateBusy(true)
@@ -237,6 +271,13 @@ export function SettingsModal() {
         return
       }
       if (result.updateAvailable) {
+        setUpdateCandidate({
+          currentVersion: result.currentVersion,
+          latestVersion: result.latestVersion,
+          downloadUrl: result.downloadUrl,
+          releaseNotes: result.releaseNotes,
+          releaseDate: result.releaseDate,
+        })
         setUpdateStatus(
           t('settings.update.available')
             .replace('{current}', result.currentVersion || '-')
@@ -244,7 +285,28 @@ export function SettingsModal() {
         )
         return
       }
+      setUpdateCandidate(null)
       setUpdateStatus(t('settings.update.upToDate'))
+    })
+  }
+
+  const handleInstallUpdateNow = async () => {
+    if (!updateCandidate?.downloadUrl || !updateCandidate?.latestVersion) {
+      setUpdateStatus(t('settings.update.noCandidate'))
+      return
+    }
+    await withUpdateStatus(t('settings.update.installing'), async () => {
+      const result = await window.vgoDesktop?.installUpdate?.({
+        downloadUrl: updateCandidate.downloadUrl,
+        latestVersion: updateCandidate.latestVersion,
+        releaseNotes: updateCandidate.releaseNotes,
+        releaseDate: updateCandidate.releaseDate,
+      })
+      if (!result?.ok) {
+        setUpdateStatus(result?.error || t('settings.operationFailed'))
+        return
+      }
+      setUpdateStatus(t('settings.update.installTriggered'))
     })
   }
 
@@ -784,6 +846,17 @@ export function SettingsModal() {
                     </div>
                   </div>
 
+                  {updateCandidate?.latestVersion && (
+                    <div className="account-info">
+                      <div className="info-row">
+                        <span className="label">{t('settings.update.availableVersion')}</span>
+                        <span className="value">
+                          {(updateCandidate.currentVersion || '-')} {'->'} {updateCandidate.latestVersion}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="button-row manual-config-actions">
                     <button
                       type="button"
@@ -793,6 +866,15 @@ export function SettingsModal() {
                     >
                       {updateBusy ? <Loader2 size={14} className="spin" /> : <Wrench size={14} />}
                       {t('settings.update.checkNow')}
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => void handleInstallUpdateNow()}
+                      disabled={updateBusy || !updateCandidate?.latestVersion}
+                    >
+                      <Save size={14} />
+                      {t('settings.update.installNow')}
                     </button>
                     <button
                       type="button"
