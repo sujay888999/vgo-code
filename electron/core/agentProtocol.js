@@ -59,7 +59,9 @@ function sanitizeAssistantText(text = "") {
   cleaned = cleaned.replace(/(^|\n)\s*<invoke\b[\s\S]*$/gi, "$1");
   cleaned = cleaned.replace(/<vgo_tool_call>([\s\S]*?)<\/vgo_tool_call>/gi, (match, body) => {
     const parsed = parseJsonObjectBlock(body);
-    const calls = collectToolCalls(parsed).filter((call) => call && typeof call === "object" && call.name);
+    const calls = (parsed ? collectToolCalls(parsed) : collectLooseToolCalls(body)).filter(
+      (call) => call && typeof call === "object" && call.name
+    );
     return calls.length ? "" : match;
   });
   cleaned = cleaned.replace(/<minimax:tool_call>([\s\S]*?)<\/minimax:tool_call>/gi, (match, body) => {
@@ -134,6 +136,105 @@ function collectToolCalls(parsed) {
   return [];
 }
 
+function extractBalancedObjectBlock(text = "", startIndex = -1) {
+  const source = String(text || "");
+  const start = Number(startIndex);
+  if (!source || start < 0 || start >= source.length || source[start] !== "{") {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < source.length; i += 1) {
+    const ch = source[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function collectLooseToolCalls(rawText = "") {
+  const source = String(rawText || "");
+  if (!source) {
+    return [];
+  }
+
+  const calls = [];
+  const namePattern = /"name"\s*:\s*"([^"]+)"/gi;
+  const allowed = new Set([
+    "read_file",
+    "list_dir",
+    "search_code",
+    "write_file",
+    "append_file",
+    "run_command",
+    "open_path",
+    "move_path",
+    "copy_path",
+    "delete_path"
+  ]);
+  let match;
+
+  while ((match = namePattern.exec(source)) !== null) {
+    const name = String(match[1] || "").trim();
+    if (!name) {
+      continue;
+    }
+
+    const tail = source.slice(match.index);
+    const argsKey = tail.search(/"arguments"\s*:/i);
+    let args = {};
+
+    if (argsKey >= 0) {
+      const absoluteArgsKey = match.index + argsKey;
+      const braceStart = source.indexOf("{", absoluteArgsKey);
+      if (braceStart >= 0) {
+        const block = extractBalancedObjectBlock(source, braceStart);
+        if (block) {
+          try {
+            const parsedArgs = JSON.parse(block);
+            if (parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs)) {
+              args = parsedArgs;
+            }
+          } catch {}
+        }
+      }
+    }
+
+    if (allowed.has(name.toLowerCase()) || Object.keys(args).length > 0) {
+      calls.push({ name, arguments: args });
+    }
+  }
+
+  return calls;
+}
+
 function parseToolCalls(rawText = "") {
   const source = String(rawText || "");
   const normalizedSource = normalizeEscapedToolMarkup(source);
@@ -158,7 +259,11 @@ function parseToolCalls(rawText = "") {
     const matches = [...normalizedSource.matchAll(pattern)];
     for (const match of matches) {
       const parsed = parseJsonObjectBlock(match[1]);
-      calls.push(...collectToolCalls(parsed));
+      if (parsed) {
+        calls.push(...collectToolCalls(parsed));
+      } else {
+        calls.push(...collectLooseToolCalls(match[1]));
+      }
     }
   }
 
@@ -178,6 +283,12 @@ function parseToolCalls(rawText = "") {
     const parsed = parseJsonObjectBlock(jsonMatch[0]);
     const jsonCalls = collectToolCalls(parsed).filter((call) => call && typeof call === "object" && call.name);
     if (jsonCalls.length) return jsonCalls;
+  }
+  const looseJsonCalls = collectLooseToolCalls(normalizedSource).filter(
+    (call) => call && typeof call === "object" && call.name
+  );
+  if (looseJsonCalls.length) {
+    return looseJsonCalls;
   }
 
   const invokeMatches = [
