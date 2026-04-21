@@ -1,46 +1,58 @@
 # VGO CODE
 
-VGO CODE 是一个桌面版 Agent 工作台。
-
-当前开发目录已经整理为以源码、资源、文档和脚本分层的结构，便于继续做 Agent 能力开发、调试和打包。
+VGO CODE 是一个桌面端 Agent 工作台项目。
+当前工程已完成前端主链路迁移，默认使用 React + Vite 构建产物作为 Electron 渲染层。
 
 ## 当前能力
 
-- Electron 桌面端
+- Electron 桌面应用
 - 多会话管理
-- 可切换运行内核
-- `VGO AI` 一键绑定
-- 本地 `VGO AI API` 样板服务
-- 初版 Agent 工具运行时
+- 多引擎切换（含 VGO Remote）
+- VGO AI 账号绑定与模型选择
+- 本地 API 模板服务（`server/`）
 
 ## 工程结构
 
 ```text
 E:\VGO-CODE
-├─ build                # 打包资源，例如图标
-├─ docs                 # 架构文档与路线文档
-├─ electron
-│  └─ core              # 桌面主进程与 Agent/引擎核心
-├─ scripts              # 启动与调试脚本
-├─ server
-│  └─ lib               # 本地 API 样板服务
-├─ ui
-├─ vendor               # 内置兼容 CLI 资源
-├─ README.md
-└─ package.json
+├─ build/
+├─ docs/
+├─ electron/
+│  ├─ main.js
+│  ├─ preload.js
+│  └─ core/
+├─ src/                  # 前端源码（开发入口）
+├─ dist-web/             # 前端构建产物（运行入口）
+├─ server/
+├─ scripts/
+├─ ui/                   # 旧版静态页面，仅兼容兜底
+├─ vendor/
+├─ package.json
+└─ README.md
 ```
 
-说明：
+## 渲染层加载策略
 
-- `dist/` 是打包产物目录，已从开发目录中清理；需要时重新执行打包生成。
-- `node_modules/` 是本地依赖，不属于源码结构本身。
+Electron 主进程优先加载 `dist-web/index.html`。
+仅在以下情况允许回退旧版 `ui/index.html`：
 
-## 运行方式
+- 开发模式（`app.isPackaged === false`）
+- 显式设置环境变量：`VGO_ALLOW_LEGACY_UI_FALLBACK=1`
 
-开发模式：
+如果缺少 `dist-web` 且未开启回退，会显示错误提示页，避免生产环境误回退旧 UI。
+
+## 常用命令
+
+开发运行：
 
 ```powershell
 npm start
+```
+
+构建前端：
+
+```powershell
+npm run build:web
 ```
 
 目录版打包：
@@ -49,33 +61,22 @@ npm start
 npm run pack
 ```
 
-打包后启动目录版：
+安装包打包：
 
 ```powershell
-scripts\start-vgo-code.bat
+npm run dist
 ```
 
-调试启动目录版：
+## 本地 API 服务
 
-```powershell
-scripts\debug-vgo-code.bat
-```
-
-独立本地 API 服务：
+单独启动本地 API：
 
 ```powershell
 cd E:\VGO-CODE\server
 npm start
 ```
 
-## 文档
-
-- [ARCHITECTURE.md](E:\VGO-CODE\docs\ARCHITECTURE.md)
-- [VGO-CORE-ROADMAP.md](E:\VGO-CODE\docs\VGO-CORE-ROADMAP.md)
-
-## 本地 VGO AI API
-
-`server/` 现在是一个独立的本地样板后端，接口包括：
+默认接口：
 
 - `GET /health`
 - `GET /models`
@@ -83,17 +84,7 @@ npm start
 - `POST /auth/login`
 - `POST /chat`
 
-桌面端默认会自动拉起它，并把 `VGO Remote Engine` 指向该服务。
+## 相关文档
 
-## VGO AI 绑定流程
-
-在桌面端中可以：
-
-1. 同步模型列表
-2. 选择模型
-3. 一键登录并绑定 `VGO AI`
-4. 自动切换到 `VGO Remote Engine`
-
-## 当前定位
-
-现在的 `VGO CODE` 已经不是单纯的兼容壳，而是一个具备前后端边界、运行内核边界和品牌形态的本地产品样板。
+- `docs/ARCHITECTURE.md`
+- `docs/VGO-CORE-ROADMAP.md`

@@ -75,7 +75,7 @@ const BUILTIN_SKILLS = [
       "do not report success without a verification step",
       "list modified files explicitly"
     ],
-    requiredInspectionPaths: ["package.json", "electron/main.js", "ui/renderer.js", "ui/styles.css"]
+    requiredInspectionPaths: ["package.json", "electron/main.js", "src/App.tsx", "src/styles/global.css"]
   },
   {
     id: "file-management",
@@ -169,7 +169,7 @@ const BUILTIN_SKILLS = [
       "summarize actionable conclusions"
     ],
     verificationRules: ["cite actual files inspected"],
-    requiredInspectionPaths: ["package.json", "electron/main.js", "ui/renderer.js", "ui/styles.css"]
+    requiredInspectionPaths: ["package.json", "electron/main.js", "src/App.tsx", "src/styles/global.css"]
   },
   {
     id: "stability-check",
@@ -206,7 +206,7 @@ const BUILTIN_SKILLS = [
       "propose exact fixes"
     ],
     verificationRules: ["report which check failed and why"],
-    requiredInspectionPaths: ["package.json", "electron/main.js", "ui/styles.css"]
+    requiredInspectionPaths: ["package.json", "electron/main.js", "src/App.tsx", "src/styles/global.css"]
   },
   {
     id: "ui-design",
@@ -241,7 +241,7 @@ const BUILTIN_SKILLS = [
       "summarize visible outcomes"
     ],
     verificationRules: ["name the UI areas changed"],
-    requiredInspectionPaths: ["ui/index.html", "ui/renderer.js", "ui/styles.css"]
+    requiredInspectionPaths: ["src/App.tsx", "src/components/MainPanel.tsx", "src/components/Sidebar.tsx", "src/styles/global.css"]
   }
 ];
 

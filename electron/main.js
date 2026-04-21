@@ -1241,11 +1241,36 @@ function createWindow() {
   const isDev = !app.isPackaged;
   const distWebPath = path.join(app.getAppPath(), "dist-web", "index.html");
   const fallbackUiPath = path.join(app.getAppPath(), "ui", "index.html");
+  const allowLegacyFallback =
+    isDev || String(process.env.VGO_ALLOW_LEGACY_UI_FALLBACK || "") === "1";
   if (fs.existsSync(distWebPath)) {
     win.loadFile(distWebPath);
-  } else {
-    logMainEvent("renderer_missing_dist_web", { distWebPath, fallbackUiPath });
+  } else if (allowLegacyFallback && fs.existsSync(fallbackUiPath)) {
+    logMainEvent("renderer_missing_dist_web_using_legacy_fallback", {
+      distWebPath,
+      fallbackUiPath,
+      isDev,
+      allowLegacyFallback
+    });
     win.loadFile(fallbackUiPath);
+  } else {
+    logMainEvent("renderer_missing_dist_web_no_fallback", {
+      distWebPath,
+      fallbackUiPath,
+      isDev,
+      allowLegacyFallback
+    });
+    win.loadURL(
+      "data:text/html;charset=utf-8," +
+        encodeURIComponent(
+          "<!doctype html><html><head><meta charset='utf-8'><title>VGO CODE</title></head>" +
+            "<body style='font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#0b1220;color:#f5f7fb;'>" +
+            "<h2>Renderer bundle is missing</h2>" +
+            "<p>Cannot find dist-web/index.html. Please run <code>npm run build:web</code> and restart.</p>" +
+            "<p>If you must use legacy fallback temporarily, set <code>VGO_ALLOW_LEGACY_UI_FALLBACK=1</code>.</p>" +
+            "</body></html>"
+        )
+    );
   }
   return win;
 }
