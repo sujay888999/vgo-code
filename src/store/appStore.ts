@@ -29,6 +29,31 @@ function normalizeMessageText(text: string) {
   return String(text || '').replace(/\s+/g, ' ').trim()
 }
 
+function looksLikeMojibake(text: string) {
+  const sample = String(text || '')
+  if (!sample) return false
+  const weirdMatches =
+    sample.match(
+      /[ÃÂÐÑæçèéêëìíîïðñòóôõöøùúûüýþÿ]|[锛銆鍙鍚鍒姝涓浠鍦杩缁鎵宸妯璇缃粶]|[娴彃寮顏掗顔濂妹婊鎴]/g,
+    ) || []
+  return weirdMatches.length >= 2
+}
+
+function tryRecoverMojibakeText(text: string) {
+  const source = String(text || '')
+  if (!source || !looksLikeMojibake(source)) return source
+  try {
+    const bytes = Uint8Array.from(Array.from(source).map((char) => char.charCodeAt(0) & 0xff))
+    const recovered = new TextDecoder('utf-8').decode(bytes)
+    if (recovered && !looksLikeMojibake(recovered)) {
+      return recovered
+    }
+  } catch {
+    // noop
+  }
+  return source
+}
+
 export interface Session {
   id: string
   title: string
@@ -161,7 +186,6 @@ export interface AppState {
   enterToSend: boolean
   autoScroll: boolean
   showTaskPanel: boolean
-  taskPanelCollapsed: boolean
   confirmDangerousOps: boolean
   autoSummarizeContext: boolean
   showRuntimeMeta: boolean
@@ -241,8 +265,6 @@ export interface AppState {
   toggleEnterToSend: () => void
   toggleAutoScroll: () => void
   toggleShowTaskPanel: () => void
-  toggleTaskPanelCollapsed: () => void
-  setTaskPanelCollapsed: (collapsed: boolean) => void
   toggleConfirmDangerousOps: () => void
   toggleAutoSummarize: () => void
   toggleShowRuntimeMeta: () => void
@@ -292,7 +314,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   enterToSend: true,
   autoScroll: true,
   showTaskPanel: false,
-  taskPanelCollapsed: false,
   confirmDangerousOps: true,
   autoSummarizeContext: true,
   showRuntimeMeta: true,
@@ -344,10 +365,28 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSessions: (sessions) => set({ sessions }),
   setActiveSessionId: (id) => set({ activeSessionId: id }),
   addMessage: (message) => set((state) => ({ 
-    messages: [...state.messages, message] 
+    messages: [
+      ...state.messages,
+      {
+        ...message,
+        text: tryRecoverMojibakeText(message.text || ''),
+        title: message.title ? tryRecoverMojibakeText(message.title) : message.title,
+      },
+    ] 
   })),
   updateMessage: (id, updates) => set((state) => ({
-    messages: state.messages.map((m) => m.id === id ? { ...m, ...updates } : m)
+    messages: state.messages.map((m) =>
+      m.id === id
+        ? {
+            ...m,
+            ...updates,
+            ...(updates.text !== undefined ? { text: tryRecoverMojibakeText(updates.text || '') } : {}),
+            ...(updates.title !== undefined
+              ? { title: updates.title ? tryRecoverMojibakeText(updates.title) : updates.title }
+              : {}),
+          }
+        : m,
+    )
   })),
   clearMessages: () => set({ messages: [] }),
   addAttachments: (files) =>
@@ -382,10 +421,28 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Task Actions
   setTaskSteps: (steps) => set({ taskSteps: steps }),
   addTaskStep: (step) => set((state) => ({ 
-    taskSteps: [...state.taskSteps.slice(-12), step] 
+    taskSteps: [
+      ...state.taskSteps.slice(-12),
+      {
+        ...step,
+        title: tryRecoverMojibakeText(step.title || ''),
+        detail: tryRecoverMojibakeText(step.detail || ''),
+      },
+    ] 
   })),
   updateTaskStep: (id, updates) => set((state) => ({
-    taskSteps: state.taskSteps.map((s) => s.id === id ? { ...s, ...updates } : s)
+    taskSteps: state.taskSteps.map((s) =>
+      s.id === id
+        ? {
+            ...s,
+            ...updates,
+            ...(updates.title !== undefined ? { title: tryRecoverMojibakeText(updates.title || '') } : {}),
+            ...(updates.detail !== undefined
+              ? { detail: tryRecoverMojibakeText(updates.detail || '') }
+              : {}),
+          }
+        : s,
+    )
   })),
   settleTaskSteps: (finalState) => set((state) => {
     const pendingStates: TaskStep['state'][] = ['idle', 'planning', 'working', 'permission_requested']
@@ -407,9 +464,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleEnterToSend: () => set((state) => ({ enterToSend: !state.enterToSend })),
   toggleAutoScroll: () => set((state) => ({ autoScroll: !state.autoScroll })),
   toggleShowTaskPanel: () => set((state) => ({ showTaskPanel: !state.showTaskPanel })),
-  toggleTaskPanelCollapsed: () =>
-    set((state) => ({ taskPanelCollapsed: !state.taskPanelCollapsed })),
-  setTaskPanelCollapsed: (collapsed) => set({ taskPanelCollapsed: Boolean(collapsed) }),
   toggleConfirmDangerousOps: () => set((state) => ({ confirmDangerousOps: !state.confirmDangerousOps })),
   toggleAutoSummarize: () => set((state) => ({ autoSummarizeContext: !state.autoSummarizeContext })),
   toggleShowRuntimeMeta: () => set((state) => ({ showRuntimeMeta: !state.showRuntimeMeta })),
@@ -473,7 +527,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const historyMessages = history.map((entry: any, index: number) => ({
       id: entry.id || `msg-${index}`,
       role: entry.role || 'assistant',
-      text: entry.text || '',
+      text: tryRecoverMojibakeText(entry.text || ''),
       status: entry.status || 'done',
       timestamp: entry.createdAt ? new Date(entry.createdAt).getTime() : Date.now()
     }))

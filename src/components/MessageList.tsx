@@ -52,7 +52,9 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
   const isProgressMessage = message.kind === 'progress'
   const [displayedText, setDisplayedText] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
-  const [isCollapsed, setIsCollapsed] = useState(Boolean(message.collapsed))
+  const [isCollapsed, setIsCollapsed] = useState(
+    message.collapsed ?? (isProgressMessage && !isLoading),
+  )
 
   useEffect(() => {
     if (isLoading) {
@@ -66,8 +68,8 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
   }, [isLoading, message.text])
 
   useEffect(() => {
-    setIsCollapsed(Boolean(message.collapsed))
-  }, [message.collapsed, message.id])
+    setIsCollapsed(message.collapsed ?? (isProgressMessage && !isLoading))
+  }, [message.collapsed, message.id, isProgressMessage, isLoading])
 
   useEffect(() => {
     if (isLoading || !isStreaming || !message.text || displayedText === message.text) return

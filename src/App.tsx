@@ -29,6 +29,45 @@ function appendUniqueBlock(currentText: string, nextBlock: string) {
   return `${normalizedCurrent}\n\n${normalizedNext}`.trim()
 }
 
+function looksLikeMojibake(text: string) {
+  const sample = String(text || '')
+  if (!sample) return false
+  const weirdMatches = sample.match(/[娴ｉ幋鐠囬弬鍥︽瀹告彃寮張顏呮閸掗梻顔藉灉]/g) || []
+  return weirdMatches.length >= 3
+}
+
+function tryRecoverMojibake(text: string) {
+  const source = String(text || '')
+  if (!source || !looksLikeMojibake(source)) return source
+  try {
+    const bytes = Uint8Array.from(Array.from(source).map((char) => char.charCodeAt(0) & 0xff))
+    const recovered = new TextDecoder('utf-8').decode(bytes)
+    if (recovered && !looksLikeMojibake(recovered)) {
+      return recovered
+    }
+  } catch {
+    // noop
+  }
+  return source
+}
+
+function normalizeEventPayload<T>(value: T): T {
+  if (typeof value === 'string') {
+    return tryRecoverMojibake(value) as T
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeEventPayload(item)) as T
+  }
+  if (value && typeof value === 'object') {
+    const normalized: Record<string, unknown> = {}
+    Object.entries(value as Record<string, unknown>).forEach(([key, val]) => {
+      normalized[key] = normalizeEventPayload(val)
+    })
+    return normalized as T
+  }
+  return value
+}
+
 function buildLiveProgressBlock(eventType: string, payload: any, t: (key: string) => string) {
   if (eventType === 'task_status') {
     if (payload?.message) return payload.message
@@ -137,7 +176,6 @@ export function App() {
     addTaskStep,
     updateTaskStep,
     settleTaskSteps,
-    setTaskPanelCollapsed,
     theme,
     compactMode,
     uiMode,
@@ -187,7 +225,7 @@ export function App() {
   useEffect(() => {
     const handleAgentEvent = (e: Event) => {
       const { t } = useI18n.getState()
-      const payload = (e as CustomEvent).detail || {}
+      const payload = normalizeEventPayload((e as CustomEvent).detail || {})
       const eventType = payload.type || payload.event
       const status = payload.status
       const timestamp = Date.now()
@@ -265,7 +303,7 @@ export function App() {
           timestamp,
           kind: 'progress',
           title: t('message.reasoning'),
-          collapsed: false,
+          collapsed: true,
         })
       }
 
@@ -284,7 +322,7 @@ export function App() {
             timestamp,
             kind: 'progress',
             title: t('message.reasoning'),
-            collapsed: false,
+            collapsed: true,
           })
           return
         }
@@ -297,7 +335,7 @@ export function App() {
           timestamp,
           kind: 'progress',
           title: t('message.reasoning'),
-          collapsed: false,
+          collapsed: true,
         })
       }
 
@@ -372,7 +410,6 @@ export function App() {
           if (status === 'completed') {
             settleTaskSteps('completed')
             setPromptRunning(false)
-            setTaskPanelCollapsed(true)
             upsertTaskStep('task-status-final', {
               title: taskCopy.title,
               detail: taskCopy.detail,
@@ -384,7 +421,6 @@ export function App() {
           if (status === 'error' || status === 'failed') {
             settleTaskSteps('error')
             setPromptRunning(false)
-            setTaskPanelCollapsed(true)
             upsertTaskStep('task-status-final', {
               title: taskCopy.title,
               detail: taskCopy.detail,
@@ -525,7 +561,7 @@ export function App() {
       window.removeEventListener('vgoAgentEvent', handleAgentEvent)
       window.clearInterval(pollInterval)
     }
-  }, [activeSessionId, hydrate, setPromptRunning, addMessage, updateMessage, addTaskStep, updateTaskStep, settleTaskSteps, setTaskPanelCollapsed])
+  }, [activeSessionId, hydrate, setPromptRunning, addMessage, updateMessage, addTaskStep, updateTaskStep, settleTaskSteps])
 
   useEffect(() => {
     const handleStateRefresh = (e: Event) => {

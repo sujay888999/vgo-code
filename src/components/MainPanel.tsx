@@ -5,7 +5,6 @@ import { MessageList } from './MessageList'
 import { Composer } from './Composer'
 import { TaskPanel } from './TaskPanel'
 import { PermissionCard } from './PermissionCard'
-import { ChevronDown, ChevronUp } from 'lucide-react'
 
 export function MainPanel() {
   const { t } = useI18n()
@@ -15,8 +14,6 @@ export function MainPanel() {
     taskSteps,
     promptRunning,
     showTaskPanel,
-    taskPanelCollapsed,
-    toggleTaskPanelCollapsed,
     vgoAIPreferredModel,
     modelCatalog,
     remoteProfiles,
@@ -251,18 +248,11 @@ export function MainPanel() {
         </div>
 
         {showTaskPanel && (
-          <div className={`task-panel-wrapper ${taskPanelCollapsed ? 'collapsed' : ''}`}>
+          <div className="task-panel-wrapper">
             <div className="task-panel-header">
               <span>{t('mainPanel.taskPanel')}</span>
-              <button
-                className="icon-button"
-                onClick={toggleTaskPanelCollapsed}
-                title={taskPanelCollapsed ? t('mainPanel.expandPanel') : t('mainPanel.collapsePanel')}
-              >
-                {taskPanelCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-              </button>
             </div>
-            {!taskPanelCollapsed && <TaskPanel steps={taskSteps} />}
+            <TaskPanel steps={taskSteps} />
           </div>
         )}
       </div>

@@ -1577,7 +1577,16 @@ async function fetchJson(url, options = {}) {
       throw new Error(`Invalid JSON response: ${text.slice(0, 200)}`);
     }
     if (!response.ok) {
-      throw new Error(payload.message || payload.error || `http_${response.status}`);
+      const message =
+        payload?.message ||
+        payload?.error ||
+        payload?.msg ||
+        payload?.detail ||
+        payload?.data?.message ||
+        payload?.data?.error ||
+        `http_${response.status}`;
+      const normalizedMessage = typeof message === "string" ? message : JSON.stringify(message);
+      throw new Error(`${normalizedMessage} (status ${response.status})`);
     }
     return payload;
   } catch (error) {
@@ -1587,6 +1596,56 @@ async function fetchJson(url, options = {}) {
     });
     throw error;
   }
+}
+
+function extractAccessToken(loginPayload = {}) {
+  return (
+    loginPayload.accessToken ||
+    loginPayload.access_token ||
+    loginPayload.token ||
+    loginPayload.jwt ||
+    loginPayload?.data?.accessToken ||
+    loginPayload?.data?.access_token ||
+    loginPayload?.data?.token ||
+    loginPayload?.data?.jwt ||
+    loginPayload?.result?.accessToken ||
+    loginPayload?.result?.token ||
+    ""
+  );
+}
+
+async function requestRealVgoAiLogin(email, password) {
+  const endpoints = [
+    "https://vgoai.cn/api/v1/auth/login",
+    "https://vgoai.cn/api/auth/login",
+    "https://vgoai.cn/auth/login"
+  ];
+  const payloadVariants = [
+    { email, password },
+    { account: email, password },
+    { username: email, password },
+    { login: email, password },
+    { identifier: email, password }
+  ];
+
+  let lastError = null;
+  for (const endpoint of endpoints) {
+    for (const payload of payloadVariants) {
+      try {
+        return await fetchJson(endpoint, {
+          method: "POST",
+          headers: {
+            Accept: "application/json, text/plain, */*"
+          },
+          body: JSON.stringify(payload)
+        });
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  }
+
+  throw lastError || new Error("login_request_failed");
 }
 
 async function fetchVgoAiProfile(accessToken) {
@@ -1899,14 +1958,11 @@ async function loginRealVgoAi(payload = {}) {
 
   console.log("Attempting login to vgoai.cn with email:", email);
   
-  const loginPayload = await fetchJson("https://vgoai.cn/api/v1/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ email, password })
-  });
+  const loginPayload = await requestRealVgoAiLogin(email, password);
 
   console.log("Login response:", JSON.stringify(loginPayload).slice(0, 200));
 
-  const accessToken = loginPayload.accessToken;
+  const accessToken = extractAccessToken(loginPayload);
   if (!accessToken) {
     throw new Error("登录接口未返回有效 accessToken。");
   }

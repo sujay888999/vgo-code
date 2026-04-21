@@ -1620,13 +1620,9 @@ body.mode-ux-pro-max .task-panel-wrapper {
     var(--bg-elevated);
 }
 
-.task-panel-wrapper.collapsed {
-  width: 40px;
-}
-
 .task-panel-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   padding: 0.75rem;
   border-bottom: 1px solid var(--border);

@@ -1,4 +1,4 @@
-const fs = require("node:fs");
+﻿const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { executeToolCall } = require("./toolRuntime");
@@ -126,8 +126,8 @@ function isQuotaLikeFailure(status, errorText = "") {
   return (
     Number(status) === 429 &&
     (
-      text.includes("余额不足") ||
-      text.includes("无可用资源包") ||
+      text.includes("浣欓涓嶈冻") ||
+      text.includes("鏃犲彲鐢ㄨ祫婧愬寘") ||
       text.includes("quota") ||
       text.includes("insufficient") ||
       text.includes("balance")
@@ -620,7 +620,23 @@ function isRetryableUpstreamFailure(response, payload) {
   if (!response || response.ok) {
     return false;
   }
+  const status = Number(response?.status || 0);
   const messageText = String(payload?.message || payload?.error || payload?.rawText || "");
+
+  // Service-side transient errors should be retried/fallback-switched automatically.
+  if (status >= 500 && status <= 599) {
+    return true;
+  }
+
+  // Some upstream failures are wrapped as 400 with message containing HTTP 500 style text.
+  if (/HTTP\s*50[0-9]/i.test(messageText)) {
+    return true;
+  }
+
+  if (/upstream\s*channel|No available channel for this model/i.test(messageText)) {
+    return true;
+  }
+
   return UPSTREAM_RETRYABLE_PATTERN.test(messageText);
 }
 
@@ -669,6 +685,54 @@ function pickFallbackModelForUpstream(settings, currentModel) {
   return catalog.find((modelId) => modelId !== currentModel) || "";
 }
 
+function buildFallbackModelCandidates(settings, currentModel) {
+  const catalog = getCatalogModels(settings)
+    .map((item) => String(item.id || "").trim())
+    .filter(Boolean);
+  if (!catalog.length) return [];
+
+  const preferred = String(settings?.vgoAI?.preferredModel || "").trim();
+  const seen = new Set([String(currentModel || "").trim()]);
+  const candidates = [];
+
+  const pushCandidate = (id) => {
+    const value = String(id || "").trim();
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    candidates.push(value);
+  };
+
+  // 1) Explicit fallback model in settings.
+  const configuredFallback = String(settings?.agent?.fallbackModel || "").trim();
+  pushCandidate(configuredFallback);
+
+  // 2) Same-family alternative first (keeps behavior continuity).
+  const currentFamily = modelAdapters.getModelFamily(currentModel);
+  for (const modelId of catalog) {
+    if (modelAdapters.getModelFamily(modelId) === currentFamily) {
+      pushCandidate(modelId);
+    }
+  }
+
+  // 3) Preferred model if different.
+  pushCandidate(preferred);
+
+  // 4) Non-NVIDIA/Gemma models first when upstream is unstable for that family.
+  const nonNvidiaLike = catalog.filter(
+    (id) => !/^google\/gemma-/i.test(id) && !/^nvidia\//i.test(id)
+  );
+  for (const modelId of nonNvidiaLike) {
+    pushCandidate(modelId);
+  }
+
+  // 5) Remaining models.
+  for (const modelId of catalog) {
+    pushCandidate(modelId);
+  }
+
+  return candidates;
+}
+
 function emitEvent(onEvent, rawEvents, event) {
   rawEvents.push(event);
   if (typeof onEvent === "function") {
@@ -708,7 +772,7 @@ function extractRequestedFilePaths(prompt = "", workspace = "") {
   for (const rawMatch of matches) {
     const cleaned = String(rawMatch || "")
       .trim()
-      .replace(/[，。、；：,.;:？?！!）)\]】]+$/, "");
+      .replace(/[，。；,.;:!?、]+$/, "");
     if (!cleaned) {
       continue;
     }
@@ -780,7 +844,7 @@ function promptAllowsAutonomousContinuation(prompt = "") {
     /直到完成/,
     /修复完/,
     /排查并修复/,
-    /持续执行/,
+    /鎸佺画鎵ц/,
     /continue/,
     /keep going/,
     /autonom/i,
@@ -1090,7 +1154,7 @@ function getProtectedInspectionViolation(call = {}, prompt = "", workspace = "")
 
 function looksLikePlatformPersona(text = "") {
   const source = String(text || "");
-  return /VGO\s*AI|工作区助手|账户信息|账单|充值|渠道|网站运营|平台功能限制|可以为您提供以下方面的帮助/.test(
+  return /VGO\s*AI|账户信息|账单|渠道|网站运营|平台功能限制|我可以为您提供以下方面的帮助/i.test(
     source
   );
 }
@@ -1262,17 +1326,20 @@ async function runRealVgoPrompt({
     }
 
     if (isRetryableUpstreamFailure(response, payload) && !upstreamFallbackModelUsed) {
-      const fallbackUpstreamModel = pickFallbackModelForUpstream(settings, usedModel);
-      if (fallbackUpstreamModel) {
-        upstreamFallbackModelUsed = true;
+      upstreamFallbackModelUsed = true;
+      const fallbackCandidates = buildFallbackModelCandidates(settings, usedModel);
+      for (const candidateModel of fallbackCandidates) {
         emitEvent(onEvent, rawEvents, {
           type: "task_status",
           status: "fallback_model",
-          message: `上游通道仍不可用，正在切换备用模型：${fallbackUpstreamModel}`
+          message: `上游通道仍不可用，正在切换备用模型：${candidateModel}`
         });
-        usedModel = fallbackUpstreamModel;
+        usedModel = candidateModel;
         ({ response, payload } = await requestWithRetry(usedModel));
         messageText = formatRemoteServiceError(settings, response, payload);
+        if (!isRetryableUpstreamFailure(response, payload)) {
+          break;
+        }
       }
     }
 
@@ -1923,7 +1990,7 @@ async function runLocalPrompt({
       !response.ok &&
       (response.status === 401 ||
         response.status === 403 ||
-        /token|api[\s_-]?key|auth|unauthor|forbidden|令牌|鉴权|验证/i.test(errorText));
+        /token|api[\s_-]?key|auth|unauthor|forbidden|浠ょ墝|閴存潈|楠岃瘉/i.test(errorText));
     let resolvedResponse = response;
     let resolvedPayload = payload;
     let resolvedText = normalizedText || text;
@@ -1994,14 +2061,14 @@ async function runLocalPrompt({
       !resolvedResponse.ok &&
       (resolvedResponse.status === 401 ||
         resolvedResponse.status === 403 ||
-        /token|api[\s_-]?key|auth|unauthor|forbidden|令牌|鉴权|验证/i.test(resolvedErrorText));
+        /token|api[\s_-]?key|auth|unauthor|forbidden|浠ょ墝|閴存潈|楠岃瘉/i.test(resolvedErrorText));
     const failureText = finalAuthFailure
       ? `Custom HTTP Provider auth failed (${endpointPlan.requestUrl}): ${resolvedErrorText}`
       : `Custom HTTP Provider request failed (${endpointPlan.requestUrl}): ${resolvedErrorText}`;
     let finalText = resolvedResponse.ok ? resolvedText : failureText;
     const localRawEvents = Array.isArray(resolvedPayload?.events) ? [...resolvedPayload.events] : [];
 
-    // 轻量 Agent 循环：本地/自定义通道若输出了工具调用标签，立即真实执行并回填结果，避免只显示 <vgo_tool_call> 文本。
+    // 杞婚噺 Agent 寰幆锛氭湰鍦?鑷畾涔夐€氶亾鑻ヨ緭鍑轰簡宸ュ叿璋冪敤鏍囩锛岀珛鍗崇湡瀹炴墽琛屽苟鍥炲～缁撴灉锛岄伩鍏嶅彧鏄剧ず <vgo_tool_call> 鏂囨湰銆?
     if (resolvedResponse.ok) {
       const assistantRawText = extractAssistantRawText(resolvedPayload);
       const toolExtractionSource = [
@@ -2147,7 +2214,6 @@ async function runLocalPrompt({
       ok: false,
       exitCode: 1,
       sessionId,
-      text: `无法连接远程引擎：${error.message}`,
       text: `Unable to reach remote provider: ${error.message}`,
       error: error.message,
       rawEvents: []
@@ -2316,12 +2382,12 @@ async function runHealthCheck(_workspace, settings) {
     return response.ok
       ? {
           ok: true,
-          title: "本地测试引擎在线",
-          details: payload.message || payload.status || `已成功连接到 ${baseUrl}`
+          title: "鏈湴娴嬭瘯寮曟搸鍦ㄧ嚎",
+          details: payload.message || payload.status || `宸叉垚鍔熻繛鎺ュ埌 ${baseUrl}`
         }
       : {
           ok: false,
-          title: "本地测试引擎异常",
+          title: "鏈湴娴嬭瘯寮曟搸寮傚父",
           details: payload?.error?.message || payload.error || payload.message || `HTTP ${response.status}`
         };
   } catch (error) {
