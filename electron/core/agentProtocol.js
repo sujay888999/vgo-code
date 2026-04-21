@@ -88,13 +88,22 @@ function parseJsonObjectBlock(text = "") {
 
   const candidates = [
     source,
-    source.replace(/<\/?[^>\n]+>/g, "").trim()
+    source.replace(/<\/?[^>\n]+>/g, "").trim(),
+    source.replace(/\\"/g, "\"").replace(/\\'/g, "'").replace(/<\/?[^>\n]+>/g, "").trim()
   ].filter(Boolean);
 
   const firstBrace = source.indexOf("{");
   const lastBrace = source.lastIndexOf("}");
   if (firstBrace >= 0 && lastBrace > firstBrace) {
     candidates.push(source.slice(firstBrace, lastBrace + 1).replace(/<\/?[^>\n]+>/g, "").trim());
+    candidates.push(
+      source
+        .slice(firstBrace, lastBrace + 1)
+        .replace(/\\"/g, "\"")
+        .replace(/\\'/g, "'")
+        .replace(/<\/?[^>\n]+>/g, "")
+        .trim()
+    );
   }
 
   for (const candidate of candidates) {
@@ -486,6 +495,8 @@ function normalizeEscapedToolMarkup(input = "") {
   let normalized = String(input || "");
   normalized = normalized.replace(/\\</g, "<");
   normalized = normalized.replace(/\\>/g, ">");
+  normalized = normalized.replace(/\\"/g, "\"");
+  normalized = normalized.replace(/\\'/g, "'");
   normalized = normalized.replace(/&lt;/gi, "<");
   normalized = normalized.replace(/&gt;/gi, ">");
   normalized = normalized.replace(/<\\+\/\s*/g, "</");

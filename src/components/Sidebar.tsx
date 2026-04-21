@@ -418,6 +418,8 @@ export function Sidebar() {
   const cloudSelectedModelId = modelCatalog.some((model) => model.id === vgoAIPreferredModel)
     ? vgoAIPreferredModel
     : defaultCloudProfile?.model || vgoAIPreferredModel
+  const activeCustomCloudProfile =
+    activeProfile && activeProfile.provider !== 'Ollama' && activeProfile.id !== 'default' ? activeProfile : null
 
   const cloudModelEntries = useMemo<CloudModelEntry[]>(() => {
     const fromDefault = modelCatalog.map((model) => ({
@@ -430,7 +432,7 @@ export function Sidebar() {
       family: detectModelFamily(model.id, model.label || model.id),
     }))
 
-    const fromCustom = manualCloudProfiles.flatMap((profile) => {
+    const fromCustom = (activeCustomCloudProfile ? [activeCustomCloudProfile] : []).flatMap((profile) => {
       const profileModels = Array.isArray(profile.modelCatalog) ? profile.modelCatalog : []
       const uniqueModels = new Map<string, { id: string; label?: string }>()
       for (const model of profileModels) {
@@ -449,8 +451,8 @@ export function Sidebar() {
       }))
     })
 
-    return [...fromCustom, ...fromDefault]
-  }, [modelCatalog, manualCloudProfiles, defaultCloudProfile?.name])
+    return activeCustomCloudProfile ? fromCustom : [...fromCustom, ...fromDefault]
+  }, [activeCustomCloudProfile, modelCatalog, manualCloudProfiles, defaultCloudProfile?.name])
 
   const filteredCloudEntries = useMemo(() => {
     const keyword = modelSearch.trim().toLowerCase()

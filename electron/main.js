@@ -14,7 +14,7 @@ const {
 } = require("./core/contextCompression");
 const { getEngine, listEngines } = require("./core/engineRegistry");
 const { analyzeWorkspace } = require("./core/workspaceTools");
-const { loadSettings, saveSettings, DEFAULT_PROFILE_ID } = require("./core/settings");
+const { loadSettings, saveSettings, DEFAULT_PROFILE_ID, buildGuestModelCatalog } = require("./core/settings");
 const { startMockServer } = require("./core/vgoMockServer");
 const { normalizeEngineLogFile } = require("./core/engineLog");
 const { listInstalledSkills, installSkillFromSource } = require("./core/localSkillDiscovery");
@@ -142,23 +142,32 @@ function normalizeModelCatalogCandidates(baseUrl = "", modelListUrl = "") {
   const normalizedModelListUrl = String(modelListUrl || "").trim().replace(/\/+$/, "");
 
   if (normalizedModelListUrl) {
-    append(normalizedModelListUrl);
-    if (/\/chat\/completions$/i.test(normalizedModelListUrl)) {
+    if (!/\/chat\/completions$/i.test(normalizedModelListUrl)) {
+      append(normalizedModelListUrl);
+    }
+    if (/\/chat\/completions$/i.test(normalizedModelListUrl) || /\/v1\/chat\/completions$/i.test(normalizedModelListUrl)) {
       append(normalizedModelListUrl.replace(/\/chat\/completions$/i, "/models"));
     }
   }
 
   if (normalizedBaseUrl) {
-    append(`${normalizedBaseUrl}/v1/models`);
-    append(`${normalizedBaseUrl}/models`);
     if (/\/chat\/completions$/i.test(normalizedBaseUrl)) {
       const parent = normalizedBaseUrl.replace(/\/chat\/completions$/i, "");
       append(`${parent}/models`);
       append(`${parent}/v1/models`);
+    } else if (/\/v1$/i.test(normalizedBaseUrl)) {
+      append(`${normalizedBaseUrl}/models`);
+    } else {
+      append(`${normalizedBaseUrl}/v1/models`);
+      append(`${normalizedBaseUrl}/models`);
     }
   }
 
   return candidates;
+}
+
+function normalizeUrlForCompare(input = "") {
+  return String(input || "").trim().replace(/\/+$/, "").toLowerCase();
 }
 
 function cleanupExpiredMapEntries() {
@@ -1414,21 +1423,31 @@ function updateRemoteProfileState(profileId, payload = {}, { activate = false } 
         : incomingApiKey;
   const nextProvider = (payload.provider || "").trim() || profile.provider || "VGO Remote";
   const nextIsOllamaProvider = String(nextProvider).toLowerCase().includes("ollama");
+  const baseUrlFromPayload = payload.baseUrl || profile.baseUrl;
+  const modelListUrlFromPayload =
+    typeof payload.modelListUrl === "string"
+      ? payload.modelListUrl
+      : profile.modelListUrl || "";
+  const ollamaUrlFromPayload = nextIsOllamaProvider ? payload.ollamaUrl || profile.ollamaUrl || "" : "";
+  const endpointChanged =
+    String(profile.provider || "") !== String(nextProvider || "") ||
+    normalizeUrlForCompare(profile.baseUrl) !== normalizeUrlForCompare(baseUrlFromPayload) ||
+    normalizeUrlForCompare(profile.modelListUrl) !== normalizeUrlForCompare(modelListUrlFromPayload) ||
+    normalizeUrlForCompare(profile.ollamaUrl) !== normalizeUrlForCompare(ollamaUrlFromPayload);
 
   const nextProfile = {
     ...profile,
     name: (payload.name || "").trim() || profile.name,
     provider: nextProvider,
-    baseUrl: payload.baseUrl || profile.baseUrl,
-    modelListUrl:
-      typeof payload.modelListUrl === "string"
-        ? payload.modelListUrl
-        : profile.modelListUrl || "",
+    baseUrl: baseUrlFromPayload,
+    modelListUrl: modelListUrlFromPayload,
     modelCatalog:
       Array.isArray(payload.modelCatalog)
         ? payload.modelCatalog
-        : profile.modelCatalog || [],
-    ollamaUrl: nextIsOllamaProvider ? payload.ollamaUrl || profile.ollamaUrl || "" : "",
+        : endpointChanged
+          ? []
+          : profile.modelCatalog || [],
+    ollamaUrl: ollamaUrlFromPayload,
     model: normalizeExternalModelId(payload.model || profile.model),
     apiKey: nextApiKey,
     systemPrompt:
@@ -2206,8 +2225,7 @@ async function syncVgoAiModels() {
     return serializeState();
   }
 
-  const baseUrl = mockServerInfo.baseUrl || settings.remote.baseUrl;
-  const modelCatalog = await fetchModelCatalog(baseUrl);
+  const modelCatalog = buildGuestModelCatalog();
   saveAllSettings({
     ...settings,
     vgoAI: {

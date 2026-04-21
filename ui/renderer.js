@@ -756,29 +756,37 @@ function renderEngines(state) {
   }
 }
 function renderModelCatalog(state) {
-    const vgoCatalog = getCatalog(state);
-    const remoteProfiles = state?.settings?.remoteProfiles || [];
-    const defaultCatalog = [
-      { id: "vgo-coder-pro", label: "VGO AI Pro" },
-      { id: "vgo-coder-fast", label: "VGO AI Fast" },
-      { id: "vgo-architect-max", label: "VGO Architect Max" }
-    ];
-    const customModels = remoteProfiles.map(p => ({
-      id: p.model,
-      label: p.name ? p.name + " (" + p.model + ")" : p.model,
-      isCustom: true
-    }));
-    const source = vgoCatalog.length ? [...vgoCatalog, ...customModels] : [...defaultCatalog, ...customModels];
-    const current = getActiveConfiguredModelId(state) || source[0]?.id;
+  const vgoCatalog = getCatalog(state);
+  const defaultCatalog = [
+    { id: "vgo-coder-pro", label: "VGO AI Pro" },
+    { id: "vgo-coder-fast", label: "VGO AI Fast" },
+    { id: "vgo-architect-max", label: "VGO Architect Max" }
+  ];
+  const source = vgoCatalog.length ? [...vgoCatalog] : [...defaultCatalog];
+  const current = getActiveConfiguredModelId(state) || source[0]?.id;
 
-    vgoAiModelSelect.innerHTML = "";
-    for (const item of source) {
-      const option = document.createElement("option");
-      option.value = item.id;
-      option.textContent = item.label || item.id;
-      option.selected = item.id === current;
-      vgoAiModelSelect.appendChild(option);
-    }
+  vgoAiModelSelect.innerHTML = "";
+  for (const item of source) {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.label || item.id;
+    option.selected = item.id === current;
+    vgoAiModelSelect.appendChild(option);
+  }
+}
+
+function renderRemoteProfiles(state) {
+  const settings = state?.settings || {};
+  const profiles = settings.remoteProfiles || [];
+  const activeId = settings.activeRemoteProfileId;
+
+  remoteProfileSelect.innerHTML = "";
+  for (const profile of profiles) {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = `${profile.name} | ${profile.provider}`;
+    option.selected = profile.id === activeId;
+    remoteProfileSelect.appendChild(option);
   }
 
   const active = profiles.find((item) => item.id === activeId) || profiles[0];
@@ -1135,10 +1143,6 @@ async function sendPrompt(promptOverride = "") {
     const result = await window.vgoDesktop.sendPrompt(finalPrompt);
     pending.remove();
 
-    for (const event of result.rawEvents || []) {
-      handleAgentEvent(event);
-    }
-
     if (result.ok) {
       await streamAssistantMessage(result.text || "已完成，但没有返回文本。");
       setStatus(buildRuntimeMetaText(result) || "响应完成");
@@ -1161,10 +1165,6 @@ async function sendPrompt(promptOverride = "") {
     attachments = [];
     renderAttachments();
     await refreshState();
-    finalizeTaskPanel(
-      result.ok ? "completed" : "failed",
-      result.ok ? "本轮任务已完成，结果已写入对话区。" : result.text || result.error || "任务执行失败，未返回更多信息。"
-    );
     scrollMessagesToBottom();
     scrollTaskPanelToBottom();
   } catch (error) {

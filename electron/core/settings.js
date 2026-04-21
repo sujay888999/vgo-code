@@ -42,7 +42,16 @@ function normalizeModelCatalog(catalog, { isLoggedIn = false } = {}) {
     })
     .filter(Boolean);
 
-  if (!isLoggedIn && normalized.length === 0) {
+  if (!isLoggedIn) {
+    const guestOnly = normalized
+      .filter((item) => Object.prototype.hasOwnProperty.call(GUEST_MODEL_LABELS, item.id))
+      .map((item) => ({
+        ...item,
+        label: GUEST_MODEL_LABELS[item.id] || item.label || item.id
+      }));
+    if (guestOnly.length) {
+      return guestOnly;
+    }
     return buildGuestModelCatalog();
   }
   return normalized;
@@ -285,6 +294,7 @@ function saveSettings(settings) {
 module.exports = {
   DEFAULT_SETTINGS,
   DEFAULT_PROFILE_ID,
+  buildGuestModelCatalog,
   loadSettings,
   saveSettings
 };
