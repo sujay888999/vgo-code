@@ -192,15 +192,9 @@ export function App() {
     compactMode,
     uiMode,
   } = useAppStore()
-  const { locale: i18nLocale } = useI18n()
-  const [localeKey, setLocaleKey] = useState(0)
   const [updateNotificationOpen, setUpdateNotificationOpen] = useState(false)
   const seenEventIdsRef = useRef<Map<string, number>>(new Map())
   const lastEventSeqRef = useRef<Map<string, number>>(new Map())
-  
-  useEffect(() => {
-    setLocaleKey(k => k + 1)
-  }, [i18nLocale])
 
   useEffect(() => {
     seenEventIdsRef.current.clear()
@@ -666,10 +660,10 @@ export function App() {
 
   return (
     <div className="layout">
-      <Sidebar key={`sidebar-${localeKey}`} />
-      <MainPanel key={`mainpanel-${localeKey}`} />
-      {settingsOverlayOpen && <SettingsModal key={`settings-${localeKey}`} />}
-      {renameOverlayOpen && <RenameModal key={`rename-${localeKey}`} />}
+      <Sidebar />
+      <MainPanel />
+      {settingsOverlayOpen && <SettingsModal />}
+      {renameOverlayOpen && <RenameModal />}
       {updateNotificationOpen && (
         <UpdateNotification onClose={() => setUpdateNotificationOpen(false)} />
       )}
