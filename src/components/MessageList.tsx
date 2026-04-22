@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 import type { Message } from '../store/appStore'
 import { useI18n } from '../i18n'
 import {
@@ -50,41 +51,18 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
   const isAssistant = message.role === 'assistant'
   const isLoading = message.status === 'loading'
   const isProgressMessage = message.kind === 'progress'
-  const [displayedText, setDisplayedText] = useState('')
-  const [isStreaming, setIsStreaming] = useState(false)
+  const isFinalMessage = message.kind === 'final'
   const [isCollapsed, setIsCollapsed] = useState(
     message.collapsed ?? (isProgressMessage && !isLoading),
   )
-
-  useEffect(() => {
-    if (isLoading) {
-      setDisplayedText(message.text || '')
-      setIsStreaming(true)
-      return
-    }
-
-    setDisplayedText(message.text || '')
-    setIsStreaming(false)
-  }, [isLoading, message.text])
+  const displayedText = message.text || ''
+  const isStreaming = isLoading
+  const isProgressExpanded = isProgressMessage && !isLoading && !isCollapsed
+  const isProgressCollapsed = isProgressMessage && !isLoading && isCollapsed
 
   useEffect(() => {
     setIsCollapsed(message.collapsed ?? (isProgressMessage && !isLoading))
   }, [message.collapsed, message.id, isProgressMessage, isLoading])
-
-  useEffect(() => {
-    if (isLoading || !isStreaming || !message.text || displayedText === message.text) return
-
-    const timeout = window.setTimeout(() => {
-      setDisplayedText((prev) => {
-        if (prev.length < message.text.length) {
-          return message.text.slice(0, prev.length + 3)
-        }
-        return prev
-      })
-    }, 24)
-
-    return () => window.clearTimeout(timeout)
-  }, [isStreaming, displayedText, message.text, isLoading])
 
   const formatTime = (timestamp: number) =>
     new Date(timestamp).toLocaleTimeString('zh-CN', {
@@ -97,7 +75,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
-    return lines[lines.length - 1] || t('message.clickToExpand')
+    return lines[0] || t('message.clickToExpand')
   })()
 
   const renderContent = () => {
@@ -148,21 +126,27 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
   }
 
   return (
-    <div className={`message-item ${message.role} ${message.status || ''} ${isProgressMessage ? 'progress-message' : ''}`}>
+    <div
+      className={`message-item ${message.role} ${message.status || ''} ${isProgressMessage ? 'progress-message' : ''} ${isFinalMessage ? 'final-message' : ''} ${isProgressExpanded ? 'progress-expanded' : ''} ${isProgressCollapsed ? 'progress-collapsed' : ''}`}
+    >
       <div className="message-avatar">
         {isUser ? <User size={18} /> : <Bot size={18} />}
       </div>
 
       <div className="message-body">
         <div className="message-meta">
-          <span className="message-role">{isUser ? t('message.roleUser') : isProgressMessage ? t('message.roleProgress') : t('message.roleAssistant')}</span>
+          {(isUser || isProgressMessage) && (
+            <span className="message-role">
+              {isUser ? t('message.roleUser') : t('message.reasoning')}
+            </span>
+          )}
           <span className="message-time">
             <Clock size={12} />
             {formatTime(message.timestamp)}
           </span>
         </div>
 
-        <div className="message-bubble">
+        <div className={`message-bubble ${isProgressExpanded ? 'progress-bubble-expanded' : ''}`}>
           {renderContent()}
           {message.status === 'error' && (
             <div className="message-error">
@@ -189,8 +173,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
 }
 
 function StreamingContent({ text, isStreaming }: { text: string; isStreaming: boolean }) {
-  const parts = parseMarkdownWithCode(text)
-  const hasCode = parts.some((part) => part.type === 'code')
+  const hasCode = /```/.test(text)
   const [syntaxHighlighter, setSyntaxHighlighter] = useState<SyntaxModule['default'] | null>(null)
   const [syntaxStyle, setSyntaxStyle] = useState<SyntaxStyleModule['oneDark'] | null>(null)
 
@@ -264,109 +247,58 @@ function StreamingContent({ text, isStreaming }: { text: string; isStreaming: bo
 
   return (
     <div className={`message-content markdown-content${isStreaming ? ' streaming' : ''}`}>
-      {parts.map((part, index) => {
-        if (part.type === 'code') {
-          if (!syntaxHighlighter || !syntaxStyle) {
+      <ReactMarkdown
+        components={{
+          code({ className, children, ...props }) {
+            const rawContent = String(children ?? '').replace(/\n$/, '')
+            const langMatch = /language-([\w-]+)/.exec(className || '')
+            const isBlock = Boolean(langMatch) || rawContent.includes('\n')
+
+            if (!isBlock) {
+              return (
+                <code className={className} {...props}>
+                  {children}
+                </code>
+              )
+            }
+
+            if (!syntaxHighlighter || !syntaxStyle) {
+              return (
+                <pre className="code-block code-block-fallback">
+                  <code>{rawContent}</code>
+                </pre>
+              )
+            }
+
+            const SyntaxHighlighter = syntaxHighlighter
             return (
-              <pre key={index} className="code-block code-block-fallback">
-                <code>{part.content}</code>
-              </pre>
+              <div className="code-block">
+                <SyntaxHighlighter
+                  language={langMatch?.[1] || 'text'}
+                  style={syntaxStyle}
+                  customStyle={{
+                    margin: '0.5rem 0',
+                    borderRadius: '8px',
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  {rawContent}
+                </SyntaxHighlighter>
+              </div>
             )
-          }
-
-          const SyntaxHighlighter = syntaxHighlighter
-          return (
-            <div key={index} className="code-block">
-              <SyntaxHighlighter
-                language={part.language || 'text'}
-                style={syntaxStyle}
-                customStyle={{
-                  margin: '0.5rem 0',
-                  borderRadius: '8px',
-                  fontSize: '0.85rem',
-                }}
-              >
-                {part.content}
-              </SyntaxHighlighter>
-            </div>
-          )
-        }
-
-        return (
-          <div
-            key={index}
-            dangerouslySetInnerHTML={{ __html: formatInlineMarkdown(part.content) }}
-          />
-        )
-      })}
+          },
+          a({ href, children, ...props }) {
+            return (
+              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                {children}
+              </a>
+            )
+          },
+        }}
+      >
+        {text}
+      </ReactMarkdown>
       {isStreaming && <span className="cursor-blink">|</span>}
     </div>
   )
-}
-
-function parseMarkdownWithCode(text: string) {
-  const parts: Array<{ type: 'text' | 'code'; content: string; language?: string }> = []
-  const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g
-
-  let lastIndex = 0
-  let match: RegExpExecArray | null
-
-  while ((match = codeBlockRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push({ type: 'text', content: text.slice(lastIndex, match.index) })
-    }
-
-    parts.push({
-      type: 'code',
-      language: match[1] || 'text',
-      content: match[2].trim(),
-    })
-
-    lastIndex = match.index + match[0].length
-  }
-
-  if (lastIndex < text.length) {
-    parts.push({ type: 'text', content: text.slice(lastIndex) })
-  }
-
-  return parts.length > 0 ? parts : [{ type: 'text', content: text }]
-}
-
-function formatInlineMarkdown(text: string): string {
-  const escapeHtmlAttr = (value: string) =>
-    String(value || '')
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-
-  const sanitizeHref = (href: string) => {
-    const normalized = String(href || '').trim().replace(/[\u0000-\u001F\u007F\s]+/g, '')
-    if (!normalized) return '#'
-    if (/^(javascript|data|vbscript|file):/i.test(normalized)) return '#'
-    if (/^(https?:|mailto:|tel:)/i.test(normalized)) return normalized
-    return '#'
-  }
-
-  let html = text
-
-  html = html.replace(/&/g, '&amp;')
-  html = html.replace(/</g, '&lt;')
-  html = html.replace(/>/g, '&gt;')
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
-  html = html.replace(/^### (.*$)/gm, '<h3>$1</h3>')
-  html = html.replace(/^## (.*$)/gm, '<h2>$1</h2>')
-  html = html.replace(/^# (.*$)/gm, '<h1>$1</h1>')
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>')
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, href: string) => {
-    const safeHref = escapeHtmlAttr(sanitizeHref(href))
-    return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${label}</a>`
-  })
-  html = html.replace(/^\- (.*$)/gm, '<li>$1</li>')
-  html = html.replace(/^\d+\. (.*$)/gm, '<li>$1</li>')
-  html = html.replace(/\n/g, '<br>')
-
-  return html
 }

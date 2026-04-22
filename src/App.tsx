@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useI18n, setI18nLocale } from './i18n'
 import { useAppStore } from './store/appStore'
 import { Sidebar } from './components/Sidebar'
@@ -183,10 +183,17 @@ export function App() {
   const { locale: i18nLocale } = useI18n()
   const [localeKey, setLocaleKey] = useState(0)
   const [updateNotificationOpen, setUpdateNotificationOpen] = useState(false)
+  const seenEventIdsRef = useRef<Map<string, number>>(new Map())
+  const lastEventSeqRef = useRef<Map<string, number>>(new Map())
   
   useEffect(() => {
     setLocaleKey(k => k + 1)
   }, [i18nLocale])
+
+  useEffect(() => {
+    seenEventIdsRef.current.clear()
+    lastEventSeqRef.current.clear()
+  }, [activeSessionId])
 
   useEffect(() => {
     const handleUpdateAvailable = () => {
@@ -226,11 +233,43 @@ export function App() {
     const handleAgentEvent = (e: Event) => {
       const { t } = useI18n.getState()
       const payload = normalizeEventPayload((e as CustomEvent).detail || {})
+      const payloadSessionId = String(payload.sessionId || '').trim()
+      if (payloadSessionId && activeSessionId && payloadSessionId !== activeSessionId) {
+        return
+      }
+
       const eventType = payload.type || payload.event
       const status = payload.status
       const timestamp = Date.now()
-      const liveMessageId = buildLiveMessageId(payload.sessionId || activeSessionId || undefined)
-      const finalMessageId = buildFinalMessageId(payload.sessionId || activeSessionId || undefined)
+      const eventSessionId = payloadSessionId || activeSessionId || 'active'
+      const liveMessageId = buildLiveMessageId(eventSessionId || undefined)
+      const finalMessageId = buildFinalMessageId(eventSessionId || undefined)
+      const eventSeq = Number(payload.eventSeq || 0)
+      const lastSeq = lastEventSeqRef.current.get(eventSessionId) || 0
+      if (eventSeq > 0 && eventSeq <= lastSeq) {
+        return
+      }
+      if (eventSeq > 0) {
+        lastEventSeqRef.current.set(eventSessionId, eventSeq)
+      }
+
+      const eventId =
+        String(payload.eventId || '').trim() ||
+        `${eventSessionId}:${eventSeq || 0}:${eventType || 'unknown'}:${payload.requestId || ''}:${payload.tool || ''}:${status || ''}:${payload.message || payload.detail || ''}`
+      if (seenEventIdsRef.current.has(eventId)) {
+        return
+      }
+      seenEventIdsRef.current.set(eventId, timestamp)
+      if (seenEventIdsRef.current.size > 600) {
+        const sorted = [...seenEventIdsRef.current.entries()].sort((a, b) => a[1] - b[1])
+        const overflow = seenEventIdsRef.current.size - 500
+        for (let index = 0; index < overflow; index += 1) {
+          const key = sorted[index]?.[0]
+          if (key) {
+            seenEventIdsRef.current.delete(key)
+          }
+        }
+      }
 
       const upsertLiveMessage = (text: string, nextStatus: 'loading' | 'done' | 'error' = 'loading') => {
         if (!text.trim()) return
@@ -304,6 +343,20 @@ export function App() {
           kind: 'progress',
           title: t('message.reasoning'),
           collapsed: true,
+        })
+      }
+
+      const settleFinalMessage = (nextStatus: 'done' | 'error' | 'loading') => {
+        const existing = useAppStore
+          .getState()
+          .messages.find((message) => message.id === finalMessageId)
+        if (!existing) return
+
+        updateMessage(finalMessageId, {
+          status: nextStatus,
+          timestamp,
+          kind: 'final',
+          title: t('message.finalResult'),
         })
       }
 
@@ -433,14 +486,12 @@ export function App() {
 
       if (eventType === 'permission_requested') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
-        addTaskStep({
-          id: payload.requestId || `perm-${timestamp}`,
+        upsertTaskStep(payload.requestId || `perm-${eventId}`, {
           requestId: payload.requestId,
           tool: payload.tool || 'unknown_tool',
-          title: `${t('permission.request')} · ${payload.tool || t('permission.unknown')}`,
+          title: `${t('permission.request')}: ${payload.tool || t('permission.unknown')}`,
           detail: payload.detail || '',
           state: 'permission_requested',
-          timestamp,
         })
       }
 
@@ -454,6 +505,8 @@ export function App() {
 
       if (eventType === 'permission_denied' && payload.requestId) {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'error')
+        settleTaskSteps('error')
+        setPromptRunning(false)
         updateTaskStep(payload.requestId, {
           state: 'permission_denied',
           detail: payload.detail || t('permission.denied'),
@@ -472,7 +525,7 @@ export function App() {
       if (eventType === 'workflow_selected') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         upsertTaskStep('task-workflow', {
-          title: payload.label ? `${t('agentTrace.workflow')} · ${payload.label}` : t('task.workflowSwitched'),
+          title: payload.label ? `${t('agentTrace.workflow')}: ${payload.label}` : t('task.workflowSwitched'),
           detail: payload.detail || '',
           state: 'planning',
         })
@@ -503,22 +556,34 @@ export function App() {
           title: t('agentTrace.skillSuggestion'),
           detail:
             payload.detail ||
-            skills.map((skill) => `${skill.name} · ${skill.path}`).join('\n') ||
+            skills.map((skill) => `${skill.name}: ${skill.path}`).join('\n') ||
             t('agentTrace.noMatchingSkill'),
           state: skills.length ? 'completed' : 'error',
         })
       }
 
-      if (eventType === 'model_response' && payload.text) {
+      if (eventType === 'model_response') {
         settleLiveMessage('done')
-        upsertFinalMessage(payload.text, 'done')
-      }
-
-      if (eventType === 'model_stream_delta' && payload.text) {
-        if (payload.done) {
-          settleLiveMessage('done')
+        if (payload.text) {
           upsertFinalMessage(payload.text, 'done')
         } else {
+          settleFinalMessage('done')
+        }
+        settleTaskSteps('completed')
+        setPromptRunning(false)
+      }
+
+      if (eventType === 'model_stream_delta') {
+        if (payload.done) {
+          settleLiveMessage('done')
+          if (payload.text) {
+            upsertFinalMessage(payload.text, 'done')
+          } else {
+            settleFinalMessage('done')
+          }
+          settleTaskSteps('completed')
+          setPromptRunning(false)
+        } else if (payload.text) {
           setPromptRunning(true)
           upsertFinalMessage(payload.text, 'loading')
         }
@@ -526,8 +591,9 @@ export function App() {
 
       if (eventType === 'tool_result') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
+        setPromptRunning(true)
         addTaskStep({
-          id: `tool-result-${timestamp}`,
+          id: `tool-result-${eventId}`,
           title: `${payload.tool || t('agentTrace.tool')} ${t('agentTrace.result')}`,
           detail: payload.summary || payload.output || '',
           state: payload.ok ? 'completed' : 'error',
@@ -537,7 +603,7 @@ export function App() {
 
       if (eventType === 'verification') {
         addTaskStep({
-          id: `verify-${timestamp}`,
+          id: `verify-${eventId}`,
           title: payload.detail || t('agentTrace.verification'),
           detail: '',
           state: payload.status === 'passed' ? 'completed' : 'working',

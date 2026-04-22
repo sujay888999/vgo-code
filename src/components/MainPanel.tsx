@@ -231,17 +231,18 @@ export function MainPanel() {
 
           {messages.length === 0 && (
             <div className="welcome-messages">
-              <div className="welcome-card">
-                <h3>欢迎使用 VGO CODE</h3>
-                <p>我可以帮你推进这些工作：</p>
-                <ul>
-                  <li>分析和编写代码</li>
-                  <li>重构和优化现有实现</li>
-                  <li>排查错误与稳定性问题</li>
-                  <li>解释项目结构和关键逻辑</li>
-                  <li>生成测试、脚本和说明文档</li>
-                </ul>
-                <p className="tip">输入一个任务，或使用下方输入框快速开始。</p>
+              <div className="welcome-card welcome-card-conversation">
+                <p className="welcome-kicker">VGO CODE</p>
+                <h3>今天我们一起先做哪件事？</h3>
+                <p className="welcome-lead">
+                  直接用自然语言描述目标就行，我会拆解步骤并持续推进。
+                </p>
+                <div className="welcome-chips" aria-hidden="true">
+                  <span className="welcome-chip">阅读并解释当前项目结构</span>
+                  <span className="welcome-chip">定位一个顽固报错并修复</span>
+                  <span className="welcome-chip">重构一段核心模块并补测试</span>
+                </div>
+                <p className="tip">在下方输入框直接开工，不需要按模板提问。</p>
               </div>
             </div>
           )}

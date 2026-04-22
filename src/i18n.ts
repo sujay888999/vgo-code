@@ -525,11 +525,33 @@ interface I18nStore {
   t: (key: string, params?: Record<string, string | number>) => string
 }
 
+function looksLikeMojibake(text: string) {
+  const sample = String(text || '')
+  if (!sample) return false
+  const weirdMatches = sample.match(/[濞达綁骞嬮悹鍥棘閸ワ附顐界€瑰憡褰冨顒勫嫉椤忓懏顦ч柛鎺楁⒒椤旇棄鐏塢]/g) || []
+  return weirdMatches.length >= 3
+}
+
+function tryRecoverMojibakeText(text: string) {
+  const source = String(text || '')
+  if (!source || !looksLikeMojibake(source)) return source
+  try {
+    const bytes = Uint8Array.from(Array.from(source).map((char) => char.charCodeAt(0) & 0xff))
+    const recovered = new TextDecoder('utf-8').decode(bytes)
+    if (recovered && !looksLikeMojibake(recovered)) {
+      return recovered
+    }
+  } catch {
+    // noop
+  }
+  return source
+}
+
 function translateText(text: string, locale: Locale): string {
   const translated = translations[locale][text]
-  if (translated !== undefined) return translated
+  if (translated !== undefined) return tryRecoverMojibakeText(translated)
   const zhText = translations['zh-CN'][text]
-  return zhText !== undefined ? zhText : text
+  return zhText !== undefined ? tryRecoverMojibakeText(zhText) : text
 }
 
 export const useI18n = create<I18nStore>((set, get) => ({
@@ -546,7 +568,7 @@ export const useI18n = create<I18nStore>((set, get) => ({
         text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v))
       })
     }
-    return text
+    return tryRecoverMojibakeText(text)
   },
 }))
 

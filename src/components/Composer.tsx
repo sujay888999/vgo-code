@@ -447,9 +447,10 @@ export function Composer() {
 
       <div className="composer-hint">
         <span>Shift + Enter {t('composer.newLine')}</span>
-        <span>·</span>
+        <span>|</span>
         <span>{t('composer.enterToSend')}</span>
       </div>
     </div>
   )
 }
+

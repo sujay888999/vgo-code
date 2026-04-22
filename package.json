@@ -14,6 +14,7 @@
     "dist": "npm run build:web && electron-builder --win nsis",
     "plan:next": "node ./scripts/auto-plan.js",
     "audit:brand": "node ./scripts/brand-audit.js",
+    "sync:nvidia-free-models": "node ./scripts/sync-nvidia-free-models.js",
     "test:release-smoke": "node ./scripts/release-smoke.js",
     "verify:release": "powershell -ExecutionPolicy Bypass -File ./scripts/release-check.ps1",
     "release:single": "powershell -ExecutionPolicy Bypass -File ./scripts/publish-single-version-release.ps1"

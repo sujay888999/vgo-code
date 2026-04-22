@@ -45,6 +45,7 @@ let mockServerInfo = {
 let lastDetectedUpdate = null;
 const AUTH_PARTITION = "persist:vgo-auth";
 let tray = null;
+const sessionEventCounters = new Map();
 const MAIN_LOG_DIR = path.join(process.cwd(), "logs");
 const MAIN_LOG_FILE = path.join(MAIN_LOG_DIR, "main-process.log");
 
@@ -515,9 +516,27 @@ function applyRuntimeForProfile(profile = {}) {
 }
 
 function sendAgentEvent(payload = {}) {
+  const sessionId = String(payload?.sessionId || "global");
+  const previousSeq = Number(sessionEventCounters.get(sessionId) || 0);
+  const requestedSeq = Number(payload?.eventSeq || 0);
+  const nextSeq = requestedSeq > 0 ? Math.max(previousSeq, requestedSeq) : previousSeq + 1;
+  sessionEventCounters.set(sessionId, nextSeq);
+
+  const eventType = String(payload?.type || payload?.event || "unknown");
+  const eventAt = Number(payload?.eventAt) > 0 ? Number(payload.eventAt) : Date.now();
+  const eventId =
+    String(payload?.eventId || "").trim() || `${sessionId}:${nextSeq}:${eventType}:${eventAt}`;
+  const normalizedPayload = {
+    ...payload,
+    sessionId,
+    eventSeq: nextSeq,
+    eventAt,
+    eventId
+  };
+
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
-      win.webContents.send("agent:event", payload);
+      win.webContents.send("agent:event", normalizedPayload);
     }
   }
 }
@@ -3031,9 +3050,10 @@ app.whenReady().then(async () => {
     
     // Send event to update UI
     sendAgentEvent({
+      sessionId: store.getState().activeSessionId || "global",
       type: "task_status",
       status: "completed",
-      message: "工作区分析完成"
+      message: "Workspace analysis completed."
     });
     
     // Refresh state
