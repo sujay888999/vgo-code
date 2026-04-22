@@ -17,7 +17,8 @@
     "sync:nvidia-free-models": "node ./scripts/sync-nvidia-free-models.js",
     "test:release-smoke": "node ./scripts/release-smoke.js",
     "verify:release": "powershell -ExecutionPolicy Bypass -File ./scripts/release-check.ps1",
-    "release:single": "powershell -ExecutionPolicy Bypass -File ./scripts/publish-single-version-release.ps1"
+    "release:single": "powershell -ExecutionPolicy Bypass -File ./scripts/publish-single-version-release.ps1 -LocalOnly",
+    "release:remote": "powershell -ExecutionPolicy Bypass -File ./scripts/publish-single-version-release.ps1"
   },
   "build": {
     "appId": "com.vgo.code",

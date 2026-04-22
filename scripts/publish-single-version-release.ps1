@@ -3,6 +3,8 @@ param(
   [string]$ReleaseNotes = "",
   [string]$DistDir = "E:\VGO-CODE\dist",
   [string]$WebDownloadDir = "",
+  [string]$DownloadBaseUrl = "https://vgoai.cn/downloads/vgo-code",
+  [switch]$LocalOnly,
   [string]$ServerHost = "139.180.213.100",
   [string]$ServerUser = "root",
   [string]$SshKeyPath = "C:\Users\one\.ssh\id_ed25519_vgo_ai",
@@ -52,8 +54,10 @@ function Resolve-WebDownloadDir {
   throw "Unable to resolve WebDownloadDir. Pass -WebDownloadDir explicitly."
 }
 
-Assert-CommandExists ssh
-Assert-CommandExists scp
+if (-not $LocalOnly) {
+  Assert-CommandExists ssh
+  Assert-CommandExists scp
+}
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
   $Version = Get-PackageVersion -PackagePath "E:\VGO-CODE\package.json"
@@ -105,8 +109,8 @@ if ($normalizedLatestYmlText -ne $latestYmlText) {
 $versionPayload = [ordered]@{
   version = $Version
   tag = "v$Version"
-  download_url = "https://vgoai.cn/downloads/vgo-code/$installerName"
-  downloadUrl = "https://vgoai.cn/downloads/vgo-code/$installerName"
+  download_url = "$DownloadBaseUrl/$installerName"
+  downloadUrl = "$DownloadBaseUrl/$installerName"
   release_notes = $ReleaseNotes
   published_at = $publishedAt
 }
@@ -119,6 +123,18 @@ Copy-Item $blockMapPath $webBlockMapPath -Force
 Copy-Item $latestYmlPath $webLatestYmlPath -Force
 
 Write-Host "[publish] Local web directory synced: $WebDownloadDir"
+
+if ($LocalOnly) {
+  Assert-FileExists $versionJsonPath
+  Assert-FileExists $webLatestYmlPath
+  Assert-FileExists $webInstallerPath
+  Write-Host "[publish] Local-only mode enabled. Remote upload skipped."
+  Write-Host "[publish] Done."
+  Write-Host "[publish] version.json: $versionJsonPath"
+  Write-Host "[publish] latest.yml: $webLatestYmlPath"
+  Write-Host "[publish] installer: $webInstallerPath"
+  return
+}
 
 $remoteTarget = "${ServerUser}@${ServerHost}:${RemoteDownloadDir}/"
 scp -i $SshKeyPath $webInstallerPath $remoteTarget | Out-Null
@@ -139,9 +155,9 @@ ls -lah
 
 ssh -i $SshKeyPath "${ServerUser}@${ServerHost}" $remoteScript
 
-$versionJsonUrl = "https://vgoai.cn/downloads/vgo-code/version.json"
-$latestYmlUrl = "https://vgoai.cn/downloads/vgo-code/latest.yml"
-$installerUrl = "https://vgoai.cn/downloads/vgo-code/$installerName"
+$versionJsonUrl = "$DownloadBaseUrl/version.json"
+$latestYmlUrl = "$DownloadBaseUrl/latest.yml"
+$installerUrl = "$DownloadBaseUrl/$installerName"
 
 $versionJsonResult = Invoke-WebRequest -Uri $versionJsonUrl -UseBasicParsing
 $latestYmlResult = Invoke-WebRequest -Uri $latestYmlUrl -UseBasicParsing
