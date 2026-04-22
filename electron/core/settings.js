@@ -57,6 +57,34 @@ function normalizeModelCatalog(catalog, { isLoggedIn = false } = {}) {
   return normalized;
 }
 
+function dedupeModelCatalog(catalog) {
+  const items = Array.isArray(catalog) ? catalog : [];
+  const unique = new Map();
+  for (const item of items) {
+    const id = String(item?.id || "").trim();
+    if (!id || unique.has(id)) continue;
+    unique.set(id, {
+      id,
+      label: String(item?.label || item?.name || id).trim() || id,
+      description: String(item?.description || ""),
+      contextWindow: Number(item?.contextWindow || item?.contextTokens || item?.maxContextTokens || 0)
+    });
+  }
+  return [...unique.values()];
+}
+
+function isVgoManagedCloudProfile(profile = {}) {
+  const provider = String(profile.provider || "").toLowerCase();
+  if (provider.includes("ollama")) return false;
+  const id = String(profile.id || "");
+  const baseUrl = String(profile.baseUrl || "");
+  return (
+    id === DEFAULT_PROFILE_ID ||
+    /127\.0\.0\.1:3210/i.test(baseUrl) ||
+    /(^|\.)vgoai\.cn/i.test(baseUrl)
+  );
+}
+
 const DEFAULT_SETTINGS = {
   permissions: {
     mode: "default"
@@ -236,6 +264,24 @@ function loadSettings() {
     const raw = fs.readFileSync(file, "utf8");
     const parsed = JSON.parse(raw);
     const normalized = normalizeProfiles(parsed);
+    const hasAccessToken = Boolean(String(parsed?.vgoAI?.accessToken || "").trim());
+    const isLoggedIn = Boolean(parsed?.vgoAI?.loggedIn && hasAccessToken);
+    const normalizedVgoCatalog = normalizeModelCatalog(parsed.vgoAI?.modelCatalog, {
+      isLoggedIn
+    });
+    const normalizedProfiles = (normalized.profiles || []).map((profile) => {
+      const currentCatalog = dedupeModelCatalog(profile.modelCatalog);
+      if (!isLoggedIn && isVgoManagedCloudProfile(profile)) {
+        return {
+          ...profile,
+          modelCatalog: []
+        };
+      }
+      return {
+        ...profile,
+        modelCatalog: currentCatalog
+      };
+    });
 
     return {
       permissions: {
@@ -270,14 +316,13 @@ function loadSettings() {
           : DEFAULT_SETTINGS.skills.disabled
       },
       remote: normalized.remote,
-      remoteProfiles: normalized.profiles,
+      remoteProfiles: normalizedProfiles,
       activeRemoteProfileId: normalized.activeRemoteProfileId,
       vgoAI: {
         ...DEFAULT_SETTINGS.vgoAI,
         ...(parsed.vgoAI || {}),
-        modelCatalog: normalizeModelCatalog(parsed.vgoAI?.modelCatalog, {
-          isLoggedIn: Boolean(parsed.vgoAI?.loggedIn)
-        })
+        loggedIn: isLoggedIn,
+        modelCatalog: normalizedVgoCatalog
       }
     };
   } catch {

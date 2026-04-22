@@ -1944,17 +1944,58 @@ function savePreferredModelIfChanged(modelId) {
   saveAllSettings(nextSettings);
 }
 
+function isVgoManagedCloudProfile(profile = {}) {
+  const provider = String(profile.provider || "").toLowerCase();
+  if (provider.includes("ollama")) return false;
+  const profileId = String(profile.id || "");
+  const baseUrl = String(profile.baseUrl || "");
+  return (
+    profileId === DEFAULT_PROFILE_ID ||
+    /127\.0\.0\.1:3210/i.test(baseUrl) ||
+    /(^|\.)vgoai\.cn/i.test(baseUrl)
+  );
+}
+
 function clearRealVgoAiSession() {
+  const guestCatalog = buildGuestModelCatalog();
+  const clearedProfiles = (settings.remoteProfiles || []).map((profile) =>
+    isVgoManagedCloudProfile(profile)
+      ? {
+          ...profile,
+          modelCatalog: [],
+          model: profile.id === DEFAULT_PROFILE_ID ? "vgo-coder-pro" : profile.model
+        }
+      : profile
+  );
+  const activeProfile =
+    clearedProfiles.find((item) => item.id === settings.activeRemoteProfileId) || clearedProfiles[0] || null;
+  const activeProfileIsRemote = activeProfile && resolveEngineIdForProfile(activeProfile) !== "ollama";
+
   saveAllSettings({
     ...settings,
+    remoteProfiles: clearedProfiles,
+    remote: activeProfileIsRemote
+      ? {
+          ...settings.remote,
+          provider: activeProfile.provider || settings.remote.provider,
+          baseUrl: activeProfile.baseUrl || settings.remote.baseUrl,
+          modelListUrl: activeProfile.modelListUrl || settings.remote.modelListUrl || "",
+          ollamaUrl: activeProfile.ollamaUrl || settings.remote.ollamaUrl || "",
+          model: activeProfile.model || "vgo-coder-pro",
+          apiKey: activeProfile.apiKey,
+          systemPrompt: activeProfile.systemPrompt
+        }
+      : settings.remote,
     vgoAI: {
       ...settings.vgoAI,
       loggedIn: false,
       email: "",
       displayName: "Guest",
       accessToken: "",
+      preferredModel: "vgo-coder-pro",
       linkedAt: "",
-      profile: null
+      profile: null,
+      modelCatalog: guestCatalog
     }
   });
 }
