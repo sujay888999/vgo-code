@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
   setEngine: (engineId) => ipcRenderer.invoke("runtime:setEngine", engineId),
   installWhisper: () => ipcRenderer.invoke("runtime:installWhisper"),
   installSkill: (payload) => ipcRenderer.invoke("runtime:installSkill", payload),
+  reportRendererError: (payload) => ipcRenderer.send("renderer:error", payload || {}),
   
   // Update
   checkForUpdates: (payload) => ipcRenderer.invoke("update:check", payload || {}),

@@ -190,6 +190,14 @@ function cleanupExpiredMapEntries() {
 setInterval(cleanupExpiredMapEntries, 60000);
 let mainWindow = null;
 
+ipcMain.on("renderer:error", (_event, payload = {}) => {
+  try {
+    const source = String(payload?.source || "renderer");
+    const message = String(payload?.message || "");
+    logMainEvent("renderer_error", { source, message: message.slice(0, 8000) });
+  } catch {}
+});
+
 const TEXT_EXTENSIONS = new Set([
   ".txt",
   ".md",
@@ -1291,6 +1299,34 @@ function createWindow() {
         )
     );
   }
+
+  win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    logMainEvent("renderer_did_fail_load", {
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame
+    });
+  });
+
+  win.webContents.on("render-process-gone", (_event, details) => {
+    logMainEvent("renderer_process_gone", {
+      reason: details?.reason || "",
+      exitCode: details?.exitCode || 0
+    });
+  });
+
+  win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    if (level <= 1) {
+      logMainEvent("renderer_console_error", {
+        level,
+        message: String(message || "").slice(0, 4000),
+        line,
+        sourceId: String(sourceId || "")
+      });
+    }
+  });
+
   return win;
 }
 

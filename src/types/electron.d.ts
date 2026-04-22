@@ -47,6 +47,7 @@ interface VGODesktopAPI {
   selectRemoteProfile?: (profileId: string) => Promise<any>
   refreshRemoteProfileModels?: (profileId?: string) => Promise<any>
   installSkill?: (payload: { sourcePath: string; name?: string }) => Promise<any>
+  reportRendererError?: (payload: { source?: string; message?: string }) => void
   checkForUpdates?: (payload?: { force?: boolean; updateUrl?: string }) => Promise<any>
   installUpdate?: (payload?: { downloadUrl?: string; latestVersion?: string; releaseNotes?: string; releaseDate?: string }) => Promise<any>
   skipVersion?: (version: string) => Promise<any>
