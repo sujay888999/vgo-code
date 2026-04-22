@@ -1415,7 +1415,7 @@ async function runRealVgoPrompt({
     emitEvent(onEvent, rawEvents, {
       type: "task_status",
       status: step === 0 ? "thinking" : "continuing",
-      message: step === 0 ? "正在请求远程模型..." : `正在继续第 ${step + 1} 轮推理...`
+      message: "正在思考..."
     });
 
     compactActiveHistoryInPlace(activeHistory, {

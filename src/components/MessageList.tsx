@@ -77,6 +77,10 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
       .filter(Boolean)
     return lines[0] || t('message.clickToExpand')
   })()
+  const reasoningTitle =
+    message.title === '推理过程' || message.title === 'Reasoning'
+      ? t('message.reasoning')
+      : message.title || t('message.reasoning')
 
   const renderContent = () => {
     if (isProgressMessage && !isLoading && isCollapsed) {
@@ -86,10 +90,10 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
           className="message-progress-toggle"
           onClick={() => setIsCollapsed(false)}
         >
-          <span className="message-progress-toggle-meta">
-            <ChevronRight size={14} />
-            <span>{message.title || t('message.reasoning')}</span>
-          </span>
+            <span className="message-progress-toggle-meta">
+              <ChevronRight size={14} />
+              <span>{reasoningTitle}</span>
+            </span>
           <span className="message-progress-toggle-preview">{previewLine}</span>
         </button>
       )
@@ -114,7 +118,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
               onClick={() => setIsCollapsed(true)}
             >
               <ChevronDown size={14} />
-              <span>{message.title || t('message.reasoning')}</span>
+              <span>{reasoningTitle}</span>
             </button>
           )}
           <StreamingContent text={displayedText} isStreaming={isStreaming} />
@@ -137,7 +141,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
         <div className="message-meta">
           {(isUser || isProgressMessage) && (
             <span className="message-role">
-              {isUser ? t('message.roleUser') : t('message.reasoning')}
+              {isUser ? t('message.roleUser') : reasoningTitle}
             </span>
           )}
           <span className="message-time">

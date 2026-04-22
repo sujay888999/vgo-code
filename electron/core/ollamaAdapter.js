@@ -1738,7 +1738,7 @@ async function runOllamaPrompt({
     emitEvent({
       type: "task_status",
       status: step === 0 ? "thinking" : "continuing",
-      message: step === 0 ? "正在请求 Ollama 模型..." : `正在继续第 ${step + 1} 轮推理...`
+      message: "正在思考..."
     });
 
     if (step === 0) {

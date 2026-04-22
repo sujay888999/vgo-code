@@ -93,7 +93,7 @@ const DEFAULT_SETTINGS = {
     scope: "full-system"
   },
   appearance: {
-    theme: "aurora",
+    theme: "paper-light",
     uiMode: "standard",
     compactMode: false,
     messageDensity: "comfortable"

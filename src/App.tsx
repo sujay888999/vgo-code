@@ -70,7 +70,15 @@ function normalizeEventPayload<T>(value: T): T {
 
 function buildLiveProgressBlock(eventType: string, payload: any, t: (key: string) => string) {
   if (eventType === 'task_status') {
-    if (payload?.message) return payload.message
+    const rawMessage = String(payload?.message || '').trim()
+    const thinkingLikeMessage =
+      /thinking|正在思考|轮推理|推理过程|姝ｅ湪鎬濊/i.test(rawMessage)
+    if (payload?.status === 'thinking' || payload?.status === 'continuing') {
+      if (!rawMessage || thinkingLikeMessage) {
+        return t('task.thinking')
+      }
+    }
+    if (rawMessage) return rawMessage
     if (payload?.detail) return payload.detail
   }
 
@@ -465,7 +473,7 @@ export function App() {
             status === 'retrying' ||
             status === 'fallback_model'
           ) {
-            upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
+            upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock || taskCopy.detail), 'loading')
             upsertTaskStep(status === 'planning' ? 'task-status-planning' : 'task-status-running', {
               title: taskCopy.title,
               detail: taskCopy.detail,

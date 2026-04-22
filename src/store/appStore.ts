@@ -315,7 +315,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   
   // Initial Settings
   workspace: '',
-  theme: 'aurora',
+  theme: 'paper-light',
   locale: 'zh-CN',
   uiMode: 'standard',
   messageDensity: 'comfortable',

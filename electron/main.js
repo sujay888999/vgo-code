@@ -2553,7 +2553,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("settings:updateAppearance", (_event, payload = {}) =>
     mergeSettingsSection("appearance", {
-      theme: payload.theme || settings.appearance?.theme || "aurora",
+      theme: payload.theme || settings.appearance?.theme || "paper-light",
       uiMode: payload.uiMode || settings.appearance?.uiMode || "standard",
       compactMode:
         typeof payload.compactMode === "boolean"
