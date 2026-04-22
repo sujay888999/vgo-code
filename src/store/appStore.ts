@@ -71,7 +71,16 @@ export interface TaskStep {
   id: string
   title: string
   detail: string
-  state: 'idle' | 'planning' | 'working' | 'completed' | 'error' | 'permission_requested' | 'permission_granted' | 'permission_denied'
+  state:
+    | 'idle'
+    | 'planning'
+    | 'working'
+    | 'completed'
+    | 'warning'
+    | 'error'
+    | 'permission_requested'
+    | 'permission_granted'
+    | 'permission_denied'
   timestamp: number
   requestId?: string
   tool?: string
@@ -254,7 +263,7 @@ export interface AppState {
   setTaskSteps: (steps: TaskStep[]) => void
   addTaskStep: (step: TaskStep) => void
   updateTaskStep: (id: string, updates: Partial<TaskStep>) => void
-  settleTaskSteps: (finalState: 'completed' | 'error') => void
+  settleTaskSteps: (finalState: 'completed' | 'warning' | 'error') => void
   clearTaskSteps: () => void
   
   // Settings Actions

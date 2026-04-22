@@ -91,6 +91,10 @@ function buildLiveProgressBlock(eventType: string, payload: any, t: (key: string
 
   if (eventType === 'tool_result') {
     const summary = payload?.summary || payload?.output || ''
+    const recovered = payload?.recovered === true
+    if (recovered) {
+      return `${t('tool.completed')}: ${payload?.tool || 'unknown'}（已自动切换备用方案）${summary ? `\n${summary}` : ''}`
+    }
     return `${payload?.ok ? t('tool.completed') : t('tool.failed')}: ${payload?.tool || 'unknown'}${summary ? `\n${summary}` : ''}`
   }
 
@@ -155,9 +159,9 @@ function getTaskCopy(status?: string, payload?: any, t: (key: string) => string 
     case 'error':
     case 'failed':
       return {
-        title: payload?.message || t('task.error'),
+        title: payload?.message || '执行受阻，已尝试切换方案',
         detail: payload?.detail || '',
-        state: 'error' as const,
+        state: 'warning' as const,
       }
     default:
       return null
@@ -397,7 +401,16 @@ export function App() {
         step: {
           title: string
           detail: string
-          state: 'idle' | 'planning' | 'working' | 'completed' | 'error' | 'permission_requested' | 'permission_granted' | 'permission_denied'
+          state:
+            | 'idle'
+            | 'planning'
+            | 'working'
+            | 'completed'
+            | 'warning'
+            | 'error'
+            | 'permission_requested'
+            | 'permission_granted'
+            | 'permission_denied'
           requestId?: string
           tool?: string
         },
@@ -472,14 +485,14 @@ export function App() {
           }
 
           if (status === 'error' || status === 'failed') {
-            settleTaskSteps('error')
+            settleTaskSteps('warning')
             setPromptRunning(false)
             upsertTaskStep('task-status-final', {
               title: taskCopy.title,
               detail: taskCopy.detail,
               state: taskCopy.state,
             })
-            finalizeLiveMessage(progressBlock || payload?.message || t('task.failed'), 'error')
+            finalizeLiveMessage(progressBlock || payload?.message || t('task.failed'), 'done')
           }
         }
       }
@@ -592,11 +605,12 @@ export function App() {
       if (eventType === 'tool_result') {
         upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         setPromptRunning(true)
+        const isRecovered = payload?.recovered === true
         addTaskStep({
           id: `tool-result-${eventId}`,
           title: `${payload.tool || t('agentTrace.tool')} ${t('agentTrace.result')}`,
           detail: payload.summary || payload.output || '',
-          state: payload.ok ? 'completed' : 'error',
+          state: payload.ok ? 'completed' : isRecovered ? 'completed' : 'warning',
           timestamp,
         })
       }

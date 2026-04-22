@@ -208,8 +208,119 @@ function normalizeToolCalls(calls = []) {
     .filter((call) => call && typeof call === "object" && call.name)
     .map((call) => ({
       name: String(call.name),
-      arguments: coerceToolArguments(call.name, call.arguments)
+      arguments: (() => {
+        const normalized = coerceToolArguments(call.name, call.arguments ?? call.args);
+        if (normalized && Object.keys(normalized).length) {
+          return normalized;
+        }
+        const fallback = {};
+        for (const key of [
+          "path",
+          "content",
+          "command",
+          "cwd",
+          "query",
+          "url",
+          "format",
+          "source",
+          "destination",
+          "newName",
+          "title",
+          "maxLines",
+          "maxEntries",
+          "maxResults",
+          "maxChars",
+          "timeoutMs",
+          "timeout_ms"
+        ]) {
+          if (call[key] !== undefined) {
+            fallback[key] = call[key];
+          }
+        }
+        return fallback;
+      })()
     }));
+}
+
+function getMissingRequiredToolArgument(call = {}) {
+  const name = String(call?.name || "").trim().toLowerCase();
+  const args =
+    call?.arguments && typeof call.arguments === "object"
+      ? call.arguments
+      : call?.args && typeof call.args === "object"
+        ? call.args
+        : {};
+  const requiredByTool = {
+    read_file: ["path"],
+    write_file: ["path", "content"],
+    append_file: ["path", "content"],
+    run_command: ["command"],
+    copy_file: ["source", "destination"],
+    move_file: ["source", "destination"],
+    rename_file: ["path", "newName"],
+    make_dir: ["path"],
+    delete_file: ["path"],
+    delete_dir: ["path"],
+    open_path: ["path"],
+    fetch_web: ["url"],
+    generate_word_doc: ["path"]
+  };
+  const required = requiredByTool[name] || [];
+  if (!required.length) {
+    return "";
+  }
+  for (const key of required) {
+    if (args[key] === undefined || args[key] === null || String(args[key]).trim() === "") {
+      return key;
+    }
+  }
+  return "";
+}
+
+function extractWriteFileFallbackFromCommand(command = "") {
+  const source = String(command || "");
+  if (!source) {
+    return null;
+  }
+
+  const catWriteMatch =
+    source.match(/cat\s*>\s*(['"]?)([^'"\r\n]+)\1\s*<<\s*['"]?EOF['"]?\s*\r?\n([\s\S]*?)\r?\nEOF/i) ||
+    source.match(/cat\s*<<\s*['"]?EOF['"]?\s*>\s*(['"]?)([^'"\r\n]+)\1\s*\r?\n([\s\S]*?)\r?\nEOF/i);
+  if (catWriteMatch) {
+    const filePath = String(catWriteMatch[2] || "").trim();
+    const content = String(catWriteMatch[3] || "");
+    if (filePath && content) {
+      return {
+        name: "write_file",
+        arguments: {
+          path: filePath,
+          content
+        }
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildToolFallbackCall(call = {}, result = {}) {
+  const name = String(call?.name || "").trim().toLowerCase();
+  const args =
+    call?.arguments && typeof call.arguments === "object"
+      ? call.arguments
+      : call?.args && typeof call.args === "object"
+        ? call.args
+        : {};
+  const summary = String(result?.summary || "");
+
+  if (name === "run_command" && /Command exited with code/i.test(summary)) {
+    const fallback = extractWriteFileFallbackFromCommand(String(args.command || ""));
+    if (fallback) {
+      return fallback;
+    }
+  }
+
+  return null;
 }
 
 function extractTaggedToolCallPayloads(text) {
@@ -1607,6 +1718,7 @@ async function runOllamaPrompt({
   );
 
   let writeArgumentRetrySent = false;
+  let missingArgumentRetrySent = false;
   let autoContinueNudgeCount = 0;
 
   for (let step = 0; step < maxToolSteps; step += 1) {
@@ -1857,19 +1969,82 @@ async function runOllamaPrompt({
           };
         }
 
+        const missingArgument = getMissingRequiredToolArgument(call);
+        if (missingArgument) {
+          const blockedResult = {
+            ok: false,
+            name: call.name,
+            summary: `Missing required argument: ${missingArgument}`,
+            output: "Tool call was skipped because required parameters were incomplete."
+          };
+          toolResults.push(blockedResult);
+          logRuntime("tool:executed", {
+            tool: call.name,
+            ok: false,
+            summary: blockedResult.summary
+          });
+          emitEvent({
+            type: "tool_result",
+            step: step + 1,
+            tool: call.name,
+            ok: false,
+            summary: blockedResult.summary,
+            output: blockedResult.output
+          });
+          continue;
+        }
+
         emitEvent({
           type: "task_status",
           status: "tool_running",
           message: `正在执行工具：${call.name}`
         });
 
-        const result = await executeToolCall(workspace, call, {
+        let result = await executeToolCall(workspace, call, {
           accessScope: settings?.access?.scope || "workspace-and-desktop",
           confirm: (toolCall) =>
             requestToolPermission(toolCall, (permissionEvent) => {
               emitEvent({ ...permissionEvent, step: step + 1 });
             })
         });
+
+        if (!result.ok) {
+          const fallbackCall = buildToolFallbackCall(call, result);
+          if (fallbackCall) {
+            emitEvent({
+              type: "task_status",
+              status: "fallback_model",
+              message: `主方案失败，正在切换备用方案：${call.name} -> ${fallbackCall.name}`
+            });
+
+            const fallbackResult = await executeToolCall(workspace, fallbackCall, {
+              accessScope: settings?.access?.scope || "workspace-and-desktop",
+              confirm: (toolCall) =>
+                requestToolPermission(toolCall, (permissionEvent) => {
+                  emitEvent({ ...permissionEvent, step: step + 1 });
+                })
+            });
+
+            if (fallbackResult.ok) {
+              result = {
+                ...fallbackResult,
+                name: call.name,
+                ok: true,
+                recovered: true,
+                summary: `${call.name} 主方案失败（${result.summary}），已自动改用 ${fallbackCall.name} 完成：${fallbackResult.summary}`,
+                output: String(fallbackResult.output || "")
+              };
+            } else {
+              result = {
+                ...result,
+                summary: `${result.summary}；已尝试备用方案 ${fallbackCall.name}，但仍失败：${fallbackResult.summary}`,
+                output: [String(result.output || ""), String(fallbackResult.output || "")]
+                  .filter(Boolean)
+                  .join("\n\n")
+              };
+            }
+          }
+        }
 
         toolResults.push(result);
         logRuntime("tool:executed", { tool: call.name, ok: result.ok, summary: result.summary });
@@ -1879,6 +2054,7 @@ async function runOllamaPrompt({
           step: step + 1,
           tool: call.name,
           ok: result.ok,
+          recovered: Boolean(result?.recovered),
           summary: result.summary,
           output: result.output
         });
@@ -1903,6 +2079,9 @@ async function runOllamaPrompt({
           !result.ok &&
           /Missing required argument: (path|content)/i.test(String(result.summary || ""))
       );
+      const hasGenericMissingArgumentFailure = toolResults.some(
+        (result) => !result.ok && /Missing required argument:/i.test(String(result.summary || ""))
+      );
 
       if (protocol.promptRequiresWrite(prompt) && hasWriteArgumentFailure && !writeArgumentRetrySent) {
         writeArgumentRetrySent = true;
@@ -1913,6 +2092,15 @@ async function runOllamaPrompt({
             "1. 先用 write_file 写文件的前半部分（函数定义、import 等）\n" +
             "2. 然后用 append_file 追加剩余内容（函数实现、测试代码等）\n" +
             "例如：write_file({\"path\":\"test.py\",\"content\":\"import...\"}) 然后 append_file({\"path\":\"test.py\",\"content\":\"def func():...\"})"
+        });
+      }
+
+      if (hasGenericMissingArgumentFailure && !missingArgumentRetrySent) {
+        missingArgumentRetrySent = true;
+        messages.push({
+          role: "user",
+          content:
+            "你刚才的工具调用缺少必填参数。请下一条只输出一个完整工具调用，并补全该工具必填字段（如 run_command.command、read_file.path、write_file.path+content）。不要解释。"
         });
       }
 

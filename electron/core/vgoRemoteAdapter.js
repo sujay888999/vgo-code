@@ -13,6 +13,7 @@ const MAX_AGENT_STEPS = 300;
 const UPSTREAM_RETRYABLE_PATTERN = /Failed to connect to upstream channel/i;
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 90000;
 const DEFAULT_REMOTE_NETWORK_RETRIES = 3;
+const REMOTE_RETRY_BASE_DELAY_MS = 600;
 const DEFAULT_VGO_PROFILE_ID = "default";
 const REMOTE_MAX_HISTORY_MESSAGES = 24;
 const REMOTE_MAX_MESSAGE_CHARS = 5000;
@@ -170,15 +171,147 @@ function safeParseJson(value) {
 }
 
 function normalizeToolCalls(calls = []) {
+  const pathLikeTools = new Set([
+    "read_file",
+    "list_dir",
+    "open_path",
+    "delete_file",
+    "delete_dir",
+    "make_dir"
+  ]);
+  const coerceToolArguments = (name, call) => {
+    const rawArguments = call?.arguments ?? call?.args;
+    if (rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)) {
+      return rawArguments;
+    }
+
+    if (typeof rawArguments === "string") {
+      const trimmed = rawArguments.trim();
+      const parsed = safeParseJson(trimmed);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+
+      if (trimmed && pathLikeTools.has(String(name || "").toLowerCase())) {
+        return { path: trimmed };
+      }
+    }
+
+    const fallback = {};
+    const knownTopLevelKeys = [
+      "path",
+      "content",
+      "command",
+      "cwd",
+      "query",
+      "url",
+      "format",
+      "source",
+      "destination",
+      "newName",
+      "title",
+      "maxLines",
+      "maxEntries",
+      "maxResults",
+      "maxChars",
+      "timeoutMs",
+      "timeout_ms"
+    ];
+    for (const key of knownTopLevelKeys) {
+      if (call && call[key] !== undefined) {
+        fallback[key] = call[key];
+      }
+    }
+    return fallback;
+  };
+
   return calls
     .filter((call) => call && typeof call === "object" && call.name)
     .map((call) => ({
       name: String(call.name),
-      arguments:
-        call.arguments && typeof call.arguments === "object"
-          ? call.arguments
-          : safeParseJson(call.arguments) || {}
+      arguments: coerceToolArguments(call.name, call)
     }));
+}
+
+function getMissingRequiredToolArgument(call = {}) {
+  const name = String(call?.name || "").trim().toLowerCase();
+  const args =
+    call?.arguments && typeof call.arguments === "object"
+      ? call.arguments
+      : call?.args && typeof call.args === "object"
+        ? call.args
+        : {};
+  const requiredByTool = {
+    read_file: ["path"],
+    write_file: ["path", "content"],
+    append_file: ["path", "content"],
+    run_command: ["command"],
+    copy_file: ["source", "destination"],
+    move_file: ["source", "destination"],
+    rename_file: ["path", "newName"],
+    make_dir: ["path"],
+    delete_file: ["path"],
+    delete_dir: ["path"],
+    open_path: ["path"],
+    fetch_web: ["url"],
+    generate_word_doc: ["path"]
+  };
+  const required = requiredByTool[name] || [];
+  if (!required.length) {
+    return "";
+  }
+  for (const key of required) {
+    if (args[key] === undefined || args[key] === null || String(args[key]).trim() === "") {
+      return key;
+    }
+  }
+  return "";
+}
+
+function extractWriteFileFallbackFromCommand(command = "") {
+  const source = String(command || "");
+  if (!source) {
+    return null;
+  }
+
+  const catWriteMatch =
+    source.match(/cat\s*>\s*(['"]?)([^'"\r\n]+)\1\s*<<\s*['"]?EOF['"]?\s*\r?\n([\s\S]*?)\r?\nEOF/i) ||
+    source.match(/cat\s*<<\s*['"]?EOF['"]?\s*>\s*(['"]?)([^'"\r\n]+)\1\s*\r?\n([\s\S]*?)\r?\nEOF/i);
+  if (catWriteMatch) {
+    const filePath = String(catWriteMatch[2] || "").trim();
+    const content = String(catWriteMatch[3] || "");
+    if (filePath && content) {
+      return {
+        name: "write_file",
+        arguments: {
+          path: filePath,
+          content
+        }
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildToolFallbackCall(call = {}, result = {}) {
+  const name = String(call?.name || "").trim().toLowerCase();
+  const args =
+    call?.arguments && typeof call.arguments === "object"
+      ? call.arguments
+      : call?.args && typeof call.args === "object"
+        ? call.args
+        : {};
+  const summary = String(result?.summary || "");
+
+  if (name === "run_command" && /Command exited with code/i.test(summary)) {
+    const fallback = extractWriteFileFallbackFromCommand(String(args.command || ""));
+    if (fallback) {
+      return fallback;
+    }
+  }
+
+  return null;
 }
 
 function extractTaggedToolCallPayloads(text) {
@@ -661,6 +794,13 @@ function formatRemoteServiceError(settings, response, payload) {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function computeRetryDelayMs(attempt = 1) {
+  const safeAttempt = Math.max(1, Number(attempt) || 1);
+  const base = REMOTE_RETRY_BASE_DELAY_MS * Math.pow(2, safeAttempt - 1);
+  const jitter = Math.floor(Math.random() * 250);
+  return Math.min(4000, base + jitter);
 }
 
 function pickFallbackModelForUpstream(settings, currentModel) {
@@ -1210,6 +1350,7 @@ async function runRealVgoPrompt({
   let repairActionNudgeSent = false;
   let verificationNudgeSent = false;
   let dependencyVerificationNudgeSent = false;
+  let missingArgumentRetrySent = false;
   let upstreamRetryUsed = false;
   let upstreamFallbackModelUsed = false;
   let payloadTooLargeRetryCount = 0;
@@ -1237,12 +1378,14 @@ async function runRealVgoPrompt({
           throw error;
         }
         networkRetryUsed += 1;
+        const isTimeout = /timeout|timed out|remote_request_timeout/i.test(String(error?.message || ""));
+        const waitMs = computeRetryDelayMs(attempt);
         emitEvent(onEvent, rawEvents, {
           type: "task_status",
           status: "retrying",
-          message: `网络波动，正在自动重试（${attempt}/${DEFAULT_REMOTE_NETWORK_RETRIES}）...`
+          message: `${isTimeout ? "请求超时" : "网络波动"}，正在自动重试（${attempt}/${DEFAULT_REMOTE_NETWORK_RETRIES}）...`
         });
-        await wait(500 * attempt);
+        await wait(waitMs);
       }
     }
     throw lastError || new Error("remote_request_failed");
@@ -1735,6 +1878,33 @@ async function runRealVgoPrompt({
         didCallWriteTool = true;
       }
 
+      const missingArgument = getMissingRequiredToolArgument(call);
+      if (missingArgument) {
+        const blockedResult = {
+          ok: false,
+          name: call.name,
+          summary: `Missing required argument: ${missingArgument}`,
+          output: "Tool call was skipped because required parameters were incomplete."
+        };
+        results.push(blockedResult);
+        logRuntime("tool:executed", {
+          tool: call.name,
+          ok: false,
+          summary: blockedResult.summary,
+          args: JSON.stringify(call.arguments || call.args || {}).slice(0, 500),
+          outputPreview: blockedResult.output
+        });
+        emitEvent(onEvent, rawEvents, {
+          type: "tool_result",
+          step: step + 1,
+          tool: call.name,
+          ok: false,
+          summary: blockedResult.summary,
+          output: blockedResult.output
+        });
+        continue;
+      }
+
       const protectedInspectionViolation =
         isRepairTask ? getProtectedInspectionViolation(call, prompt, workspace) : "";
       if (protectedInspectionViolation) {
@@ -1785,7 +1955,7 @@ async function runRealVgoPrompt({
         message: `正在执行工具：${call.name}`
       });
 
-      const result = await executeToolCall(workspace, call, {
+      let result = await executeToolCall(workspace, call, {
         accessScope: settings?.access?.scope || "workspace-and-desktop",
         confirm: (toolCall) =>
           requestToolPermission(toolCall, (permissionEvent) => {
@@ -1795,6 +1965,47 @@ async function runRealVgoPrompt({
             });
           })
       });
+
+      if (!result.ok) {
+        const fallbackCall = buildToolFallbackCall(call, result);
+        if (fallbackCall) {
+          emitEvent(onEvent, rawEvents, {
+            type: "task_status",
+            status: "fallback_model",
+            message: `主方案失败，正在切换备用方案：${call.name} -> ${fallbackCall.name}`
+          });
+
+          const fallbackResult = await executeToolCall(workspace, fallbackCall, {
+            accessScope: settings?.access?.scope || "workspace-and-desktop",
+            confirm: (toolCall) =>
+              requestToolPermission(toolCall, (permissionEvent) => {
+                emitEvent(onEvent, rawEvents, {
+                  ...permissionEvent,
+                  step: step + 1
+                });
+              })
+          });
+
+          if (fallbackResult.ok) {
+            result = {
+              ...fallbackResult,
+              name: call.name,
+              ok: true,
+              recovered: true,
+              summary: `${call.name} 主方案失败（${result.summary}），已自动改用 ${fallbackCall.name} 完成：${fallbackResult.summary}`,
+              output: String(fallbackResult.output || "")
+            };
+          } else {
+            result = {
+              ...result,
+              summary: `${result.summary}；已尝试备用方案 ${fallbackCall.name}，但仍失败：${fallbackResult.summary}`,
+              output: [String(result.output || ""), String(fallbackResult.output || "")]
+                .filter(Boolean)
+                .join("\n\n")
+            };
+          }
+        }
+      }
 
       results.push(result);
       logRuntime("tool:executed", {
@@ -1809,6 +2020,7 @@ async function runRealVgoPrompt({
         step: step + 1,
         tool: call.name,
         ok: result.ok,
+        recovered: Boolean(result?.recovered),
         summary: result.summary,
         output: result.output
       });
@@ -1819,6 +2031,9 @@ async function runRealVgoPrompt({
         result.name === "write_file" &&
         !result.ok &&
         /Missing required argument: (path|content)/i.test(String(result.summary || ""))
+    );
+    const hasGenericMissingArgumentFailure = results.some(
+      (result) => !result.ok && /Missing required argument:/i.test(String(result.summary || ""))
     );
 
     activeHistory.push({
@@ -1836,6 +2051,15 @@ async function runRealVgoPrompt({
         role: "user",
         content:
           "你刚才已经调用了 write_file，但参数不完整。下一条请重新调用 write_file，并至少提供 path 和 content。若用户要求放到桌面，请把 path 写成 Desktop/notes.txt 这种明确路径。不要解释，只输出工具调用。"
+      });
+    }
+
+    if (hasGenericMissingArgumentFailure && !missingArgumentRetrySent) {
+      missingArgumentRetrySent = true;
+      activeHistory.push({
+        role: "user",
+        content:
+          "你刚才的工具调用缺少必填参数。请下一条只输出一个完整工具调用，必须补全该工具的必填字段（例如 run_command 需要 command，read_file/list_dir/open_path 需要 path，write_file 需要 path 和 content）。不要输出解释。"
       });
     }
   }
@@ -1965,7 +2189,7 @@ async function runLocalPrompt({
         if (!isNetworkFetchFailure(error) || attempt >= DEFAULT_REMOTE_NETWORK_RETRIES) {
           throw error;
         }
-        await wait(350 * attempt);
+        await wait(computeRetryDelayMs(attempt));
       }
     }
 

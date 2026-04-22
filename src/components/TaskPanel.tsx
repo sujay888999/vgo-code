@@ -10,6 +10,7 @@ import {
   Shield,
   ShieldCheck,
   ShieldX,
+  AlertTriangle,
 } from 'lucide-react'
 
 interface TaskPanelProps {
@@ -23,6 +24,8 @@ export function TaskPanel({ steps }: TaskPanelProps) {
     switch (state) {
       case 'completed':
         return <CheckCircle size={16} className="icon-success" />
+      case 'warning':
+        return <AlertTriangle size={16} className="icon-warning" />
       case 'error':
         return <XCircle size={16} className="icon-error" />
       case 'permission_requested':
@@ -52,6 +55,7 @@ export function TaskPanel({ steps }: TaskPanelProps) {
   const completedSteps = steps.filter((s) =>
     ['completed', 'permission_granted'].includes(s.state),
   )
+  const warningSteps = steps.filter((s) => s.state === 'warning')
   const errorSteps = steps.filter((s) => ['error', 'permission_denied'].includes(s.state))
 
   return (
@@ -90,6 +94,21 @@ export function TaskPanel({ steps }: TaskPanelProps) {
                   <div className="task-icon">{getIcon(step.state)}</div>
                   <div className="task-content">
                     <div className="task-title">{step.title}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {warningSteps.length > 0 && (
+            <div className="task-section">
+              <div className="task-section-title warning">需要关注（{warningSteps.length}）</div>
+              {warningSteps.map((step) => (
+                <div key={step.id} className={`task-item ${step.state}`}>
+                  <div className="task-icon">{getIcon(step.state)}</div>
+                  <div className="task-content">
+                    <div className="task-title">{step.title}</div>
+                    {step.detail && <div className="task-detail warning">{step.detail}</div>}
                   </div>
                 </div>
               ))}

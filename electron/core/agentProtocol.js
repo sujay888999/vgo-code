@@ -206,6 +206,134 @@ function collectLooseToolCalls(rawText = "") {
     return [];
   }
 
+  const stringLikeKeys = new Set([
+    "path",
+    "content",
+    "command",
+    "cwd",
+    "query",
+    "url",
+    "format",
+    "source",
+    "destination",
+    "newName",
+    "title"
+  ]);
+  const numberLikeKeys = new Set([
+    "maxLines",
+    "maxEntries",
+    "maxResults",
+    "maxChars",
+    "timeoutMs",
+    "timeout_ms",
+    "start",
+    "end",
+    "limit"
+  ]);
+  const toolArgKeys = {
+    read_file: ["path", "maxLines"],
+    list_dir: ["path", "maxEntries"],
+    search_code: ["path", "query", "maxResults"],
+    write_file: ["path", "content"],
+    append_file: ["path", "content"],
+    run_command: ["command", "cwd", "timeoutMs", "timeout_ms"],
+    open_path: ["path"],
+    fetch_web: ["url", "format", "maxChars"],
+    copy_file: ["source", "destination"],
+    move_file: ["source", "destination"],
+    rename_file: ["path", "newName"],
+    make_dir: ["path"],
+    delete_file: ["path"],
+    delete_dir: ["path"],
+    generate_word_doc: ["path", "title", "content"]
+  };
+  const readJsonLikeString = (text, startIndex) => {
+    let escaped = false;
+    let out = "";
+    for (let index = startIndex; index < text.length; index += 1) {
+      const ch = text[index];
+      if (escaped) {
+        out += ch;
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        out += ch;
+        continue;
+      }
+      if (ch === "\"") {
+        return { value: out, endIndex: index };
+      }
+      out += ch;
+    }
+    return { value: out, endIndex: text.length - 1, incomplete: true };
+  };
+  const decodeJsonLikeValue = (raw = "") => {
+    const text = String(raw || "");
+    if (!text) return "";
+    try {
+      return JSON.parse(`"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`);
+    } catch {
+      return text
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t")
+        .replace(/\\"/g, "\"")
+        .replace(/\\\\/g, "\\");
+    }
+  };
+  const extractLooseStringValue = (text, key) => {
+    const pattern = new RegExp(`"${key}"\\s*:\\s*"`, "i");
+    const match = pattern.exec(text);
+    if (!match) {
+      return "";
+    }
+    const quoteStart = match.index + match[0].length;
+    const read = readJsonLikeString(text, quoteStart);
+    return decodeJsonLikeValue(read.value);
+  };
+  const extractLooseNumberValue = (text, key) => {
+    const pattern = new RegExp(`"${key}"\\s*:\\s*(-?\\d+)`, "i");
+    const match = pattern.exec(text);
+    if (!match) {
+      return null;
+    }
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? value : null;
+  };
+  const recoverArgumentsFromLooseText = (text, name) => {
+    const normalizedName = String(name || "").trim().toLowerCase();
+    const keys = toolArgKeys[normalizedName] || [];
+    if (!keys.length) {
+      return {};
+    }
+    const recovered = {};
+    for (const key of keys) {
+      if (numberLikeKeys.has(key)) {
+        const numeric = extractLooseNumberValue(text, key);
+        if (numeric !== null) {
+          recovered[key] = numeric;
+        }
+        continue;
+      }
+      if (stringLikeKeys.has(key)) {
+        const value = extractLooseStringValue(text, key);
+        if (value) {
+          recovered[key] = value;
+        }
+      }
+    }
+
+    if (!Object.keys(recovered).length && normalizedName === "run_command") {
+      const altCommand = extractLooseStringValue(text, "arguments");
+      if (altCommand) {
+        recovered.command = altCommand;
+      }
+    }
+    return recovered;
+  };
+
   const calls = [];
   const namePattern = /"name"\s*:\s*"([^"]+)"/gi;
   const allowed = new Set([
@@ -218,7 +346,16 @@ function collectLooseToolCalls(rawText = "") {
     "open_path",
     "move_path",
     "copy_path",
-    "delete_path"
+    "delete_path",
+    "append_file",
+    "copy_file",
+    "move_file",
+    "rename_file",
+    "make_dir",
+    "delete_file",
+    "delete_dir",
+    "fetch_web",
+    "generate_word_doc"
   ]);
   let match;
 
@@ -246,6 +383,10 @@ function collectLooseToolCalls(rawText = "") {
           } catch {}
         }
       }
+    }
+
+    if (!Object.keys(args).length) {
+      args = recoverArgumentsFromLooseText(tail, name);
     }
 
     if (allowed.has(name.toLowerCase()) || Object.keys(args).length > 0) {
