@@ -331,6 +331,25 @@ function collectLooseToolCalls(rawText = "") {
         recovered.command = altCommand;
       }
     }
+
+    if (!recovered.command && normalizedName === "run_command") {
+      const commandFieldMatch = String(text || "").match(
+        /(?:^|[,\s{])(?:command|cmd)\s*[:=]\s*["']?([^\r\n"'}]+)["']?/i
+      );
+      if (commandFieldMatch?.[1]) {
+        recovered.command = commandFieldMatch[1].trim();
+      }
+    }
+
+    if (!recovered.command && normalizedName === "run_command") {
+      const lineStyleMatch = String(text || "").match(/run_command\s*\|\s*([^\r\n]+)/i);
+      if (lineStyleMatch?.[1]) {
+        const maybeCommand = lineStyleMatch[1].trim();
+        if (maybeCommand && !/=/.test(maybeCommand)) {
+          recovered.command = maybeCommand;
+        }
+      }
+    }
     return recovered;
   };
 

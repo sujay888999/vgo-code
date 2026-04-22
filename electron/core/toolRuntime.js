@@ -140,8 +140,22 @@ function writeFile(workspace, args = {}, options = {}) {
   }
 
   const targetPath = ensureWorkspacePath(workspace, args.path, options);
+  let content = args.content;
+  // Recover from escaped multiline payloads like "\\n" that should be real line breaks.
+  if (typeof content === "string") {
+    const escapedNewlineCount = (content.match(/\\n/g) || []).length;
+    const actualNewlineCount = (content.match(/\r?\n/g) || []).length;
+    if (escapedNewlineCount >= 2 && actualNewlineCount === 0) {
+      content = content
+        .replace(/\\r\\n/g, "\n")
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t")
+        .replace(/\\"/g, "\"");
+    }
+  }
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.writeFileSync(targetPath, args.content, "utf8");
+  fs.writeFileSync(targetPath, content, "utf8");
 
   const exists = fs.existsSync(targetPath);
   const size = exists ? fs.statSync(targetPath).size : 0;
@@ -281,7 +295,13 @@ function runCommand(workspace, args = {}, options = {}) {
     return { ok: false, name: "run_command", summary: `Invalid cwd: ${error.message}`, output: "" };
   }
 
-  const timeoutMs = clamp(args.timeoutMs, 1000, 300000, 45000);
+  const requestedTimeout = args.timeoutMs ?? args.timeout_ms;
+  const hasExplicitTimeout = requestedTimeout !== undefined && requestedTimeout !== null && `${requestedTimeout}`.trim() !== "";
+  const looksLongRunning = /(uvicorn\s+.*--reload|npm\s+run\s+(dev|start)|pnpm\s+(dev|start)|yarn\s+(dev|start)|tail\s+-f|watch)/i.test(
+    command
+  );
+  const defaultTimeout = looksLongRunning ? 120000 : 60000;
+  const timeoutMs = clamp(requestedTimeout, 1000, 300000, defaultTimeout);
   const shell = detectShell(command);
   
   let result;

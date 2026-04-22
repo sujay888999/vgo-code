@@ -34,7 +34,13 @@ module.exports = async function afterPack(context) {
   try {
     const { rcedit } = await import("rcedit");
     await rcedit(exePath, {
-      icon: iconPath
+      icon: iconPath,
+      "version-string": {
+        ProductName: "VGO CODE",
+        FileDescription: "VGO CODE Desktop",
+        OriginalFilename: path.basename(exePath),
+        InternalName: "VGO CODE"
+      }
     });
     console.log(`[afterPack] rcedit icon applied: ${iconPath}`);
   } catch (error) {

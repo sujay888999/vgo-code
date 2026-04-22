@@ -28,6 +28,21 @@ const DEFAULT_NUM_PREDICT = 16384;
 const OLLAMA_MAX_HISTORY_MESSAGES = 24;
 const OLLAMA_MAX_MESSAGE_CHARS = 5000;
 const OLLAMA_MAX_TOTAL_CHARS = 60000;
+const MAX_OLLAMA_RATE_LIMIT_RETRIES = 2;
+
+function isRateLimitErrorText(text = "") {
+  const raw = String(text || "");
+  const lower = raw.toLowerCase();
+  return (
+    /http\s*429/i.test(raw) ||
+    lower.includes("429") ||
+    lower.includes("too many requests") ||
+    lower.includes("rate limit") ||
+    lower.includes("rate_limit") ||
+    lower.includes("限流") ||
+    lower.includes("请求过于频繁")
+  );
+}
 
 function getMaxToolSteps(settings) {
   const configured =
@@ -181,20 +196,57 @@ function safeParseJson(value) {
 }
 
 function normalizeToolCalls(calls = []) {
+  const normalizeKnownArgumentAliases = (name, args = {}) => {
+    if (!args || typeof args !== "object" || Array.isArray(args)) {
+      return {};
+    }
+    const normalized = { ...args };
+    if (name === "run_command") {
+      if (
+        (normalized.command === undefined || String(normalized.command || "").trim() === "") &&
+        typeof normalized.cmd === "string"
+      ) {
+        normalized.command = normalized.cmd;
+      }
+      if (
+        (normalized.command === undefined || String(normalized.command || "").trim() === "") &&
+        typeof normalized.shell_command === "string"
+      ) {
+        normalized.command = normalized.shell_command;
+      }
+      if (
+        (normalized.command === undefined || String(normalized.command || "").trim() === "") &&
+        typeof normalized.arguments === "string"
+      ) {
+        normalized.command = normalized.arguments;
+      }
+      if (
+        (normalized.timeoutMs === undefined || normalized.timeoutMs === null) &&
+        normalized.timeout_ms !== undefined
+      ) {
+        normalized.timeoutMs = normalized.timeout_ms;
+      }
+    }
+    return normalized;
+  };
   const coerceToolArguments = (name, rawArguments) => {
+    const normalizedName = String(name || "").toLowerCase();
     if (rawArguments && typeof rawArguments === "object") {
-      return rawArguments;
+      return normalizeKnownArgumentAliases(normalizedName, rawArguments);
     }
 
     if (typeof rawArguments === "string") {
       const trimmed = rawArguments.trim();
       const parsed = safeParseJson(trimmed);
       if (parsed && typeof parsed === "object") {
-        return parsed;
+        return normalizeKnownArgumentAliases(normalizedName, parsed);
+      }
+
+      if (trimmed && normalizedName === "run_command") {
+        return { command: trimmed };
       }
 
       if (trimmed) {
-        const normalizedName = String(name || "").toLowerCase();
         if (["read_file", "list_dir", "open_path", "search_code"].includes(normalizedName)) {
           return { path: trimmed };
         }
@@ -237,7 +289,7 @@ function normalizeToolCalls(calls = []) {
             fallback[key] = call[key];
           }
         }
-        return fallback;
+        return normalizeKnownArgumentAliases(String(call?.name || "").toLowerCase(), fallback);
       })()
     }));
 }
@@ -718,6 +770,19 @@ async function sendOllamaRequest({ baseUrl, model, messages, signal, onChunk, ti
       ]
     })
   });
+
+  if (!response.ok) {
+    const failurePayload = await parseJsonResponse(response);
+    const detail =
+      failurePayload?.error?.message ||
+      failurePayload?.error ||
+      failurePayload?.message ||
+      failurePayload?.rawText ||
+      `HTTP ${response.status}`;
+    return {
+      error: `HTTP ${response.status}: ${String(detail || "").slice(0, 300)}`
+    };
+  }
 
   return await parseOllamaStreamResponse(response, onChunk, { timeout });
 }
@@ -1719,6 +1784,9 @@ async function runOllamaPrompt({
 
   let writeArgumentRetrySent = false;
   let missingArgumentRetrySent = false;
+  let consecutiveMissingArgumentSteps = 0;
+  let totalMissingArgumentFailures = 0;
+  let rateLimitRetryUsed = 0;
   let autoContinueNudgeCount = 0;
 
   for (let step = 0; step < maxToolSteps; step += 1) {
@@ -1795,6 +1863,17 @@ async function runOllamaPrompt({
       });
 
       if (response.error) {
+        if (isRateLimitErrorText(response.error) && rateLimitRetryUsed < MAX_OLLAMA_RATE_LIMIT_RETRIES) {
+          rateLimitRetryUsed += 1;
+          emitEvent({
+            type: "task_status",
+            status: "retrying",
+            message: `上游模型限流，正在自动退避重试（${rateLimitRetryUsed}/${MAX_OLLAMA_RATE_LIMIT_RETRIES}）...`
+          });
+          await new Promise((resolve) => setTimeout(resolve, 900 * rateLimitRetryUsed));
+          step -= 1;
+          continue;
+        }
         logRuntime("request:error", { error: response.error });
         return {
           ok: false,
@@ -2082,6 +2161,14 @@ async function runOllamaPrompt({
       const hasGenericMissingArgumentFailure = toolResults.some(
         (result) => !result.ok && /Missing required argument:/i.test(String(result.summary || ""))
       );
+      if (hasGenericMissingArgumentFailure) {
+        consecutiveMissingArgumentSteps += 1;
+        totalMissingArgumentFailures += toolResults.filter(
+          (result) => !result.ok && /Missing required argument:/i.test(String(result.summary || ""))
+        ).length;
+      } else {
+        consecutiveMissingArgumentSteps = 0;
+      }
 
       if (protocol.promptRequiresWrite(prompt) && hasWriteArgumentFailure && !writeArgumentRetrySent) {
         writeArgumentRetrySent = true;
@@ -2102,6 +2189,30 @@ async function runOllamaPrompt({
           content:
             "你刚才的工具调用缺少必填参数。请下一条只输出一个完整工具调用，并补全该工具必填字段（如 run_command.command、read_file.path、write_file.path+content）。不要解释。"
         });
+      }
+
+      if (
+        hasGenericMissingArgumentFailure &&
+        missingArgumentRetrySent &&
+        (consecutiveMissingArgumentSteps >= 2 || totalMissingArgumentFailures >= 4)
+      ) {
+        const exhaustedMessage =
+          "工具调用连续缺少必填参数，已停止自动重试以避免死循环。请改用完整工具调用后再继续。";
+        emitEvent({
+          type: "task_status",
+          status: "failed",
+          message: exhaustedMessage
+        });
+        return {
+          ok: false,
+          exitCode: 1,
+          sessionId,
+          text: exhaustedMessage,
+          error: "tool_argument_retry_exhausted",
+          rawEvents,
+          usedModel: model,
+          actualChannel: "ollama-agent"
+        };
       }
 
     } catch (error) {

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { useI18n } from '../i18n'
 import {
@@ -24,6 +24,7 @@ type ModelPrefs = {
   favorites: string[]
   recent: string[]
   collapsedFamilies: string[]
+  collapsedFamiliesInitialized: boolean
 }
 
 type CloudModelEntry = {
@@ -41,7 +42,7 @@ const MODEL_PREFS_STORAGE_KEY = 'vgo.code.model.prefs.v1'
 function readModelPrefs(): ModelPrefs {
   try {
     const raw = window.localStorage.getItem(MODEL_PREFS_STORAGE_KEY)
-    if (!raw) return { favorites: [], recent: [], collapsedFamilies: [] }
+    if (!raw) return { favorites: [], recent: [], collapsedFamilies: [], collapsedFamiliesInitialized: false }
     const parsed = JSON.parse(raw)
     return {
       favorites: Array.isArray(parsed?.favorites) ? parsed.favorites.filter((item: unknown) => typeof item === 'string') : [],
@@ -49,9 +50,10 @@ function readModelPrefs(): ModelPrefs {
       collapsedFamilies: Array.isArray(parsed?.collapsedFamilies)
         ? parsed.collapsedFamilies.filter((item: unknown) => typeof item === 'string')
         : [],
+      collapsedFamiliesInitialized: Boolean(parsed?.collapsedFamiliesInitialized),
     }
   } catch {
-    return { favorites: [], recent: [], collapsedFamilies: [] }
+    return { favorites: [], recent: [], collapsedFamilies: [], collapsedFamiliesInitialized: false }
   }
 }
 
@@ -497,6 +499,16 @@ export function Sidebar() {
       }))
       .sort((a, b) => a.family.localeCompare(b.family))
   }, [filteredCloudEntries, favoriteCloudEntries, recentCloudEntries])
+
+  useEffect(() => {
+    if (modelPrefs.collapsedFamiliesInitialized) return
+    if (familyGroups.length === 0) return
+    updateModelPrefs((prev) => ({
+      ...prev,
+      collapsedFamilies: familyGroups.map((group) => group.family),
+      collapsedFamiliesInitialized: true,
+    }))
+  }, [familyGroups, modelPrefs.collapsedFamiliesInitialized, updateModelPrefs])
 
   const isCloudEntryActive = useCallback(
     (entry: CloudModelEntry) => {

@@ -14,6 +14,7 @@ const UPSTREAM_RETRYABLE_PATTERN = /Failed to connect to upstream channel/i;
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 90000;
 const DEFAULT_REMOTE_NETWORK_RETRIES = 3;
 const REMOTE_RETRY_BASE_DELAY_MS = 600;
+const MAX_UPSTREAM_RATE_LIMIT_RETRIES = 2;
 const DEFAULT_VGO_PROFILE_ID = "default";
 const REMOTE_MAX_HISTORY_MESSAGES = 24;
 const REMOTE_MAX_MESSAGE_CHARS = 5000;
@@ -179,20 +180,58 @@ function normalizeToolCalls(calls = []) {
     "delete_dir",
     "make_dir"
   ]);
+  const normalizeKnownArgumentAliases = (name, args = {}) => {
+    if (!args || typeof args !== "object" || Array.isArray(args)) {
+      return {};
+    }
+    const normalized = { ...args };
+    if (name === "run_command") {
+      if (
+        (normalized.command === undefined || String(normalized.command || "").trim() === "") &&
+        typeof normalized.cmd === "string"
+      ) {
+        normalized.command = normalized.cmd;
+      }
+      if (
+        (normalized.command === undefined || String(normalized.command || "").trim() === "") &&
+        typeof normalized.shell_command === "string"
+      ) {
+        normalized.command = normalized.shell_command;
+      }
+      if (
+        (normalized.command === undefined || String(normalized.command || "").trim() === "") &&
+        typeof normalized.arguments === "string"
+      ) {
+        normalized.command = normalized.arguments;
+      }
+      if (
+        (normalized.timeoutMs === undefined || normalized.timeoutMs === null) &&
+        normalized.timeout_ms !== undefined
+      ) {
+        normalized.timeoutMs = normalized.timeout_ms;
+      }
+    }
+    return normalized;
+  };
   const coerceToolArguments = (name, call) => {
+    const normalizedName = String(name || "").toLowerCase();
     const rawArguments = call?.arguments ?? call?.args;
     if (rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)) {
-      return rawArguments;
+      return normalizeKnownArgumentAliases(normalizedName, rawArguments);
     }
 
     if (typeof rawArguments === "string") {
       const trimmed = rawArguments.trim();
       const parsed = safeParseJson(trimmed);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed;
+        return normalizeKnownArgumentAliases(normalizedName, parsed);
       }
 
-      if (trimmed && pathLikeTools.has(String(name || "").toLowerCase())) {
+      if (trimmed && normalizedName === "run_command") {
+        return { command: trimmed };
+      }
+
+      if (trimmed && pathLikeTools.has(normalizedName)) {
         return { path: trimmed };
       }
     }
@@ -222,7 +261,7 @@ function normalizeToolCalls(calls = []) {
         fallback[key] = call[key];
       }
     }
-    return fallback;
+    return normalizeKnownArgumentAliases(normalizedName, fallback);
   };
 
   return calls
@@ -231,6 +270,36 @@ function normalizeToolCalls(calls = []) {
       name: String(call.name),
       arguments: coerceToolArguments(call.name, call)
     }));
+}
+
+function isRateLimitLikeFailure(status, errorText = "") {
+  const code = Number(status || 0);
+  const text = String(errorText || "").toLowerCase();
+  return (
+    code === 429 ||
+    /http\s*429/i.test(String(errorText || "")) ||
+    text.includes("too many requests") ||
+    text.includes("rate limit") ||
+    text.includes("rate_limit") ||
+    text.includes("限流") ||
+    text.includes("请求过于频繁")
+  );
+}
+
+function isRateLimitUpstreamFailure(response, payload) {
+  if (!response || response.ok) {
+    return false;
+  }
+  const status = Number(response?.status || 0);
+  const messageText = String(payload?.message || payload?.error || payload?.rawText || "");
+  if (!isRateLimitLikeFailure(status, messageText)) {
+    return false;
+  }
+  // Distinguish hard quota exhaustion from transient throttling.
+  if (isQuotaLikeFailure(status, messageText)) {
+    return false;
+  }
+  return true;
 }
 
 function getMissingRequiredToolArgument(call = {}) {
@@ -770,6 +839,10 @@ function isRetryableUpstreamFailure(response, payload) {
     return true;
   }
 
+  if (isRateLimitUpstreamFailure(response, payload)) {
+    return true;
+  }
+
   return UPSTREAM_RETRYABLE_PATTERN.test(messageText);
 }
 
@@ -787,6 +860,13 @@ function formatRemoteServiceError(settings, response, payload) {
       return "当前云端模型调用失败：账号可用余额/额度为 0，已被服务端拒绝（HTTP 402）。请先充值或切换到其他可用模型。";
     }
     return "当前云端模型调用失败：服务端返回 HTTP 402，当前账号或模型通道不可用。请稍后重试，或切换到其他云端模型。";
+  }
+
+  if (status === 429 || (status === 400 && /HTTP\s*429/i.test(rawMessage))) {
+    if (isQuotaLikeFailure(status, rawMessage)) {
+      return "当前云端模型调用失败：账号额度不足或配额耗尽（HTTP 429）。请补充额度或切换其他可用模型。";
+    }
+    return "当前云端模型触发限流（HTTP 429）。系统已自动退避重试；若仍失败，请稍后再试或切换模型。";
   }
 
   return rawMessage || `HTTP ${status || 500}`;
@@ -1356,6 +1436,9 @@ async function runRealVgoPrompt({
   let payloadTooLargeRetryCount = 0;
   let autoContinueNudgeCount = 0;
   let networkRetryUsed = 0;
+  let upstreamRateLimitRetryUsed = 0;
+  let consecutiveMissingArgumentSteps = 0;
+  let totalMissingArgumentFailures = 0;
 
   const requestWithRetry = async (targetModel) => {
     let attempt = 0;
@@ -1456,12 +1539,30 @@ async function runRealVgoPrompt({
     payload = nextPayload;
 
     let messageText = formatRemoteServiceError(settings, response, payload);
+    if (
+      isRateLimitUpstreamFailure(response, payload) &&
+      upstreamRateLimitRetryUsed < MAX_UPSTREAM_RATE_LIMIT_RETRIES
+    ) {
+      upstreamRateLimitRetryUsed += 1;
+      const waitMs = computeRetryDelayMs(upstreamRateLimitRetryUsed + 1) + 1000 * upstreamRateLimitRetryUsed;
+      emitEvent(onEvent, rawEvents, {
+        type: "task_status",
+        status: "retrying",
+        message: `上游模型限流，正在自动退避重试（${upstreamRateLimitRetryUsed}/${MAX_UPSTREAM_RATE_LIMIT_RETRIES}）...`
+      });
+      await wait(waitMs);
+      ({ response, payload } = await requestWithRetry(usedModel));
+      messageText = formatRemoteServiceError(settings, response, payload);
+    }
+
     if (isRetryableUpstreamFailure(response, payload) && !upstreamRetryUsed) {
       upstreamRetryUsed = true;
       emitEvent(onEvent, rawEvents, {
         type: "task_status",
         status: "retrying",
-        message: "上游通道连接失败，正在自动重试..."
+        message: isRateLimitUpstreamFailure(response, payload)
+          ? "上游模型限流，正在自动重试..."
+          : "上游通道连接失败，正在自动重试..."
       });
       await wait(1200);
       ({ response, payload } = await requestWithRetry(usedModel));
@@ -1475,7 +1576,9 @@ async function runRealVgoPrompt({
         emitEvent(onEvent, rawEvents, {
           type: "task_status",
           status: "fallback_model",
-          message: `上游通道仍不可用，正在切换备用模型：${candidateModel}`
+          message: isRateLimitUpstreamFailure(response, payload)
+            ? `当前模型触发限流，正在切换备用模型：${candidateModel}`
+            : `上游通道仍不可用，正在切换备用模型：${candidateModel}`
         });
         usedModel = candidateModel;
         ({ response, payload } = await requestWithRetry(usedModel));
@@ -2035,6 +2138,14 @@ async function runRealVgoPrompt({
     const hasGenericMissingArgumentFailure = results.some(
       (result) => !result.ok && /Missing required argument:/i.test(String(result.summary || ""))
     );
+    if (hasGenericMissingArgumentFailure) {
+      consecutiveMissingArgumentSteps += 1;
+      totalMissingArgumentFailures += results.filter(
+        (result) => !result.ok && /Missing required argument:/i.test(String(result.summary || ""))
+      ).length;
+    } else {
+      consecutiveMissingArgumentSteps = 0;
+    }
 
     activeHistory.push({
       role: "assistant",
@@ -2061,6 +2172,36 @@ async function runRealVgoPrompt({
         content:
           "你刚才的工具调用缺少必填参数。请下一条只输出一个完整工具调用，必须补全该工具的必填字段（例如 run_command 需要 command，read_file/list_dir/open_path 需要 path，write_file 需要 path 和 content）。不要输出解释。"
       });
+    }
+
+    if (
+      hasGenericMissingArgumentFailure &&
+      missingArgumentRetrySent &&
+      (consecutiveMissingArgumentSteps >= 2 || totalMissingArgumentFailures >= 4)
+    ) {
+      const exhaustedMessage =
+        "工具调用连续缺少必填参数，已停止自动重试以避免死循环。请改用明确完整的工具调用（例如 run_command 必须包含 command）后再继续。";
+      emitEvent(onEvent, rawEvents, {
+        type: "task_status",
+        status: "failed",
+        message: exhaustedMessage
+      });
+      return {
+        ok: false,
+        exitCode: 1,
+        sessionId,
+        text: exhaustedMessage,
+        error: "tool_argument_retry_exhausted",
+        rawEvents,
+        remoteConversationId: "",
+        remoteTitle: "",
+        usedModel,
+        actualChannel: "real-remote-agent",
+        actualContextWindow: contextWindow,
+        usageInputTokens: usage.inputTokens,
+        usageOutputTokens: usage.outputTokens,
+        usageTotalTokens: usage.totalTokens
+      };
     }
   }
 
@@ -2157,6 +2298,13 @@ async function runLocalPrompt({
       stream: false
     };
     const authorizationHeader = resolveAuthorizationHeaderValue(remote, endpointPlan.requestUrl);
+    const requestBody = JSON.stringify(
+      endpointPlan.mode === "openai"
+        ? openAiPayload
+        : endpointPlan.mode === "ollama"
+          ? ollamaPayload
+          : requestPayload
+    );
     let response = null;
     let lastError = null;
     for (let attempt = 1; attempt <= DEFAULT_REMOTE_NETWORK_RETRIES; attempt += 1) {
@@ -2173,13 +2321,7 @@ async function runLocalPrompt({
             "Content-Type": "application/json",
             ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
           },
-          body: JSON.stringify(
-            endpointPlan.mode === "openai"
-              ? openAiPayload
-              : endpointPlan.mode === "ollama"
-                ? ollamaPayload
-                : requestPayload
-          )
+          body: requestBody
         });
         clearTimeout(timer);
         break;
@@ -2197,7 +2339,33 @@ async function runLocalPrompt({
       throw lastError || new Error("remote_local_prompt_failed");
     }
 
-    const payload = await parseJsonResponse(response);
+    let payload = await parseJsonResponse(response);
+    let localRateLimitRetryUsed = 0;
+    while (
+      !response.ok &&
+      isRateLimitLikeFailure(response.status, payload?.error?.message || payload?.error || payload?.message || payload?.rawText || "") &&
+      !isQuotaLikeFailure(response.status, payload?.error?.message || payload?.error || payload?.message || payload?.rawText || "") &&
+      localRateLimitRetryUsed < MAX_UPSTREAM_RATE_LIMIT_RETRIES
+    ) {
+      localRateLimitRetryUsed += 1;
+      emitEvent(onEvent, [], {
+        type: "task_status",
+        status: "retrying",
+        message: `上游模型限流，正在自动退避重试（${localRateLimitRetryUsed}/${MAX_UPSTREAM_RATE_LIMIT_RETRIES}）...`
+      });
+      await wait(computeRetryDelayMs(localRateLimitRetryUsed + 1) + 900 * localRateLimitRetryUsed);
+      const retryResponse = await fetch(endpointPlan.requestUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
+        },
+        body: requestBody
+      });
+      response = retryResponse;
+      payload = await parseJsonResponse(retryResponse);
+    }
+
     const text =
       extractOpenAiMessageText(payload) ||
       payload?.message?.content ||
@@ -2281,6 +2449,50 @@ async function runLocalPrompt({
       }
     }
 
+    if (
+      !resolvedResponse.ok &&
+      isRateLimitLikeFailure(resolvedResponse.status, resolvedErrorText) &&
+      !isQuotaLikeFailure(resolvedResponse.status, resolvedErrorText)
+    ) {
+      const fallbackModels = buildFallbackModelCandidates(settings, resolvedUsedModel);
+      for (const fallbackModel of fallbackModels) {
+        try {
+          const fallbackPayloadBody =
+            endpointPlan.mode === "openai"
+              ? JSON.stringify({ ...openAiPayload, model: fallbackModel })
+              : endpointPlan.mode === "ollama"
+                ? JSON.stringify({ ...ollamaPayload, model: fallbackModel })
+                : JSON.stringify({ ...requestPayload, model: fallbackModel });
+          const fallbackResponse = await fetch(endpointPlan.requestUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
+            },
+            body: fallbackPayloadBody
+          });
+          const fallbackData = await parseJsonResponse(fallbackResponse);
+          const fallbackText =
+            extractOpenAiMessageText(fallbackData) ||
+            fallbackData?.message?.content ||
+            fallbackData?.output ||
+            fallbackData?.text ||
+            fallbackData?.message ||
+            fallbackData?.rawText ||
+            "";
+          if (fallbackResponse.ok) {
+            resolvedResponse = fallbackResponse;
+            resolvedPayload = fallbackData;
+            resolvedText = `[Auto fallback] ${resolvedUsedModel} rate-limited, switched to ${fallbackModel}.\n\n${fallbackText}`.trim();
+            resolvedErrorDetail = "";
+            resolvedErrorText = "";
+            resolvedUsedModel = fallbackData.model || fallbackModel;
+            break;
+          }
+        } catch {}
+      }
+    }
+
     const finalAuthFailure =
       !resolvedResponse.ok &&
       (resolvedResponse.status === 401 ||
@@ -2306,15 +2518,61 @@ async function runLocalPrompt({
         .join("\n\n");
       const extractedToolCalls = extractToolCalls(toolExtractionSource);
       if (extractedToolCalls.length) {
+        let missingArgumentFailures = 0;
         for (const call of extractedToolCalls) {
+          const missingArgument = getMissingRequiredToolArgument(call);
+          if (missingArgument) {
+            const blockedResult = {
+              ok: false,
+              name: call.name,
+              summary: `Missing required argument: ${missingArgument}`,
+              output: "Tool call was skipped because required parameters were incomplete."
+            };
+            missingArgumentFailures += 1;
+            emitEvent(onEvent, localRawEvents, {
+              type: "tool_result",
+              tool: call.name,
+              ok: false,
+              summary: blockedResult.summary,
+              output: blockedResult.output
+            });
+            if (missingArgumentFailures >= 2) {
+              emitEvent(onEvent, localRawEvents, {
+                type: "task_status",
+                status: "failed",
+                message: "工具调用参数连续不完整，已停止自动执行，避免死循环。"
+              });
+              break;
+            }
+            continue;
+          }
+
           emitEvent(onEvent, localRawEvents, {
             type: "task_status",
             status: "tool_running",
             message: `正在执行工具：${call.name}`
           });
-          const toolResult = await executeToolCall(workspace, call, {
+          let toolResult = await executeToolCall(workspace, call, {
             accessScope: settings?.access?.scope || "workspace-and-desktop"
           });
+          if (!toolResult.ok) {
+            const fallbackCall = buildToolFallbackCall(call, toolResult);
+            if (fallbackCall) {
+              const fallbackResult = await executeToolCall(workspace, fallbackCall, {
+                accessScope: settings?.access?.scope || "workspace-and-desktop"
+              });
+              if (fallbackResult.ok) {
+                toolResult = {
+                  ...fallbackResult,
+                  name: call.name,
+                  ok: true,
+                  recovered: true,
+                  summary: `${call.name} 主方案失败（${toolResult.summary}），已自动改用 ${fallbackCall.name} 完成：${fallbackResult.summary}`,
+                  output: String(fallbackResult.output || "")
+                };
+              }
+            }
+          }
           emitEvent(onEvent, localRawEvents, {
             type: "tool_result",
             tool: call.name,

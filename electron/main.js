@@ -49,6 +49,18 @@ const sessionEventCounters = new Map();
 const MAIN_LOG_DIR = path.join(process.cwd(), "logs");
 const MAIN_LOG_FILE = path.join(MAIN_LOG_DIR, "main-process.log");
 
+if (process.platform === "win32") {
+  try {
+    app.setAppUserModelId("com.vgo.code");
+  } catch {}
+}
+try {
+  app.setName("VGO CODE");
+} catch {}
+try {
+  process.title = "VGO CODE";
+} catch {}
+
 function logMainEvent(event, payload = {}) {
   try {
     fs.mkdirSync(MAIN_LOG_DIR, { recursive: true });
