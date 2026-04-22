@@ -539,6 +539,29 @@ function buildSkillPreflightNudge(skills = []) {
   ].join("\n");
 }
 
+function resolveSkillRequiredInspectionPaths(skills = [], workspace = "") {
+  const normalizedWorkspace = String(workspace || "").trim();
+  if (!normalizedWorkspace) {
+    return skills;
+  }
+
+  return skills.map((skill) => {
+    const requiredInspectionPaths = (skill.requiredInspectionPaths || []).filter((relativePath) => {
+      try {
+        const absolutePath = path.resolve(normalizedWorkspace, relativePath);
+        return fs.existsSync(absolutePath) && fs.statSync(absolutePath).isFile();
+      } catch (_error) {
+        return false;
+      }
+    });
+
+    return {
+      ...skill,
+      requiredInspectionPaths
+    };
+  });
+}
+
 async function sendOllamaRequest({ baseUrl, model, messages, signal, onChunk, timeout = 300000, numPredict = 16384 }) {
   logRuntime("request:start", { model, baseUrl });
   
@@ -1506,7 +1529,8 @@ async function runOllamaPrompt({
     : audioVideoTask
       ? detectWorkflow(workflowPrompt)
       : detectWorkflow(normalizedPrompt);
-  const activeSkills = skillRegistry.detectRelevantSkills(normalizedPrompt);
+  const detectedSkills = skillRegistry.detectRelevantSkills(normalizedPrompt);
+  const activeSkills = resolveSkillRequiredInspectionPaths(detectedSkills, workspace);
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
   let workflowProbe = null;
   let discoveredSkills = [];
@@ -1979,7 +2003,7 @@ async function runOllamaPrompt({
                     ...unfinishedReadPaths.map((filePath, index) => `${index + 1}. ${filePath}`),
                     `Call the next required tool now for ${nextRequiredPath}.`,
                     "Use the exact absolute file paths listed above.",
-                    "Do not switch to a different workspace and do not use relative paths like package.json or src/App.tsx by themselves.",
+                    "Do not switch to a different workspace and do not use relative paths by themselves.",
                     "Respond with tool calls first. Do not only describe the next action.",
                     "Only give the final answer after every required file above has been inspected or a concrete blocker prevents completion."
                   ].join("\n")

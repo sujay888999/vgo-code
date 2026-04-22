@@ -674,6 +674,29 @@ function buildSkillPreflightNudge(skills = []) {
   ].join("\n");
 }
 
+function resolveSkillRequiredInspectionPaths(skills = [], workspace = "") {
+  const normalizedWorkspace = String(workspace || "").trim();
+  if (!normalizedWorkspace) {
+    return skills;
+  }
+
+  return skills.map((skill) => {
+    const requiredInspectionPaths = (skill.requiredInspectionPaths || []).filter((relativePath) => {
+      try {
+        const absolutePath = path.resolve(normalizedWorkspace, relativePath);
+        return fs.existsSync(absolutePath) && fs.statSync(absolutePath).isFile();
+      } catch (_error) {
+        return false;
+      }
+    });
+
+    return {
+      ...skill,
+      requiredInspectionPaths
+    };
+  });
+}
+
 async function sendRealVgoRequest({ token, model, activeHistory, signal }) {
   logRuntime("request:start", {
     model,
@@ -1393,7 +1416,8 @@ async function runRealVgoPrompt({
 }) {
   const token = settings.vgoAI.accessToken;
   const initialModel = pickPreferredModel(settings);
-  const activeSkills = skillRegistry.detectRelevantSkills(prompt);
+  const detectedSkills = skillRegistry.detectRelevantSkills(prompt);
+  const activeSkills = resolveSkillRequiredInspectionPaths(detectedSkills, workspace);
   const isRepairTask =
     protocol.promptRequiresRepair(prompt) || activeSkills.some((skill) => skill.id === "self-heal");
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
@@ -1887,7 +1911,7 @@ async function runRealVgoPrompt({
                   ...unfinishedReadPaths.map((filePath, index) => `${index + 1}. ${filePath}`),
                   `Call the next required tool now for ${nextRequiredPath}.`,
                   "Use the exact absolute file paths listed above.",
-                  "Do not switch to a different workspace and do not use relative paths like package.json or src/App.tsx by themselves.",
+                  "Do not switch to a different workspace and do not use relative paths by themselves.",
                   "Respond with tool calls first. Do not only describe the next action.",
                   "Only give the final answer after every required file above has been inspected or a concrete blocker prevents completion."
                 ].join("\n")
@@ -2237,7 +2261,8 @@ async function runLocalPrompt({
   const normalizedModelId = normalizeRemoteModelId(remote.model);
   const baseUrl = (remote.baseUrl || "").trim().replace(/\/+$/, "");
   const endpointPlan = resolveLocalProviderEndpoint(baseUrl, remote.provider);
-  const activeSkills = skillRegistry.detectRelevantSkills(prompt);
+  const detectedSkills = skillRegistry.detectRelevantSkills(prompt);
+  const activeSkills = resolveSkillRequiredInspectionPaths(detectedSkills, workspace);
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
   const skillWorkflowNudge = skillRegistry.buildSkillWorkflowNudge(activeSkills);
 
