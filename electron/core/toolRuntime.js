@@ -274,7 +274,15 @@ function isCommandSafe(command) {
 }
 
 function runCommand(workspace, args = {}, options = {}) {
-  const command = String(args.command || "").trim();
+  const command = String(
+    args.command ||
+    args.cmd ||
+    args.shell_command ||
+    args.shellCommand ||
+    args.value ||
+    args.input ||
+    ""
+  ).trim();
   if (!command) {
     return { ok: false, name: "run_command", summary: "Missing required argument: command", output: "" };
   }
@@ -991,6 +999,9 @@ const TOOL_MAP = {
 
 const TOOL_ALIASES = {
   "cli-mcp-server_run_command": "run_command",
+  "vgo-music": "run_command",
+  "vgo_music": "run_command",
+  "vgomusic": "run_command",
   copy: "copy_file",
   move: "move_file",
   rename: "rename_file",
@@ -1011,12 +1022,34 @@ const DANGEROUS_TOOLS = new Set([
 
 function normalizeToolName(name = "") {
   const raw = String(name || "").trim();
-  return TOOL_ALIASES[raw] || raw;
+  const lowered = raw.toLowerCase();
+  return TOOL_ALIASES[raw] || TOOL_ALIASES[lowered] || raw;
 }
 
 async function executeToolCall(workspace, call = {}, options = {}) {
-  const toolName = normalizeToolName(call.name);
-  const handler = TOOL_MAP[toolName];
+  const args =
+    call.arguments && typeof call.arguments === "object"
+      ? call.arguments
+      : call.args && typeof call.args === "object"
+        ? call.args
+        : {};
+  const hasCommandLikeArg = Boolean(
+    String(
+      args.command ||
+      args.cmd ||
+      args.shell_command ||
+      args.shellCommand ||
+      args.value ||
+      args.input ||
+      ""
+    ).trim()
+  );
+  let toolName = normalizeToolName(call.name);
+  let handler = TOOL_MAP[toolName];
+  if (!handler && hasCommandLikeArg) {
+    toolName = "run_command";
+    handler = TOOL_MAP[toolName];
+  }
   if (!handler) {
     return {
       ok: false,
@@ -1025,13 +1058,6 @@ async function executeToolCall(workspace, call = {}, options = {}) {
       output: ""
     };
   }
-
-  const args =
-    call.arguments && typeof call.arguments === "object"
-      ? call.arguments
-      : call.args && typeof call.args === "object"
-        ? call.args
-        : {};
 
   if (DANGEROUS_TOOLS.has(toolName) && typeof options.confirm === "function") {
     const approved = await options.confirm({ name: toolName, arguments: args });
