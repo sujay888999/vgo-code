@@ -1,4 +1,4 @@
-﻿const fs = require("node:fs");
+const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { executeToolCall } = require("./toolRuntime");
@@ -6,6 +6,10 @@ const protocol = require("./agentProtocol");
 const modelAdapters = require("./modelAdapterRegistry");
 const familyTools = require("./modelFamilyToolAdapters");
 const skillRegistry = require("./skillRegistry");
+const {
+  getMissingRequiredToolArgument: resilienceGetMissingRequiredToolArgument,
+  executeToolCallWithResilience
+} = require("./toolResilience");
 
 const DEFAULT_MAX_AGENT_STEPS = 120;
 const MIN_AGENT_STEPS = 20;
@@ -2005,7 +2009,7 @@ async function runRealVgoPrompt({
         didCallWriteTool = true;
       }
 
-      const missingArgument = getMissingRequiredToolArgument(call);
+      const missingArgument = resilienceGetMissingRequiredToolArgument(call);
       if (missingArgument) {
         const blockedResult = {
           ok: false,
@@ -2082,57 +2086,27 @@ async function runRealVgoPrompt({
         message: `正在执行工具：${call.name}`
       });
 
-      let result = await executeToolCall(workspace, call, {
-        accessScope: settings?.access?.scope || "workspace-and-desktop",
-        confirm: (toolCall) =>
-          requestToolPermission(toolCall, (permissionEvent) => {
-            emitEvent(onEvent, rawEvents, {
-              ...permissionEvent,
-              step: step + 1
-            });
+      const execution = await executeToolCallWithResilience({
+        workspace,
+        call,
+        executeToolCall,
+        executeOptions: {
+          accessScope: settings?.access?.scope || "workspace-and-desktop",
+          confirm: (toolCall) =>
+            requestToolPermission(toolCall, (permissionEvent) => {
+              emitEvent(onEvent, rawEvents, {
+                ...permissionEvent,
+                step: step + 1
+              });
+            })
+        },
+        emitStatus: (event) =>
+          emitEvent(onEvent, rawEvents, {
+            ...event,
+            step: step + 1
           })
       });
-
-      if (!result.ok) {
-        const fallbackCall = buildToolFallbackCall(call, result);
-        if (fallbackCall) {
-          emitEvent(onEvent, rawEvents, {
-            type: "task_status",
-            status: "fallback_model",
-            message: `主方案失败，正在切换备用方案：${call.name} -> ${fallbackCall.name}`
-          });
-
-          const fallbackResult = await executeToolCall(workspace, fallbackCall, {
-            accessScope: settings?.access?.scope || "workspace-and-desktop",
-            confirm: (toolCall) =>
-              requestToolPermission(toolCall, (permissionEvent) => {
-                emitEvent(onEvent, rawEvents, {
-                  ...permissionEvent,
-                  step: step + 1
-                });
-              })
-          });
-
-          if (fallbackResult.ok) {
-            result = {
-              ...fallbackResult,
-              name: call.name,
-              ok: true,
-              recovered: true,
-              summary: `${call.name} 主方案失败（${result.summary}），已自动改用 ${fallbackCall.name} 完成：${fallbackResult.summary}`,
-              output: String(fallbackResult.output || "")
-            };
-          } else {
-            result = {
-              ...result,
-              summary: `${result.summary}；已尝试备用方案 ${fallbackCall.name}，但仍失败：${fallbackResult.summary}`,
-              output: [String(result.output || ""), String(fallbackResult.output || "")]
-                .filter(Boolean)
-                .join("\n\n")
-            };
-          }
-        }
-      }
+      const result = execution.result;
 
       results.push(result);
       logRuntime("tool:executed", {
@@ -2545,7 +2519,7 @@ async function runLocalPrompt({
       if (extractedToolCalls.length) {
         let missingArgumentFailures = 0;
         for (const call of extractedToolCalls) {
-          const missingArgument = getMissingRequiredToolArgument(call);
+          const missingArgument = resilienceGetMissingRequiredToolArgument(call);
           if (missingArgument) {
             const blockedResult = {
               ok: false,
@@ -2577,27 +2551,16 @@ async function runLocalPrompt({
             status: "tool_running",
             message: `正在执行工具：${call.name}`
           });
-          let toolResult = await executeToolCall(workspace, call, {
-            accessScope: settings?.access?.scope || "workspace-and-desktop"
+          const execution = await executeToolCallWithResilience({
+            workspace,
+            call,
+            executeToolCall,
+            executeOptions: {
+              accessScope: settings?.access?.scope || "workspace-and-desktop"
+            },
+            emitStatus: (event) => emitEvent(onEvent, localRawEvents, event)
           });
-          if (!toolResult.ok) {
-            const fallbackCall = buildToolFallbackCall(call, toolResult);
-            if (fallbackCall) {
-              const fallbackResult = await executeToolCall(workspace, fallbackCall, {
-                accessScope: settings?.access?.scope || "workspace-and-desktop"
-              });
-              if (fallbackResult.ok) {
-                toolResult = {
-                  ...fallbackResult,
-                  name: call.name,
-                  ok: true,
-                  recovered: true,
-                  summary: `${call.name} 主方案失败（${toolResult.summary}），已自动改用 ${fallbackCall.name} 完成：${fallbackResult.summary}`,
-                  output: String(fallbackResult.output || "")
-                };
-              }
-            }
-          }
+          const toolResult = execution.result;
           emitEvent(onEvent, localRawEvents, {
             type: "tool_result",
             tool: call.name,

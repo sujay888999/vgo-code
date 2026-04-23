@@ -1,9 +1,13 @@
-const fs = require("node:fs");
+﻿const fs = require("node:fs");
 const path = require("node:path");
 const { executeToolCall } = require("./toolRuntime");
 const protocol = require("./agentProtocol");
 const modelAdapters = require("./modelAdapterRegistry");
 const skillRegistry = require("./skillRegistry");
+const {
+  getMissingRequiredToolArgument: resilienceGetMissingRequiredToolArgument,
+  executeToolCallWithResilience
+} = require("./toolResilience");
 const { appendEngineLog } = require("./engineLog");
 const {
   detectWorkflow,
@@ -39,8 +43,8 @@ function isRateLimitErrorText(text = "") {
     lower.includes("too many requests") ||
     lower.includes("rate limit") ||
     lower.includes("rate_limit") ||
-    lower.includes("限流") ||
-    lower.includes("请求过于频繁")
+    lower.includes("\u9650\u6d41") ||
+    lower.includes("\u8bf7\u6c42\u8fc7\u4e8e\u9891\u7e41")
   );
 }
 
@@ -846,7 +850,7 @@ function buildUserMessageContent(prompt = "", attachments = []) {
 function stripAttachmentContext(prompt = "") {
   const text = String(prompt || "");
   return text
-    .replace(/\n*\[附件信息\][\s\S]*$/u, "")
+    .replace(/\n*\[(?:\u9644\u4ef6\u4fe1\u606f|Attachment Info)\][\s\S]*$/u, "")
     .replace(/\n*\[Non-image attachments available in this task\][\s\S]*$/u, "")
     .trim();
 }
@@ -858,9 +862,9 @@ function buildMultimodalGuidance(attachments = []) {
   }
 
   return [
-    "当前任务带有图片附件，图片像素已经作为多模态输入随本轮用户消息一起发送给模型。",
-    "请直接基于图片内容进行视觉分析，不要把这次任务误判成“无法访问本地文件系统”。",
-    "如果用户是在让你分析截图、照片、界面或图标，你应当直接描述图中内容、结构、文字和主体。",
+    "检测到图片附件：请先基于多模态视觉能力直接分析图片内容，再决定是否需要调用本地工具。",
+    "如果消息中已附带图片，不要回复“无法查看图片”。",
+    "除非用户明确要求读取二进制结构，否则不要对 .png/.jpg/.jpeg/.webp/.gif/.bmp 调用 read_file。",
     "When image attachments are included, they are already attached as multimodal image inputs in this user message.",
     "Analyze the image content directly with vision capabilities before considering local tools.",
     "Do not claim that you cannot see images if image attachments are already present in this message.",
@@ -888,11 +892,11 @@ function hasAudioVideoAttachments(attachments = []) {
 function buildImageWorkflow() {
   return {
     id: "image-analysis",
-    label: "图片分析",
+    label: "图片分析任务",
     steps: [
-      "识别图片附件并优先使用视觉能力",
-      "直接分析图片主体、内容和风格",
-      "仅在用户明确要求时再检查文件元数据"
+      "优先基于视觉能力直接读取并理解图片内容。",
+      "仅在确有必要时调用本地工具做补充验证。",
+      "输出结构化结论，明确可确认事实与不确定项。"
     ],
     capabilityHints: ["vision"],
     skillQueries: []
@@ -992,9 +996,9 @@ function detectSupplementalSkillQueries(prompt = "", workflow = null, workflowPr
     : [];
 
   const taskIntentPattern =
-    /([a-z]:\\|\/|\.tsx\b|\.ts\b|\.js\b|\.jsx\b|\.json\b|\.md\b|检查|查看|分析|修复|修改|实现|编写|生成|读取|搜索|查找|安装|打开|运行|构建|测试|总结|联网|网页|文档|read|check|analy[sz]e|fix|implement|build|test|search|find|install|open|run|write|create|edit)/i;
+    /([a-z]:\\\\|\/|\.tsx\b|\.ts\b|\.js\b|\.jsx\b|\.json\b|\.md\b|\u68c0\u67e5|\u67e5\u770b|\u5206\u6790|\u4fee\u590d|\u4fee\u6539|\u5b9e\u73b0|\u7f16\u5199|\u751f\u6210|\u8bfb\u53d6|\u641c\u7d22|\u67e5\u627e|\u5b89\u88c5|\u6253\u5f00|\u8fd0\u884c|\u6784\u5efa|\u6d4b\u8bd5|\u603b\u7ed3|\u8054\u7f51|\u7f51\u9875|\u6587\u6863|read|check|analy[sz]e|fix|implement|build|test|search|find|install|open|run|write|create|edit)/i;
   const smallTalkPattern =
-    /^(你好|您好|hi|hello|hey|在吗|在么|早上好|下午好|晚上好|谢谢|thanks|thank you|收到|好的|ok|okay)[!！?？。\s]*$/i;
+    /^(\u4f60\u597d|\u60a8\u597d|hi|hello|hey|\u5728\u5417|\u5728\u4e48|\u65e9\u4e0a\u597d|\u4e0b\u5348\u597d|\u665a\u4e0a\u597d|\u8c22\u8c22|thanks|thank you|\u6536\u5230|\u597d\u7684|ok|okay)[!\uff01?\uff1f\u3002\s]*$/i;
 
   const isTaskLikePrompt =
     explicitBlockingIssues.length > 0 ||
@@ -1225,7 +1229,7 @@ function extractRequestedFilePaths(prompt = "", workspace = "") {
   for (const rawMatch of matches) {
     const cleaned = String(rawMatch || "")
       .trim()
-      .replace(/[，。、；：,.;:？?！!）)\]】]+$/, "");
+      .replace(/[闁挎稑琚埀顒€鍊堕埀顑块檷閳ь剙顭堥埀顒€顑戠槐?:闁挎稒鐔槐鐢告晬?!\]\s]+$/g, "");
     if (!cleaned) {
       continue;
     }
@@ -1311,15 +1315,13 @@ function promptAllowsAutonomousContinuation(prompt = "") {
     return false;
   }
   const autonomyPatterns = [
-    /继续/,
-    /自动/,
-    /自行/,
-    /完整落地/,
-    /完整方案/,
-    /直到完成/,
-    /修复完/,
-    /排查并修复/,
-    /持续执行/,
+    /\u7ee7\u7eed/,
+    /\u81ea\u52a8\u7ee7\u7eed/,
+    /\u4e0d\u8981\u505c/,
+    /\u8dd1\u5b8c/,
+    /\u4e00\u6b21\u6027\u5b8c\u6210/,
+    /\u5b8c\u6574\u6267\u884c/,
+    /\u7ee7\u7eed\u5b8c\u6210/,
     /continue/,
     /keep going/,
     /autonom/i,
@@ -1348,41 +1350,34 @@ function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", work
   }
 
   const continuationPatterns = [
-    /下一步/i,
-    /下一步行动/i,
-    /接下来/i,
-    /继续读取/i,
-    /继续检查/i,
-    /继续分析/i,
-    /将继续/i,
-    /我将继续/i,
-    /根据既定计划/i,
+    /继续思考/i,
+    /继续处理/i,
+    /继续执行/i,
+    /正在思考/i,
+    /thinking/i,
+    /continue/i,
+    /keep going/i,
+    /next step/i,
     /step\s*\d+\s*\/\s*\d+/i
   ];
 
   const pendingActionPatterns = [
-    /首先.*需要/i,
-    /现在.*需要/i,
-    /我需要列出/i,
-    /我需要读取/i,
-    /先读取/i,
-    /先检查/i,
-    /先列出/i,
-    /我将首先/i,
-    /我将先/i
+    /正在执行工具/i,
+    /正在调用工具/i,
+    /准备执行/i,
+    /即将执行/i,
+    /running tool/i,
+    /executing/i
   ];
 
   const finalPatterns = [
-    /最终结论/i,
-    /总结建议/i,
-    /界面优化建议/i,
-    /已完成全部/i,
+    /agent\s*已完成本轮任务/i,
     /任务完成/i,
-    /结论如下/i,
-    /综合来看/i,
-    /已创建/i,
-    /已生成/i,
-    /文件已/i
+    /处理完成/i,
+    /结论[:：]/i,
+    /final answer/i,
+    /done/i,
+    /completed/i
   ];
 
   if (finalPatterns.some((pattern) => pattern.test(normalized))) {
@@ -1444,7 +1439,7 @@ function needsForcedFinalAnswer(text = "", rawEvents = [], prompt = "", workspac
     /2\./.test(String(prompt || "")) &&
     /3\./.test(String(prompt || ""));
   if (promptRequiresStructuredSections) {
-    const hasStructuredAnswer = /(^|\n)\s*1\./.test(normalized) || /(^|\n)\s*1、/.test(normalized);
+    const hasStructuredAnswer = /(^|\n)\s*1\./.test(normalized);
     if (!hasStructuredAnswer) {
       return true;
     }
@@ -1478,21 +1473,15 @@ function buildProjectReadFallback(prompt = "", rawEvents = []) {
 
   if (inspectedApp && inspectedMessageList && inspectedMainPanel && inspectedComposer) {
     return [
-      "1. 当前会话窗口的真实结构",
-      "当前主会话界面由 App.tsx 统筹状态与事件，MainPanel.tsx 承载主聊天区域，MessageList.tsx 负责消息渲染，Composer.tsx 负责输入、附件和发送动作。这说明现在的主结构已经是“主会话窗口 + 组件分层协作”，而不是单文件拼装。",
+      "已完成关键前端文件检查：",
+      `- ${inspectedPaths.join("\n- ")}`,
       "",
-      "2. 消息逐步输出链路是否已经打通",
-      "从这几个文件的职责分配来看，逐步输出链路已经在代码结构层打通：App.tsx 负责接收运行事件和状态刷新，MessageList.tsx 负责把助手消息渲染到列表中。结合前面的实测结果，可以判断当前链路已经具备渐进展示能力，剩余问题主要在不同模型的收尾稳定性，而不是前端渲染入口缺失。",
+      "建议下一步：",
+      "1. 在 App.tsx 对接状态流，让推理面板和消息流联动。",
+      "2. 在 MainPanel/MessageList 增加一致的渲染与错误兜底。",
+      "3. 在 Composer 中补齐任务提交与重试入口。",
       "",
-      "3. 输入区与附件链路是否正常",
-      "输入区与附件链路是正常接上的。Composer.tsx 已承担文本输入、附件添加和提交动作，并且这一轮项目中已经补上了结构化附件提交能力，所以文本与附件会一起进入桌面端执行链，而不是只把附件路径拼成普通文本。",
-      "",
-      "4. 3 条最值得继续优化的前端建议",
-      "1. 把 skill 安装和权限提示从主聊天区进一步降噪，避免抢占主任务结果。",
-      "2. 继续压实本地模型的最终收尾提示，减少“文件已读完但答案收空”的情况。",
-      "3. 在任务面板里区分“前置步骤成功”和“最终模型失败”，避免整条链路看起来全部报错。",
-      "",
-      `已检查文件：${inspectedPaths.join("；")}`
+      "可继续执行：按模块提交补丁并逐项验证。"
     ].join("\n");
   }
 
@@ -1552,12 +1541,12 @@ async function runOllamaPrompt({
     type: "workflow_selected",
     workflowId: workflow.id,
     label: workflow.label,
-    detail: `已切换到 ${workflow.label} 工作流`
+    detail: `已选择工作流：${workflow.label}。`
   });
 
   emitEvent({
     type: "plan",
-    summary: `${workflow.label} 工作流`,
+    summary: `${workflow.label} 执行计划`,
     steps: workflow.steps
   });
 
@@ -1565,7 +1554,7 @@ async function runOllamaPrompt({
     emitEvent({
       type: "task_status",
       status: "thinking",
-      message: "已识别为音视频任务，正在检查媒体文件与转写能力..."
+      message: "正在分析音视频任务，并检查当前环境可用能力..."
     });
 
     workflowProbe = probeAudioVideoWorkflow(workflowPrompt, workspace);
@@ -1592,7 +1581,7 @@ async function runOllamaPrompt({
           arguments: {
             workflow: workflow.label,
             query: workflow.skillQueries.join(", "),
-            reason: "检测到当前任务存在能力缺口，是否允许扫描本机可用 skills 补充执行策略？"
+            reason: "检测到能力缺口，申请搜索并推荐可安装技能以补齐执行链路。"
           }
         });
 
@@ -1606,14 +1595,12 @@ async function runOllamaPrompt({
             settings
           });
 
-      emitEvent({
-        type: "skill_suggestions",
-        workflowId: workflow.id,
-        detail: discoveredSkills.length
-          ? `已启用 ${discoveredSkills.length} 个技能增强`
-          : "",
-        skills: discoveredSkills
-      });
+          emitEvent({
+            type: "skill_suggestions",
+            workflowId: workflow.id,
+            detail: discoveredSkills.length ? `已发现 ${discoveredSkills.length} 个相关技能。` : "",
+            skills: discoveredSkills
+          });
 
           if (!discoveredSkills.length) {
             const installableSkills = discoverInstallableSkills({
@@ -1631,7 +1618,7 @@ async function runOllamaPrompt({
                 arguments: {
                   name: candidate.name,
                   sourcePath: candidate.path,
-                  reason: "需要安装本机可用 skill 来补足当前任务缺少的能力。"
+                  reason: "当前任务缺少关键技能，申请安装候选技能以继续执行。"
                 }
               });
 
@@ -1658,7 +1645,7 @@ async function runOllamaPrompt({
                   type: "skill_suggestions",
                   workflowId: workflow.id,
                   detail: discoveredSkills.length
-                    ? `已安装 ${candidate.name}，当前共 ${discoveredSkills.length} 个技能增强`
+                    ? `技能 ${candidate.name} 安装后，已识别 ${discoveredSkills.length} 个相关技能。`
                     : "",
                   skills: discoveredSkills
                 });
@@ -1686,8 +1673,8 @@ async function runOllamaPrompt({
         query: supplementalSkillQueries.join(", "),
         reason:
           workflowProbe?.blockingIssues?.length
-            ? "检测到当前任务存在能力缺口，是否允许扫描本机可用 skills 补充执行策略？"
-            : "检测到当前任务可能需要额外 skill，是否允许扫描并补充可用技能？"
+            ? "检测到任务存在能力缺口，申请搜索补充技能。"
+            : "申请搜索可提升当前任务完成率的补充技能。"
       }
     });
 
@@ -1701,7 +1688,7 @@ async function runOllamaPrompt({
         type: "skill_suggestions",
         workflowId: workflow.id,
         detail: discoveredSkills.length
-          ? `已启用 ${discoveredSkills.length} 个技能增强`
+          ? `已发现 ${discoveredSkills.length} 个候选技能。`
           : "",
         skills: discoveredSkills
       });
@@ -1727,7 +1714,7 @@ async function runOllamaPrompt({
           arguments: {
             name: candidate.name,
             sourcePath: candidate.path,
-            reason: "需要安装本机可用 skill 以继续完成当前任务。"
+            reason: "申请安装候选技能，以提升当前任务执行成功率。"
           }
         });
 
@@ -1750,7 +1737,7 @@ async function runOllamaPrompt({
             type: "skill_suggestions",
             workflowId: workflow.id,
             detail: discoveredSkills.length
-              ? `已安装并启用 ${candidate.name}，当前已可继续使用补充 skill。`
+              ? `已安装技能 ${candidate.name}，当前可用相关技能数：${discoveredSkills.length}。`
               : installResult.summary,
             skills: discoveredSkills
           });
@@ -1779,13 +1766,13 @@ async function runOllamaPrompt({
       exitCode: 1,
       sessionId,
       text: [
-        "当前任务已识别为音视频处理，但本机缺少可用的转写能力，无法直接完成执行。",
-        `阻塞项：${workflowProbe.blockingIssues.join("；")}`,
-        workflowProbe.mediaPath ? `媒体文件：${workflowProbe.mediaPath}` : "",
-        "安装引导：python -m pip install -U openai-whisper",
+        "音视频任务缺少必要转录能力，暂时无法稳定执行。",
+        "缺失能力: " + workflowProbe.blockingIssues.join(", "),
+        workflowProbe.mediaPath ? "媒体文件: " + workflowProbe.mediaPath : "",
+        "建议先安装: python -m pip install -U openai-whisper",
         discoveredSkills.length
-          ? `已找到可参考的本机 skills：${discoveredSkills.map((item) => item.name).join("、")}`
-          : "未找到足够匹配的本机 skills 来补足该能力。"
+          ? "可用技能建议: " + discoveredSkills.map((item) => item.name).join(", ")
+          : "当前未检索到可直接安装的技能建议。"
       ]
         .filter(Boolean)
         .join("\n"),
@@ -1819,7 +1806,7 @@ async function runOllamaPrompt({
         ok: false,
         exitCode: 130,
         sessionId,
-        text: "本轮任务已手动停止。",
+        text: "任务已被用户中断。",
         error: "aborted_by_user",
         rawEvents,
         usedModel: model,
@@ -1830,7 +1817,7 @@ async function runOllamaPrompt({
     emitEvent({
       type: "task_status",
       status: step === 0 ? "thinking" : "continuing",
-      message: "正在思考..."
+      message: "正在思考并规划下一步执行..."
     });
 
     if (step === 0) {
@@ -1850,7 +1837,8 @@ async function runOllamaPrompt({
         if (!hasProjectConfig) {
           messages.push({
             role: "user",
-            content: "重要提示：当前工作目录没有项目配置文件（如 package.json、tsconfig.json、src/、electron/ 等）。这是一个空白目录。如果用户要求创建新文件（如 .tsx、.py、.js 等），直接使用 write_file 工具创建，不要尝试读取不存在的配置文件。"
+            content:
+              "当前目录看起来不是标准项目目录。请优先定位并读取 package.json、tsconfig.json、src/ 或 electron/ 等关键文件，再执行 write_file。"
           });
         }
       } catch (e) {
@@ -1892,7 +1880,12 @@ async function runOllamaPrompt({
           emitEvent({
             type: "task_status",
             status: "retrying",
-            message: `上游模型限流，正在自动退避重试（${rateLimitRetryUsed}/${MAX_OLLAMA_RATE_LIMIT_RETRIES}）...`
+            message:
+              "请求触发限流，正在自动重试 (" +
+              rateLimitRetryUsed +
+              "/" +
+              MAX_OLLAMA_RATE_LIMIT_RETRIES +
+              ")..."
           });
           await new Promise((resolve) => setTimeout(resolve, 900 * rateLimitRetryUsed));
           step -= 1;
@@ -1903,7 +1896,7 @@ async function runOllamaPrompt({
           ok: false,
           exitCode: 1,
           sessionId,
-          text: `Ollama 错误: ${response.error}`,
+          text: "Ollama 请求失败: " + response.error,
           error: response.error,
           rawEvents,
           usedModel: model,
@@ -2000,8 +1993,8 @@ async function runOllamaPrompt({
                     "Continue autonomously.",
                     "Do not stop at a partial progress summary.",
                     "The task is not complete yet because these required files have not been inspected:",
-                    ...unfinishedReadPaths.map((filePath, index) => `${index + 1}. ${filePath}`),
-                    `Call the next required tool now for ${nextRequiredPath}.`,
+                    ...unfinishedReadPaths.map((filePath, index) => String(index + 1) + ". " + filePath),
+                    "Call the next required tool now for " + nextRequiredPath + ".",
                     "Use the exact absolute file paths listed above.",
                     "Do not switch to a different workspace and do not use relative paths by themselves.",
                     "Respond with tool calls first. Do not only describe the next action.",
@@ -2029,7 +2022,7 @@ async function runOllamaPrompt({
           /2\./.test(String(prompt || "")) &&
           /3\./.test(String(prompt || ""));
         const structuredAnswerPresent =
-          /(^|\n)\s*1\./.test(String(finalText || "")) || /(^|\n)\s*1、/.test(String(finalText || ""));
+          /(^|\n)\s*1\./.test(String(finalText || ""));
         const stillDeflectingTask =
           String(finalText || "").includes("\u8bf7\u63d0\u4f9b") &&
           (String(finalText || "").includes("\u5177\u4f53\u4efb\u52a1") ||
@@ -2064,7 +2057,7 @@ async function runOllamaPrompt({
             ok: false,
             exitCode: 130,
             sessionId,
-            text: "本轮任务已手动停止。",
+            text: "任务已被用户中断。",
             error: "aborted_by_user",
             rawEvents,
             usedModel: model,
@@ -2072,12 +2065,12 @@ async function runOllamaPrompt({
           };
         }
 
-        const missingArgument = getMissingRequiredToolArgument(call);
+        const missingArgument = resilienceGetMissingRequiredToolArgument(call);
         if (missingArgument) {
           const blockedResult = {
             ok: false,
             name: call.name,
-            summary: `Missing required argument: ${missingArgument}`,
+            summary: "Missing required argument: " + missingArgument,
             output: "Tool call was skipped because required parameters were incomplete."
           };
           toolResults.push(blockedResult);
@@ -2100,54 +2093,23 @@ async function runOllamaPrompt({
         emitEvent({
           type: "task_status",
           status: "tool_running",
-          message: `正在执行工具：${call.name}`
+          message: "正在执行工具: " + call.name
         });
 
-        let result = await executeToolCall(workspace, call, {
-          accessScope: settings?.access?.scope || "workspace-and-desktop",
-          confirm: (toolCall) =>
-            requestToolPermission(toolCall, (permissionEvent) => {
-              emitEvent({ ...permissionEvent, step: step + 1 });
-            })
+        const execution = await executeToolCallWithResilience({
+          workspace,
+          call,
+          executeToolCall,
+          executeOptions: {
+            accessScope: settings?.access?.scope || "workspace-and-desktop",
+            confirm: (toolCall) =>
+              requestToolPermission(toolCall, (permissionEvent) => {
+                emitEvent({ ...permissionEvent, step: step + 1 });
+              })
+          },
+          emitStatus: (event) => emitEvent({ ...event, step: step + 1 })
         });
-
-        if (!result.ok) {
-          const fallbackCall = buildToolFallbackCall(call, result);
-          if (fallbackCall) {
-            emitEvent({
-              type: "task_status",
-              status: "fallback_model",
-              message: `主方案失败，正在切换备用方案：${call.name} -> ${fallbackCall.name}`
-            });
-
-            const fallbackResult = await executeToolCall(workspace, fallbackCall, {
-              accessScope: settings?.access?.scope || "workspace-and-desktop",
-              confirm: (toolCall) =>
-                requestToolPermission(toolCall, (permissionEvent) => {
-                  emitEvent({ ...permissionEvent, step: step + 1 });
-                })
-            });
-
-            if (fallbackResult.ok) {
-              result = {
-                ...fallbackResult,
-                name: call.name,
-                ok: true,
-                recovered: true,
-                summary: `${call.name} 主方案失败（${result.summary}），已自动改用 ${fallbackCall.name} 完成：${fallbackResult.summary}`,
-                output: String(fallbackResult.output || "")
-              };
-            } else {
-              result = {
-                ...result,
-                summary: `${result.summary}；已尝试备用方案 ${fallbackCall.name}，但仍失败：${fallbackResult.summary}`,
-                output: [String(result.output || ""), String(fallbackResult.output || "")]
-                  .filter(Boolean)
-                  .join("\n\n")
-              };
-            }
-          }
-        }
+        const result = execution.result;
 
         toolResults.push(result);
         logRuntime("tool:executed", { tool: call.name, ok: result.ok, summary: result.summary });
@@ -2172,7 +2134,8 @@ async function runOllamaPrompt({
         writeArgumentRetrySent = true;
         messages.push({
           role: "user",
-          content: "提示：目录为空，不需要读取配置文件。请直接根据用户需求创建文件。如果用户要求创建新文件，立即调用 write_file 工具，path 参数写文件名（如 TestComponent.tsx），content 参数写完整代码内容。不要再尝试读取不存在的文件。"
+          content:
+            "检测到目录为空且多次读取失败。请先创建最小可运行文件，再使用 write_file，并确保包含 path 与 content 参数。"
         });
       }
 
@@ -2199,10 +2162,7 @@ async function runOllamaPrompt({
         messages.push({
           role: "user",
           content:
-            "【重要】write_file 调用失败，原因是 content 参数被截断。请使用分段写入策略：\n" +
-            "1. 先用 write_file 写文件的前半部分（函数定义、import 等）\n" +
-            "2. 然后用 append_file 追加剩余内容（函数实现、测试代码等）\n" +
-            "例如：write_file({\"path\":\"test.py\",\"content\":\"import...\"}) 然后 append_file({\"path\":\"test.py\",\"content\":\"def func():...\"})"
+            "write_file 失败：请检查并补全 content 字段。若需追加内容，可使用 append_file，避免重复覆盖。"
         });
       }
 
@@ -2211,7 +2171,7 @@ async function runOllamaPrompt({
         messages.push({
           role: "user",
           content:
-            "你刚才的工具调用缺少必填参数。请下一条只输出一个完整工具调用，并补全该工具必填字段（如 run_command.command、read_file.path、write_file.path+content）。不要解释。"
+            "工具参数缺失：请在调用前补齐必填字段（如 run_command.command、read_file.path、write_file.path 与 write_file.content）。"
         });
       }
 
@@ -2221,7 +2181,7 @@ async function runOllamaPrompt({
         (consecutiveMissingArgumentSteps >= 2 || totalMissingArgumentFailures >= 4)
       ) {
         const exhaustedMessage =
-          "工具调用连续缺少必填参数，已停止自动重试以避免死循环。请改用完整工具调用后再继续。";
+          "多次重试后仍缺少必填参数，已停止本轮自动执行。请先补全参数后再继续。";
         emitEvent({
           type: "task_status",
           status: "failed",
@@ -2245,7 +2205,7 @@ async function runOllamaPrompt({
         ok: false,
         exitCode: 1,
         sessionId,
-        text: `Ollama 连接失败: ${error.message}`,
+        text: "Ollama 閺夆晝鍋炵敮瀛樺緞鏉堫偉袝: " + error.message,
         error: error.message,
         rawEvents,
         usedModel: model,
@@ -2262,7 +2222,7 @@ async function runOllamaPrompt({
       latestText ||
       (rawEvents.some((event) => event.type === "tool_result")
         ? protocol.buildFallbackCompletionFromResults(prompt, collectToolResults(rawEvents))
-        : `Ollama reached the maximum tool-call steps (${maxToolSteps}).`),
+        : "Ollama reached the maximum tool-call steps (" + maxToolSteps + ")."),
     error: "ollama_step_limit_reached",
     rawEvents,
     usedModel: model,
@@ -2275,26 +2235,26 @@ async function runHealthCheck(_workspace, settings) {
   const baseUrl = (remote.ollamaUrl || remote.baseUrl || "http://localhost:11434").replace(/\/+$/, "");
 
   try {
-    const response = await fetch(`${baseUrl}/api/tags`, { method: "GET" });
+    const response = await fetch(baseUrl + "/api/tags", { method: "GET" });
     if (response.ok) {
       const data = await parseJsonResponse(response);
       const models = Array.isArray(data.models) ? data.models.map(m => m.name).join(", ") : "";
       return {
         ok: true,
-        title: "Ollama 在线",
-        details: models ? `已连接，可用水模: ${models}` : "Ollama 已连接"
+        title: "Ollama 连接成功",
+        details: models ? "可用模型: " + models : "Ollama 服务可用"
       };
     }
     return {
       ok: false,
-      title: "Ollama 响应异常",
-      details: `HTTP ${response.status}`
+      title: "Ollama 服务异常",
+      details: "HTTP " + response.status
     };
   } catch (error) {
     return {
       ok: false,
       title: "无法连接 Ollama",
-      details: `请确保 Ollama 已在本地运行 (${baseUrl}): ${error.message}`
+      details: "请检查 Ollama 服务地址与运行状态 (" + baseUrl + "): " + error.message
     };
   }
 }
@@ -2311,3 +2271,4 @@ module.exports = {
   runHealthCheck,
   openLoginShell
 };
+

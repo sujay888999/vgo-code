@@ -1,4 +1,4 @@
-const LT = String.fromCharCode(60);
+﻿const LT = String.fromCharCode(60);
 const GT = String.fromCharCode(62);
 const SLASH = String.fromCharCode(47);
 const MAX_TOOL_SUMMARY_CHARS = 500;
@@ -16,11 +16,16 @@ function truncateForTransport(text = "", maxChars = 0) {
 function looksLikeMojibake(text = "") {
   const sample = String(text || "");
   if (!sample) return false;
-  const weirdMatches =
-    sample.match(
-      /[ÃÂÐÑæçèéêëìíîïðñòóôõöøùúûüýþÿ]|[锛銆鍙鍚鍒姝涓浠鍦杩缁鎵宸妯璇缃粶]|[娴彃寮顏掗顔濂妹婊鎴]/g
-    ) || [];
-  return weirdMatches.length >= 2;
+
+  const replacementCount = (sample.match(/\uFFFD/g) || []).length;
+  const suspiciousSeqCount =
+    (sample.match(/(?:Ã.|Â.|ä.|å.|æ.|ç.|é.|ê.|ë.|î.|ï.|ð.|ñ.|ò.|ó.|ô.|õ.|ö.|ø.|ù.|ú.|û.|ü.|ý.|þ.|ÿ)/g) || []).length;
+  const cjkCount = (sample.match(/[\u4E00-\u9FFF]/g) || []).length;
+
+  if (replacementCount >= 1) return true;
+  if (suspiciousSeqCount >= 4 && cjkCount === 0) return true;
+  if (suspiciousSeqCount >= 8) return true;
+  return false;
 }
 
 function tryRecoverMojibake(text = "") {
@@ -32,20 +37,35 @@ function tryRecoverMojibake(text = "") {
     return source;
   }
 
+  const candidates = [];
   try {
-    const recovered = Buffer.from(source, "latin1").toString("utf8");
-    const sourceChineseScore = (source.match(/[的一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主发年动同工也能下过子说产种面而方后多定行学法所民得经之进着部度家电力里如水化高自二理起小物现实加量都两体制机当使点从业本去把性好应开它合还因由其些然前外天政四日那社义事平形相全表间样与关各重新线内数正心反你明看原又么利比或但质气第向道命此变条只没结解问意建月公无系军很情者最立代想已通并提直题党程展五果料象员革位入常文总次品式活设及管特件长求老头基资边流路级少图山统接知较将组见计别她手角期根论运农指几区强放决西被干做必战先回则任取据处理世车价率施环观联]/g) || []).length;
-    const recoveredChineseScore =
-      (recovered.match(/[的一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主发年动同工也能下过子说产种面而方后多定行学法所民得经之进着部度家电力里如水化高自二理起小物现实加量都两体制机当使点从业本去把性好应开它合还因由其些然前外天政四日那社义事平形相全表间样与关各重新线内数正心反你明看原又么利比或但质气第向道命此变条只没结解问意建月公无系军很情者最立代想已通并提直题党程展五果料象员革位入常文总次品式活设及管特件长求老头基资边流路级少图山统接知较将组见计别她手角期根论运农指几区强放决西被干做必战先回则任取据处理世车价率施环观联]/g) || []).length;
-    if (
-      recovered &&
-      (!looksLikeMojibake(recovered) || recoveredChineseScore >= sourceChineseScore + 2)
-    ) {
-      return recovered;
-    }
+    candidates.push(Buffer.from(source, "latin1").toString("utf8"));
+  } catch {}
+  try {
+    candidates.push(Buffer.from(source, "binary").toString("utf8"));
   } catch {}
 
-  return source;
+  const score = (value) => {
+    const textValue = String(value || "");
+    const replacementCount = (textValue.match(/\uFFFD/g) || []).length;
+    const suspiciousSeqCount =
+      (textValue.match(/(?:Ã.|Â.|ä.|å.|æ.|ç.|é.|ê.|ë.|î.|ï.|ð.|ñ.|ò.|ó.|ô.|õ.|ö.|ø.|ù.|ú.|û.|ü.|ý.|þ.|ÿ)/g) || []).length;
+    const cjkCount = (textValue.match(/[\u4E00-\u9FFF]/g) || []).length;
+    return replacementCount * 10 + suspiciousSeqCount * 2 - Math.min(cjkCount, 40) * 0.2;
+  };
+
+  let best = source;
+  let bestScore = score(source);
+  for (const candidate of candidates) {
+    if (!candidate || candidate === source) continue;
+    const currentScore = score(candidate);
+    if (currentScore < bestScore) {
+      best = candidate;
+      bestScore = currentScore;
+    }
+  }
+
+  return best;
 }
 
 function sanitizeAssistantText(text = "") {
@@ -487,12 +507,14 @@ function parseToolCalls(rawText = "") {
 
   const lineBasedCalls = [];
   const toolLineMatches = [
-    ...source.matchAll(/(?:^|\n)\s*[-*]?\s*(?:Agent\s*)?(?:正在调用工具[:：]?)?\s*(read_file|list_dir|search_code|write_file|run_command|open_path)\s*\|\s*([^\n]+)/gim)
+    ...source.matchAll(
+      /(?:^|\n)\s*[-*]?\s*(?:Agent\s*)?(?:\u6b63\u5728\u8c03\u7528\u5de5\u5177[:\uff1a])?\s*(read_file|list_dir|search_code|write_file|run_command|open_path)\s*\|\s*([^\n]+)/gim
+    )
   ];
   if (normalizedSource !== source) {
     toolLineMatches.push(
       ...normalizedSource.matchAll(
-        /(?:^|\n)\s*[-*]?\s*(?:Agent\s*)?(?:.*?[:：])?\s*(read_file|list_dir|search_code|write_file|run_command|open_path)\s*\|\s*([^\n]+)/gim
+        /(?:^|\n)\s*[-*]?\s*(?:Agent\s*)?(?:.*?[:\uff1a])?\s*(read_file|list_dir|search_code|write_file|run_command|open_path)\s*\|\s*([^\n]+)/gim
       )
     );
   }
@@ -552,7 +574,7 @@ function parseToolCalls(rawText = "") {
           }
         }
         
-        const directContentMatch = afterMatch.match(/文件内容[：:]\s*([\s\S]*?)(?:\n\n|\n```|$)/i);
+        const directContentMatch = afterMatch.match(/\u6587\u4ef6\u5185\u5bb9[:\uff1a]\s*([\s\S]*?)(?:\n\n|\n```|$)/i);
         if (directContentMatch?.[1] && !call.arguments.content) {
           call.arguments.content = directContentMatch[1].trim();
         }
@@ -675,32 +697,67 @@ function normalizeEscapedToolMarkup(input = "") {
   return normalized;
 }
 
+function collectRemediationSuggestions(results = []) {
+  const suggestions = [];
+  const seen = new Set();
+  for (const result of results) {
+    const joined = `${String(result?.summary || "")}\n${String(result?.output || "")}`;
+    const matches =
+      joined.match(/(?:建议|建议措施|整改建议|后续建议|remediation|recommended actions?|next steps?)[:：]?\s*[^\n]+/gi) || [];
+    for (const item of matches) {
+      const normalized = String(item || "").trim();
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      suggestions.push(normalized);
+    }
+  }
+  return suggestions.slice(0, 6);
+}
+
 function buildFallbackCompletionFromResults(prompt = "", results = []) {
   const completed = results.filter((result) => result.ok);
   const failed = results.filter((result) => !result.ok);
-  const lines = ["本轮已完成工具执行，以下是可确认的结果："];
+  const total = Math.max(1, results.length);
+  const completionRatio = Math.round((completed.length / total) * 100);
+  const remediation = collectRemediationSuggestions(failed);
+
+  const lines = ["本轮任务执行完成，下面是执行完整度与结果摘要。"];
 
   if (prompt) {
     lines.push(`任务主题：${prompt}`);
   }
 
+  lines.push(`执行完整度：${completionRatio}%（成功 ${completed.length} / 总计 ${results.length}）`);
+
   if (completed.length) {
     lines.push("", "已完成：");
-    lines.push(...completed.map((result) => `- ${result.name}: ${result.summary || "成功"}`));
+    lines.push(...completed.map((result) => `- ${result.name}: ${result.summary || "执行成功"}`));
   }
 
   if (failed.length) {
     lines.push("", "失败或未完成：");
-    lines.push(...failed.map((result) => `- ${result.name}: ${result.summary || "失败"}`));
+    lines.push(...failed.map((result) => `- ${result.name}: ${result.summary || "执行失败"}`));
+  }
+
+  if (remediation.length) {
+    lines.push("", "整改建议：");
+    lines.push(
+      ...remediation.map((item) =>
+        `- ${item.replace(/^(?:建议|建议措施|整改建议|后续建议|remediation|recommended actions?|next steps?)[:：]?\s*/i, "")}`
+      )
+    );
   }
 
   if (completed.length && !failed.length) {
-    lines.push("", "结论：已拿到可用执行结果，可基于以上结果继续下一步。");
+    lines.push("", "结论：本轮已全部完成，可直接进入下一任务。");
   } else if (completed.length && failed.length) {
-    lines.push("", "结论：本轮部分成功，建议优先处理失败项后再继续。");
+    lines.push("", "结论：本轮部分完成，建议先处理失败项后继续。");
   } else {
-    lines.push("", "结论：本轮未获得有效结果，请重试或调整模型/权限后继续。");
+    lines.push("", "结论：本轮未完成，建议自动切换备选方案后重试。");
   }
+
   return lines.join("\n");
 }
 
@@ -753,3 +810,4 @@ module.exports = {
   ,
   looksLikeContinuationIntent
 };
+
