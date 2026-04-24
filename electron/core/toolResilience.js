@@ -34,6 +34,16 @@ function buildFailureSignature(result = {}) {
 function getMissingRequiredToolArgument(call = {}) {
   const name = String(call?.name || "").trim().toLowerCase();
   const args = toObjectArgs(call);
+  if (name === "run_command") {
+    const action = String(args.processAction || args.action || "").trim().toLowerCase();
+    if (action === "list") {
+      return "";
+    }
+    if (action === "status" || action === "stop") {
+      const pid = Number(args.pid);
+      return Number.isInteger(pid) && pid > 0 ? "" : "pid";
+    }
+  }
   const requiredByTool = {
     read_file: ["path"],
     write_file: ["path", "content"],
@@ -104,7 +114,14 @@ function buildFallbackCandidates(call = {}, result = {}) {
     args.command ||
     args.cmd ||
     args.shell_command ||
+    args.shell ||
+    args.script ||
+    args.cmdline ||
+    args.cmdLine ||
     args.shellCommand ||
+    args.text ||
+    args.body ||
+    args.content ||
     args.value ||
     args.input ||
     "";
@@ -175,7 +192,17 @@ function buildFallbackCandidates(call = {}, result = {}) {
   }
 
   if (/Missing required argument:\s*path/i.test(mergedFailure)) {
-    const pathAlias = args.filePath || args.filename || args.file || args.target || "";
+    const pathAlias =
+      args.filePath ||
+      args.filepath ||
+      args.filename ||
+      args.file ||
+      args.target ||
+      args.output ||
+      args.destination ||
+      args.dir ||
+      args.directory ||
+      "";
     if (String(pathAlias).trim()) {
       candidates.push({
         name: call.name,
@@ -185,7 +212,7 @@ function buildFallbackCandidates(call = {}, result = {}) {
   }
 
   if (/Missing required argument:\s*content/i.test(mergedFailure)) {
-    const contentAlias = args.text || args.body || args.value || "";
+    const contentAlias = args.text || args.body || args.value || args.contents || args.conten || args.code || args.data || "";
     if (typeof contentAlias === "string" && contentAlias.trim()) {
       candidates.push({
         name: call.name,

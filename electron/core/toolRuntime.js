@@ -1,7 +1,8 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const net = require("node:net");
+const { spawnSync, spawn } = require("node:child_process");
 const { shell } = require("electron");
 
 function clamp(value, min, max, fallback) {
@@ -100,7 +101,7 @@ function getToolManifestText() {
     '- list_dir {"path":"relative/or/absolute/path","maxEntries":50} — list files in a directory',
     '- read_file {"path":"file/path","maxLines":200} — read file content',
     '- search_code {"path":".","query":"keyword","maxResults":30} — search text in code files',
-    '- run_command {"command":"powershell command","cwd":"optional/path","timeoutMs":30000} — run a shell command',
+    '- run_command {"command":"powershell command","cwd":"optional/path","timeoutMs":30000,"background":true,"healthCheckPort":5173} — run command; supports background service mode and processAction=list|status|stop',
     '- write_file {"path":"file/path","content":"text content"} — write text to a file',
     '- copy_file {"source":"from/path","destination":"to/path"} — copy a file',
     '- move_file {"source":"from/path","destination":"to/path"} — move or relocate a file',
@@ -273,26 +274,261 @@ function isCommandSafe(command) {
   return !dangerousPatterns.some(pattern => pattern.test(command));
 }
 
-function runCommand(workspace, args = {}, options = {}) {
+const BACKGROUND_PROCESS_REGISTRY = path.join(process.cwd(), "logs", "background-processes.json");
+
+function toBoolean(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
+function isProcessAlive(pid) {
+  const numericPid = Number(pid);
+  if (!Number.isInteger(numericPid) || numericPid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(numericPid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readBackgroundRegistry() {
+  try {
+    if (!fs.existsSync(BACKGROUND_PROCESS_REGISTRY)) {
+      return [];
+    }
+    const raw = fs.readFileSync(BACKGROUND_PROCESS_REGISTRY, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeBackgroundRegistry(entries = []) {
+  try {
+    fs.mkdirSync(path.dirname(BACKGROUND_PROCESS_REGISTRY), { recursive: true });
+    fs.writeFileSync(BACKGROUND_PROCESS_REGISTRY, JSON.stringify(entries, null, 2), "utf8");
+  } catch {
+    // ignore registry write failure
+  }
+}
+
+function cleanupBackgroundRegistry() {
+  const entries = readBackgroundRegistry();
+  const alive = entries.filter((entry) => isProcessAlive(entry?.pid));
+  if (alive.length !== entries.length) {
+    writeBackgroundRegistry(alive);
+  }
+  return alive;
+}
+
+function tailTextFile(filePath, maxLines = 120) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return "";
+  }
+  const content = fs.readFileSync(filePath, "utf8");
+  const lines = content.split(/\r?\n/);
+  const selected = lines.slice(Math.max(0, lines.length - Math.max(1, maxLines)));
+  return selected.join("\n");
+}
+
+async function waitForPortOpen(host, port, timeoutMs = 12000) {
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 12000);
+  const targetHost = String(host || "127.0.0.1");
+  const targetPort = Number(port);
+  if (!Number.isInteger(targetPort) || targetPort <= 0) {
+    return false;
+  }
+
+  while (Date.now() < deadline) {
+    const connected = await new Promise((resolve) => {
+      const socket = new net.Socket();
+      const done = (ok) => {
+        socket.destroy();
+        resolve(Boolean(ok));
+      };
+      socket.setTimeout(1200);
+      socket.once("connect", () => done(true));
+      socket.once("timeout", () => done(false));
+      socket.once("error", () => done(false));
+      socket.connect(targetPort, targetHost);
+    });
+    if (connected) return true;
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  return false;
+}
+
+async function waitForUrlReady(url, timeoutMs = 12000) {
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 12000);
+  const target = String(url || "").trim();
+  if (!/^https?:\/\//i.test(target)) {
+    return false;
+  }
+
+  while (Date.now() < deadline) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1500);
+    try {
+      const response = await fetch(target, { signal: controller.signal, method: "GET" });
+      clearTimeout(timer);
+      if (response.ok || response.status < 500) {
+        return true;
+      }
+    } catch {
+      clearTimeout(timer);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  return false;
+}
+
+function stopBackgroundProcess(pid) {
+  const numericPid = Number(pid);
+  if (!Number.isInteger(numericPid) || numericPid <= 0) {
+    return { ok: false, message: "Invalid pid." };
+  }
+  try {
+    if (process.platform === "win32") {
+      const taskkill = spawnSync("taskkill", ["/PID", String(numericPid), "/T", "/F"], {
+        encoding: "utf8",
+        shell: false
+      });
+      const output = [String(taskkill.stdout || "").trim(), String(taskkill.stderr || "").trim()]
+        .filter(Boolean)
+        .join("\n");
+      return { ok: taskkill.status === 0, message: output || `taskkill exit=${taskkill.status}` };
+    }
+    process.kill(numericPid, "SIGTERM");
+    return { ok: true, message: "SIGTERM sent." };
+  } catch (error) {
+    return { ok: false, message: error?.message || "Failed to stop process." };
+  }
+}
+
+function inferHealthPortFromCommand(command = "") {
+  const text = String(command || "").toLowerCase();
+  const explicitPort = String(command || "").match(/(?:--port|-p)\s+(\d{2,5})/i);
+  if (explicitPort?.[1]) {
+    const port = Number(explicitPort[1]);
+    if (Number.isInteger(port) && port > 0) {
+      return port;
+    }
+  }
+  if (/(vite|npm\s+run\s+dev|pnpm\s+dev|yarn\s+dev)/i.test(text)) return 5173;
+  if (/(next\s+dev|react-scripts\s+start)/i.test(text)) return 3000;
+  if (/uvicorn/i.test(text)) return 8000;
+  return 0;
+}
+
+async function runCommand(workspace, args = {}, options = {}) {
   const command = String(
     args.command ||
     args.cmd ||
     args.shell_command ||
     args.shellCommand ||
+    args.cmdline ||
+    args.cmdLine ||
+    args.script ||
+    args.text ||
+    args.body ||
     args.value ||
     args.input ||
     ""
   ).trim();
+  const action = String(args.processAction || args.action || "").trim().toLowerCase();
+  if (action === "list") {
+    const entries = cleanupBackgroundRegistry();
+    const output = entries.length
+      ? entries
+          .map(
+            (entry, index) =>
+              `${index + 1}. pid=${entry.pid} alive=${isProcessAlive(entry.pid)} command=${entry.command}\n   cwd=${entry.cwd}\n   startedAt=${entry.startedAt}`
+          )
+          .join("\n")
+      : "(no background processes)";
+    return {
+      ok: true,
+      name: "run_command",
+      summary: `Listed ${entries.length} background processes.`,
+      output
+    };
+  }
+
+  if (action === "status") {
+    const pid = Number(args.pid);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return { ok: false, name: "run_command", summary: "Missing required argument: pid", output: "" };
+    }
+    const entries = cleanupBackgroundRegistry();
+    const entry = entries.find((item) => Number(item.pid) === pid) || null;
+    const alive = isProcessAlive(pid);
+    return {
+      ok: true,
+      name: "run_command",
+      summary: `Background process ${pid} is ${alive ? "running" : "stopped"}.`,
+      output: `pid=${pid}\nalive=${alive}\nrecorded=${Boolean(entry)}\ncommand=${entry?.command || ""}\ncwd=${entry?.cwd || ""}\nlogPath=${entry?.logPath || ""}`
+    };
+  }
+
+  if (action === "stop") {
+    const pid = Number(args.pid);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return { ok: false, name: "run_command", summary: "Missing required argument: pid", output: "" };
+    }
+    const stopped = stopBackgroundProcess(pid);
+    cleanupBackgroundRegistry();
+    return {
+      ok: stopped.ok,
+      name: "run_command",
+      summary: stopped.ok ? `Stopped background process ${pid}.` : `Failed to stop background process ${pid}.`,
+      output: stopped.message
+    };
+  }
+
+  if (action === "logs") {
+    const pid = Number(args.pid);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return { ok: false, name: "run_command", summary: "Missing required argument: pid", output: "" };
+    }
+    const maxLines = clamp(args.maxLines, 10, 1000, 120);
+    const entry = cleanupBackgroundRegistry().find((item) => Number(item.pid) === pid);
+    if (!entry?.logPath) {
+      return {
+        ok: false,
+        name: "run_command",
+        summary: `No log file recorded for process ${pid}.`,
+        output: ""
+      };
+    }
+    const content = tailTextFile(entry.logPath, maxLines);
+    return {
+      ok: true,
+      name: "run_command",
+      summary: `Read background logs for process ${pid}.`,
+      output: content || "(log file is empty)"
+    };
+  }
+
   if (!command) {
     return { ok: false, name: "run_command", summary: "Missing required argument: command", output: "" };
   }
 
   if (!isCommandSafe(command)) {
-    return { 
-      ok: false, 
-      name: "run_command", 
-      summary: "Command blocked: potentially dangerous pattern detected", 
-      output: "" 
+    return {
+      ok: false,
+      name: "run_command",
+      summary: "Command blocked: potentially dangerous pattern detected",
+      output: ""
     };
   }
 
@@ -305,13 +541,81 @@ function runCommand(workspace, args = {}, options = {}) {
 
   const requestedTimeout = args.timeoutMs ?? args.timeout_ms;
   const hasExplicitTimeout = requestedTimeout !== undefined && requestedTimeout !== null && `${requestedTimeout}`.trim() !== "";
-  const looksLongRunning = /(uvicorn\s+.*--reload|npm\s+run\s+(dev|start)|pnpm\s+(dev|start)|yarn\s+(dev|start)|tail\s+-f|watch)/i.test(
+  const looksLongRunning = /(uvicorn\s+.*--reload|npm\s+run\s+(dev|start)|pnpm\s+(dev|start)|yarn\s+(dev|start)|vite(?:\s|$)|next\s+dev|tail\s+-f|watch)/i.test(
     command
   );
+  const explicitForeground = toBoolean(args.foreground, false);
+  const backgroundRequested = toBoolean(args.background ?? args.detached ?? args.daemon, false);
+  const autoBackground = looksLongRunning && !hasExplicitTimeout && !explicitForeground;
+  const shouldBackground = backgroundRequested || autoBackground;
+
+  const shellValue = detectShell(command);
+  if (shouldBackground) {
+    const nowTag = new Date().toISOString().replace(/[:.]/g, "-");
+    const logsDir = path.join(process.cwd(), "logs", "background");
+    fs.mkdirSync(logsDir, { recursive: true });
+    const logPath = path.join(logsDir, `run_command-${nowTag}.log`);
+    const logFd = fs.openSync(logPath, "a");
+
+    const child = spawn(command, {
+      cwd,
+      shell: shellValue,
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+      windowsHide: true,
+      env: process.env
+    });
+    try {
+      fs.closeSync(logFd);
+    } catch {
+      // ignore fd close failure in parent process
+    }
+    child.unref();
+
+    const pid = Number(child.pid);
+    const entries = cleanupBackgroundRegistry();
+    entries.push({
+      pid,
+      command,
+      cwd,
+      startedAt: new Date().toISOString(),
+      mode: "background",
+      logPath
+    });
+    writeBackgroundRegistry(entries.slice(-80));
+
+    const startupTimeoutMs = clamp(args.startupTimeoutMs ?? args.startup_timeout_ms, 1000, 120000, 12000);
+    const healthUrl = String(args.healthCheckUrl || args.health_url || "").trim();
+    const healthHost = String(args.healthHost || "127.0.0.1").trim();
+    const healthPort = Number(args.healthCheckPort || args.port || inferHealthPortFromCommand(command) || 0);
+
+    let healthVerified = false;
+    if (healthUrl) {
+      healthVerified = await waitForUrlReady(healthUrl, startupTimeoutMs);
+    } else if (Number.isInteger(healthPort) && healthPort > 0) {
+      healthVerified = await waitForPortOpen(healthHost, healthPort, startupTimeoutMs);
+    }
+
+    return {
+      ok: true,
+      name: "run_command",
+      summary: `Started background command (pid=${pid}) in ${cwd}.`,
+      output: [
+        `pid=${pid}`,
+        `cwd=${cwd}`,
+        `command=${command}`,
+        `logPath=${logPath}`,
+        `background=true`,
+        `autoBackground=${autoBackground}`,
+        `healthCheck=${healthUrl ? `url:${healthUrl}` : healthPort > 0 ? `${healthHost}:${healthPort}` : "none"}`,
+        `healthVerified=${healthVerified}`
+      ].join("\n")
+    };
+  }
+
   const defaultTimeout = looksLongRunning ? 120000 : 60000;
   const timeoutMs = clamp(requestedTimeout, 1000, 300000, defaultTimeout);
-  const shell = detectShell(command);
-  
+
   let result;
   try {
     result = spawnSync(command, {
@@ -319,15 +623,15 @@ function runCommand(workspace, args = {}, options = {}) {
       encoding: "utf8",
       timeout: timeoutMs,
       maxBuffer: 10 * 1024 * 1024,
-      shell,
+      shell: shellValue,
       env: process.env
     });
   } catch (error) {
-    return { 
-      ok: false, 
-      name: "run_command", 
-      summary: `Command execution failed: ${error.message}`, 
-      output: "" 
+    return {
+      ok: false,
+      name: "run_command",
+      summary: `Command execution failed: ${error.message}`,
+      output: ""
     };
   }
 
@@ -345,7 +649,7 @@ function runCommand(workspace, args = {}, options = {}) {
   const stderr = String(result.stderr || "");
   const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
 
-  const debugInfo = `exitCode=${result.status}\ncwd=${cwd}\nshell=${shell === true ? "cmd.exe" : shell}\ncommand=${command}`;
+  const debugInfo = `exitCode=${result.status}\ncwd=${cwd}\nshell=${shellValue === true ? "cmd.exe" : shellValue}\ncommand=${command}`;
 
   return {
     ok: result.status === 0,
@@ -1039,6 +1343,11 @@ async function executeToolCall(workspace, call = {}, options = {}) {
       args.cmd ||
       args.shell_command ||
       args.shellCommand ||
+      args.cmdline ||
+      args.cmdLine ||
+      args.script ||
+      args.text ||
+      args.body ||
       args.value ||
       args.input ||
       ""

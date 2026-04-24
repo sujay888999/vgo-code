@@ -17,7 +17,7 @@ function getToolManifestTextSafe() {
     '- list_dir {"path":"relative/or/absolute/path","maxEntries":50} — list files in a directory',
     '- read_file {"path":"file/path","maxLines":200} — read file content',
     '- search_code {"path":".","query":"keyword","maxResults":30} — search text in code files',
-    '- run_command {"command":"powershell command","cwd":"optional/path","timeoutMs":30000} — run a shell command',
+    '- run_command {"command":"powershell command","cwd":"optional/path","timeoutMs":30000,"background":true,"healthCheckPort":5173} — run command, supports long-running service mode and processAction=list|status|stop',
     '- write_file {"path":"file/path","content":"text content"} — write text to a file',
     '- copy_file {"source":"from/path","destination":"to/path"} — copy a file',
     '- move_file {"source":"from/path","destination":"to/path"} — move or relocate a file',

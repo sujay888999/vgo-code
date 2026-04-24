@@ -370,6 +370,20 @@ function collectLooseToolCalls(rawText = "") {
         }
       }
     }
+
+    if ((normalizedName === "write_file" || normalizedName === "append_file") && !recovered.content) {
+      const sourceText = String(text || "");
+      const codeBlockMatch = sourceText.match(/```(?:\w+)?\s*([\s\S]*?)```/i);
+      if (codeBlockMatch?.[1] && codeBlockMatch[1].trim()) {
+        recovered.content = codeBlockMatch[1].trim();
+      } else {
+        const directContentMatch = sourceText.match(/(?:文件内容|content)\s*[:：]\s*([\s\S]*?)(?:\n\n|\n(?:<|```)|$)/i);
+        if (directContentMatch?.[1] && directContentMatch[1].trim()) {
+          recovered.content = directContentMatch[1].trim();
+        }
+      }
+    }
+
     return recovered;
   };
 

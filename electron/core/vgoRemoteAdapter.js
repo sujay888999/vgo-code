@@ -1,4 +1,4 @@
-const fs = require("node:fs");
+﻿const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { executeToolCall } = require("./toolRuntime");
@@ -7,7 +7,6 @@ const modelAdapters = require("./modelAdapterRegistry");
 const familyTools = require("./modelFamilyToolAdapters");
 const skillRegistry = require("./skillRegistry");
 const {
-  getMissingRequiredToolArgument: resilienceGetMissingRequiredToolArgument,
   executeToolCallWithResilience
 } = require("./toolResilience");
 
@@ -189,7 +188,27 @@ function normalizeToolCalls(calls = []) {
       return {};
     }
     const normalized = { ...args };
+    const assignFirstString = (targetKey, candidateKeys = []) => {
+      const current = normalized[targetKey];
+      if (typeof current === "string" && current.trim()) {
+        return;
+      }
+      for (const key of candidateKeys) {
+        if (typeof normalized[key] === "string" && normalized[key].trim()) {
+          normalized[targetKey] = normalized[key];
+          return;
+        }
+      }
+    };
+    if (["write_file", "append_file"].includes(name)) {
+      assignFirstString("path", ["filePath", "filepath", "file", "filename", "target", "output", "destination"]);
+      assignFirstString("content", ["contents", "conten", "text", "body", "value", "data", "code"]);
+    }
+    if (pathLikeTools.has(name) || name === "search_code") {
+      assignFirstString("path", ["filePath", "filepath", "file", "filename", "target", "input", "dir", "directory"]);
+    }
     if (name === "run_command") {
+      assignFirstString("command", ["cmdline", "cmdLine", "shell", "script", "text", "body", "value", "content"]);
       if (
         (normalized.command === undefined || String(normalized.command || "").trim() === "") &&
         typeof normalized.cmd === "string"
@@ -314,6 +333,16 @@ function getMissingRequiredToolArgument(call = {}) {
       : call?.args && typeof call.args === "object"
         ? call.args
         : {};
+  if (name === "run_command") {
+    const action = String(args.processAction || args.action || "").trim().toLowerCase();
+    if (action === "list") {
+      return "";
+    }
+    if (action === "status" || action === "stop") {
+      const pid = Number(args.pid);
+      return Number.isInteger(pid) && pid > 0 ? "" : "pid";
+    }
+  }
   const requiredByTool = {
     read_file: ["path"],
     write_file: ["path", "content"],
@@ -2009,33 +2038,6 @@ async function runRealVgoPrompt({
         didCallWriteTool = true;
       }
 
-      const missingArgument = resilienceGetMissingRequiredToolArgument(call);
-      if (missingArgument) {
-        const blockedResult = {
-          ok: false,
-          name: call.name,
-          summary: `Missing required argument: ${missingArgument}`,
-          output: "Tool call was skipped because required parameters were incomplete."
-        };
-        results.push(blockedResult);
-        logRuntime("tool:executed", {
-          tool: call.name,
-          ok: false,
-          summary: blockedResult.summary,
-          args: JSON.stringify(call.arguments || call.args || {}).slice(0, 500),
-          outputPreview: blockedResult.output
-        });
-        emitEvent(onEvent, rawEvents, {
-          type: "tool_result",
-          step: step + 1,
-          tool: call.name,
-          ok: false,
-          summary: blockedResult.summary,
-          output: blockedResult.output
-        });
-        continue;
-      }
-
       const protectedInspectionViolation =
         isRepairTask ? getProtectedInspectionViolation(call, prompt, workspace) : "";
       if (protectedInspectionViolation) {
@@ -2517,35 +2519,7 @@ async function runLocalPrompt({
         .join("\n\n");
       const extractedToolCalls = extractToolCalls(toolExtractionSource);
       if (extractedToolCalls.length) {
-        let missingArgumentFailures = 0;
         for (const call of extractedToolCalls) {
-          const missingArgument = resilienceGetMissingRequiredToolArgument(call);
-          if (missingArgument) {
-            const blockedResult = {
-              ok: false,
-              name: call.name,
-              summary: `Missing required argument: ${missingArgument}`,
-              output: "Tool call was skipped because required parameters were incomplete."
-            };
-            missingArgumentFailures += 1;
-            emitEvent(onEvent, localRawEvents, {
-              type: "tool_result",
-              tool: call.name,
-              ok: false,
-              summary: blockedResult.summary,
-              output: blockedResult.output
-            });
-            if (missingArgumentFailures >= 2) {
-              emitEvent(onEvent, localRawEvents, {
-                type: "task_status",
-                status: "failed",
-                message: "工具调用参数连续不完整，已停止自动执行，避免死循环。"
-              });
-              break;
-            }
-            continue;
-          }
-
           emitEvent(onEvent, localRawEvents, {
             type: "task_status",
             status: "tool_running",

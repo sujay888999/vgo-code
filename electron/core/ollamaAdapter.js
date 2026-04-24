@@ -5,7 +5,6 @@ const protocol = require("./agentProtocol");
 const modelAdapters = require("./modelAdapterRegistry");
 const skillRegistry = require("./skillRegistry");
 const {
-  getMissingRequiredToolArgument: resilienceGetMissingRequiredToolArgument,
   executeToolCallWithResilience
 } = require("./toolResilience");
 const { appendEngineLog } = require("./engineLog");
@@ -205,7 +204,28 @@ function normalizeToolCalls(calls = []) {
       return {};
     }
     const normalized = { ...args };
+    const assignFirstString = (targetKey, candidateKeys = []) => {
+      const current = normalized[targetKey];
+      if (typeof current === "string" && current.trim()) {
+        return;
+      }
+      for (const key of candidateKeys) {
+        if (typeof normalized[key] === "string" && normalized[key].trim()) {
+          normalized[targetKey] = normalized[key];
+          return;
+        }
+      }
+    };
+
+    if (["write_file", "append_file"].includes(name)) {
+      assignFirstString("path", ["filePath", "filepath", "file", "filename", "target", "output", "destination"]);
+      assignFirstString("content", ["contents", "conten", "text", "body", "value", "data", "code"]);
+    }
+    if (["read_file", "list_dir", "open_path", "search_code", "make_dir", "delete_file", "delete_dir"].includes(name)) {
+      assignFirstString("path", ["filePath", "filepath", "file", "filename", "target", "input", "dir", "directory"]);
+    }
     if (name === "run_command") {
+      assignFirstString("command", ["cmdline", "cmdLine", "shell", "script", "text", "body", "value", "content"]);
       if (
         (normalized.command === undefined || String(normalized.command || "").trim() === "") &&
         typeof normalized.cmd === "string"
@@ -306,6 +326,16 @@ function getMissingRequiredToolArgument(call = {}) {
       : call?.args && typeof call.args === "object"
         ? call.args
         : {};
+  if (name === "run_command") {
+    const action = String(args.processAction || args.action || "").trim().toLowerCase();
+    if (action === "list") {
+      return "";
+    }
+    if (action === "status" || action === "stop") {
+      const pid = Number(args.pid);
+      return Number.isInteger(pid) && pid > 0 ? "" : "pid";
+    }
+  }
   const requiredByTool = {
     read_file: ["path"],
     write_file: ["path", "content"],
@@ -2063,31 +2093,6 @@ async function runOllamaPrompt({
             usedModel: model,
             actualChannel: "ollama-agent"
           };
-        }
-
-        const missingArgument = resilienceGetMissingRequiredToolArgument(call);
-        if (missingArgument) {
-          const blockedResult = {
-            ok: false,
-            name: call.name,
-            summary: "Missing required argument: " + missingArgument,
-            output: "Tool call was skipped because required parameters were incomplete."
-          };
-          toolResults.push(blockedResult);
-          logRuntime("tool:executed", {
-            tool: call.name,
-            ok: false,
-            summary: blockedResult.summary
-          });
-          emitEvent({
-            type: "tool_result",
-            step: step + 1,
-            tool: call.name,
-            ok: false,
-            summary: blockedResult.summary,
-            output: blockedResult.output
-          });
-          continue;
         }
 
         emitEvent({
