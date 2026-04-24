@@ -1,7 +1,7 @@
 ﻿const path = require("node:path");
 
-const MAX_FALLBACK_ATTEMPTS = 4;
-const MAX_REPEAT_FAILURE_SIGNATURE = 2;
+const MAX_FALLBACK_ATTEMPTS = 5;
+const MAX_REPEAT_FAILURE_SIGNATURE = 3;
 const RETRYABLE_FAILURE_PATTERN =
   /(timed out|timeout|ETIMEDOUT|ECONNRESET|network|temporar|429|too many requests|HTTP 5\d\d)/i;
 
@@ -23,6 +23,12 @@ function normalizePathLike(pathValue = "") {
 
 function normalizeSummary(summary = "") {
   return String(summary || "").trim().replace(/\s+/g, " ").slice(0, 220);
+}
+
+function isLikelyLongRunningCommand(command = "") {
+  return /(uvicorn\s+.*--reload|npm\s+run\s+(dev|start)|pnpm\s+(dev|start)|yarn\s+(dev|start)|vite(?:\s|$)|next\s+dev|tail\s+-f|watch)/i.test(
+    String(command || "")
+  );
 }
 
 function buildFailureSignature(result = {}) {
@@ -146,6 +152,9 @@ function buildFallbackCandidates(call = {}, result = {}) {
   }
 
   if (name === "run_command") {
+    const normalizedCommand = String(args.command || commandLike || "").trim();
+    const likelyLongRunning = isLikelyLongRunningCommand(normalizedCommand);
+
     if (typeof commandLike === "string" && commandLike.trim() && String(args.command || "").trim() === "") {
       candidates.push({
         name: "run_command",
@@ -159,27 +168,55 @@ function buildFallbackCandidates(call = {}, result = {}) {
     }
 
     if (/timed out|timeout/i.test(mergedFailure)) {
+      if (likelyLongRunning && !args.background) {
+        candidates.push({
+          name: "run_command",
+          arguments: {
+            ...args,
+            command: normalizedCommand,
+            background: true,
+            startupTimeoutMs: Number(args.startupTimeoutMs || args.startup_timeout_ms || 20000),
+            healthCheckPort: Number(args.healthCheckPort || args.port || 0) || undefined,
+            retryReason: "timeout_switch_to_background"
+          }
+        });
+      }
       const timeoutMs = Number(args.timeoutMs || args.timeout_ms || 60000);
       candidates.push({
         name: "run_command",
         arguments: {
           ...args,
-          command: String(args.command || commandLike || ""),
-          timeoutMs: Math.min(300000, Math.max(90000, timeoutMs * 2))
+          command: normalizedCommand,
+          timeoutMs: Math.min(600000, Math.max(120000, timeoutMs * 2)),
+          retryReason: "timeout_extend_budget"
         }
       });
     }
 
-    if (/Command exited with code/i.test(mergedFailure) && String(args.command || commandLike || "").trim()) {
-      candidates.push({
-        name: "run_command",
-        arguments: {
-          ...args,
-          command: String(args.command || commandLike || ""),
-          timeoutMs: Number(args.timeoutMs || args.timeout_ms || 90000) || 90000,
-          retryReason: "nonzero_exit_retry_once"
-        }
-      });
+    if (/Command exited with code/i.test(mergedFailure) && normalizedCommand) {
+      if (likelyLongRunning && !args.background) {
+        candidates.push({
+          name: "run_command",
+          arguments: {
+            ...args,
+            command: normalizedCommand,
+            background: true,
+            startupTimeoutMs: Number(args.startupTimeoutMs || args.startup_timeout_ms || 20000),
+            healthCheckPort: Number(args.healthCheckPort || args.port || 0) || undefined,
+            retryReason: "nonzero_exit_switch_to_background"
+          }
+        });
+      } else {
+        candidates.push({
+          name: "run_command",
+          arguments: {
+            ...args,
+            command: normalizedCommand,
+            timeoutMs: Math.min(300000, Math.max(120000, Number(args.timeoutMs || args.timeout_ms || 90000) || 120000)),
+            retryReason: "nonzero_exit_retry_once"
+          }
+        });
+      }
     }
   }
 
@@ -240,7 +277,7 @@ function buildResilienceSuggestion(call = {}, attemptResults = []) {
   const latestSummary = String(latest?.summary || "");
 
   if (/repeated_failure_signature/i.test(latestSummary)) {
-    return `建议整改：${toolName} 连续出现同类失败，已触发熔断。请修正参数模板或切换工具策略后再重试。`;
+    return `建议整改：${toolName} 连续出现同类失败，已触发熔断。请修正参数模板，并优先切换到后台执行/延长超时后再重试。`;
   }
   if (/Missing required argument:/i.test(latestSummary)) {
     return `建议整改：模型输出该工具时必须补全必填参数，当前 ${toolName} 调用缺参。`;
@@ -249,10 +286,10 @@ function buildResilienceSuggestion(call = {}, attemptResults = []) {
     return "建议整改：将未知工具名映射到标准工具（如 run_command/read_file/write_file），避免协议漂移。";
   }
   if (/Command exited with code/i.test(latestSummary)) {
-    return `建议整改：对 ${toolName} 增加命令级语义回退（失败命令自动替换等价执行路径）。`;
+    return `建议整改：对 ${toolName} 增加命令级语义回退（如前台失败自动切后台，或切分为更小命令）。`;
   }
   if (RETRYABLE_FAILURE_PATTERN.test(latestSummary)) {
-    return "建议整改：该失败属于可重试类型，建议增加重试预算或切换模型通道。";
+    return "建议整改：该失败属于可重试类型，建议自动增加重试预算（超时翻倍/后台执行）并可切换模型通道。";
   }
   return `建议整改：补充 ${toolName} 的参数规范和失败回退策略，减少不可恢复失败。`;
 }

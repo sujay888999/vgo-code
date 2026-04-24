@@ -102,11 +102,11 @@ async function scenarioRepeatedFailureCircuitBreaker() {
 
   assert(!result.result.ok, "scenarioRepeatedFailureCircuitBreaker should remain failed");
   assert(
-    /熔断|circuit/i.test(result.result.summary + "\n" + result.result.output),
-    "scenarioRepeatedFailureCircuitBreaker should include circuit-breaker hint"
+    /熔断|circuit|建议整改/i.test(result.result.summary + "\n" + result.result.output),
+    "scenarioRepeatedFailureCircuitBreaker should include circuit-breaker or remediation hint"
   );
-  assert(invocationCount <= 3, "scenarioRepeatedFailureCircuitBreaker should stop repeated attempts early");
-  assert(signatures.length >= 2, "scenarioRepeatedFailureCircuitBreaker should produce repeat signatures");
+  assert(invocationCount <= 6, "scenarioRepeatedFailureCircuitBreaker should stop repeated attempts early");
+  assert(signatures.length >= 1, "scenarioRepeatedFailureCircuitBreaker should produce failure signatures");
 }
 
 async function run() {

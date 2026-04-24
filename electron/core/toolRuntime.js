@@ -430,6 +430,12 @@ function inferHealthPortFromCommand(command = "") {
   return 0;
 }
 
+function isLikelyLongRunningCommand(command = "") {
+  return /(uvicorn\s+.*--reload|npm\s+run\s+(dev|start)|pnpm\s+(dev|start)|yarn\s+(dev|start)|vite(?:\s|$)|next\s+dev|tail\s+-f|watch)/i.test(
+    String(command || "")
+  );
+}
+
 async function runCommand(workspace, args = {}, options = {}) {
   const command = String(
     args.command ||
@@ -541,9 +547,7 @@ async function runCommand(workspace, args = {}, options = {}) {
 
   const requestedTimeout = args.timeoutMs ?? args.timeout_ms;
   const hasExplicitTimeout = requestedTimeout !== undefined && requestedTimeout !== null && `${requestedTimeout}`.trim() !== "";
-  const looksLongRunning = /(uvicorn\s+.*--reload|npm\s+run\s+(dev|start)|pnpm\s+(dev|start)|yarn\s+(dev|start)|vite(?:\s|$)|next\s+dev|tail\s+-f|watch)/i.test(
-    command
-  );
+  const looksLongRunning = isLikelyLongRunningCommand(command);
   const explicitForeground = toBoolean(args.foreground, false);
   const backgroundRequested = toBoolean(args.background ?? args.detached ?? args.daemon, false);
   const autoBackground = looksLongRunning && !hasExplicitTimeout && !explicitForeground;
@@ -614,7 +618,7 @@ async function runCommand(workspace, args = {}, options = {}) {
   }
 
   const defaultTimeout = looksLongRunning ? 120000 : 60000;
-  const timeoutMs = clamp(requestedTimeout, 1000, 300000, defaultTimeout);
+  const timeoutMs = clamp(requestedTimeout, 1000, 600000, defaultTimeout);
 
   let result;
   try {
@@ -640,8 +644,12 @@ async function runCommand(workspace, args = {}, options = {}) {
     return {
       ok: false,
       name: "run_command",
-      summary: isTimeout ? `Command timed out after ${timeoutMs}ms.` : `Error: ${result.error.message}`,
-      output: result.error.message || ""
+      summary: isTimeout
+        ? `Command timed out after ${timeoutMs}ms.${looksLongRunning ? " Detected long-running task; try background mode." : ""}`
+        : `Error: ${result.error.message}`,
+      output: isTimeout && looksLongRunning
+        ? `${result.error.message || ""}\nhint=use_background\nexample={\"name\":\"run_command\",\"arguments\":{\"command\":\"${command}\",\"cwd\":\"${cwd}\",\"background\":true}}`
+        : (result.error.message || "")
     };
   }
 
