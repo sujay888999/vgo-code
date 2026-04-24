@@ -1,6 +1,6 @@
 # Brand Audit Report
 
-Generated: 2026-04-22T07:39:32.637Z
+Generated: 2026-04-24T06:59:58.677Z
 
 ## VGO Code
 - Matches: 0
@@ -17,7 +17,7 @@ Generated: 2026-04-22T07:39:32.637Z
 ## OpenAI
 - Matches: 2
 
-- .\src\components\Sidebar.tsx:69:  if (text.includes('gpt') || id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')) return 'OpenAI'
+- .\src\components\Sidebar.tsx:71:  if (text.includes('gpt') || id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')) return 'OpenAI'
 - .\electron\core\vgoSimAdapter.js:14:    "1. 接入真正的 VGO Remote Adapter 或 OpenAI Adapter。",
 
 ## ChatGPT
@@ -26,8 +26,8 @@ Generated: 2026-04-22T07:39:32.637Z
 ## Claude
 - Matches: 3
 
+- .\src\components\Sidebar.tsx:72:  if (text.includes('claude')) return 'Claude'
 - .\electron\core\bundledCliAdapter.js:170:  providerLabel: "Claude Code 2.1.88 Package",
-- .\src\components\Sidebar.tsx:70:  if (text.includes('claude')) return 'Claude'
 - .\electron\core\state.js:127:      providerLabel: "Claude Code 2.1.88 Package"
 
 ## Cursor
