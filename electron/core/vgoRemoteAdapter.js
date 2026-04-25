@@ -17,7 +17,7 @@ const UPSTREAM_RETRYABLE_PATTERN = /Failed to connect to upstream channel/i;
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 90000;
 const DEFAULT_REMOTE_NETWORK_RETRIES = 3;
 const REMOTE_RETRY_BASE_DELAY_MS = 600;
-const MAX_UPSTREAM_RATE_LIMIT_RETRIES = 2;
+const MAX_UPSTREAM_RATE_LIMIT_RETRIES = 4;
 const DEFAULT_VGO_PROFILE_ID = "default";
 const REMOTE_MAX_HISTORY_MESSAGES = 24;
 const REMOTE_MAX_MESSAGE_CHARS = 5000;
@@ -939,6 +939,14 @@ function computeRetryDelayMs(attempt = 1) {
   return Math.min(4000, base + jitter);
 }
 
+function computeRateLimitRetryDelayMs(attempt = 1) {
+  // 限速专用退避：1次→8s, 2次→16s, 3次→30s, 4次→60s，给服务端足够的冷却时间
+  const safeAttempt = Math.max(1, Number(attempt) || 1);
+  const base = 8000 * Math.pow(2, safeAttempt - 1);
+  const jitter = Math.floor(Math.random() * 1000);
+  return Math.min(60000, base + jitter);
+}
+
 function pickFallbackModelForUpstream(settings, currentModel) {
   const catalog = getCatalogModels(settings).map((item) => item.id).filter(Boolean);
   if (!catalog.length) {
@@ -1601,11 +1609,12 @@ async function runRealVgoPrompt({
       upstreamRateLimitRetryUsed < MAX_UPSTREAM_RATE_LIMIT_RETRIES
     ) {
       upstreamRateLimitRetryUsed += 1;
-      const waitMs = computeRetryDelayMs(upstreamRateLimitRetryUsed + 1) + 1000 * upstreamRateLimitRetryUsed;
+      const waitMs = computeRateLimitRetryDelayMs(upstreamRateLimitRetryUsed);
+      const waitSec = Math.round(waitMs / 1000);
       emitEvent(onEvent, rawEvents, {
         type: "task_status",
         status: "retrying",
-        message: `上游模型限流，正在自动退避重试（${upstreamRateLimitRetryUsed}/${MAX_UPSTREAM_RATE_LIMIT_RETRIES}）...`
+        message: `上游模型限流，${waitSec}秒后自动重试（${upstreamRateLimitRetryUsed}/${MAX_UPSTREAM_RATE_LIMIT_RETRIES}）...`
       });
       await wait(waitMs);
       ({ response, payload } = await requestWithRetry(usedModel));
@@ -2349,12 +2358,14 @@ async function runLocalPrompt({
       localRateLimitRetryUsed < MAX_UPSTREAM_RATE_LIMIT_RETRIES
     ) {
       localRateLimitRetryUsed += 1;
+      const waitMs = computeRateLimitRetryDelayMs(localRateLimitRetryUsed);
+      const waitSec = Math.round(waitMs / 1000);
       emitEvent(onEvent, [], {
         type: "task_status",
         status: "retrying",
-        message: `上游模型限流，正在自动退避重试（${localRateLimitRetryUsed}/${MAX_UPSTREAM_RATE_LIMIT_RETRIES}）...`
+        message: `上游模型限流，${waitSec}秒后自动重试（${localRateLimitRetryUsed}/${MAX_UPSTREAM_RATE_LIMIT_RETRIES}）...`
       });
-      await wait(computeRetryDelayMs(localRateLimitRetryUsed + 1) + 900 * localRateLimitRetryUsed);
+      await wait(waitMs);
       const retryResponse = await fetch(endpointPlan.requestUrl, {
         method: "POST",
         headers: {

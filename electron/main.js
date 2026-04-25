@@ -2547,21 +2547,43 @@ app.whenReady().then(async () => {
   createWindow();
   createTrayIcon();
 
-  setTimeout(async () => {
-    const updateResult = await initializeAutoCheck(app.getVersion(), {
-      updateUrl: "https://vgoai.cn/downloads/vgo-code/version.json"
-    });
-    if (updateResult?.updateAvailable && mainWindow) {
-      lastDetectedUpdate = {
-        currentVersion: updateResult.currentVersion,
-        latestVersion: updateResult.latestVersion,
-        downloadUrl: updateResult.downloadUrl,
-        releaseNotes: updateResult.releaseNotes,
-        releaseDate: updateResult.releaseDate
-      };
+  // 后台检查更新，结果缓存到 lastDetectedUpdate
+  const UPDATE_URL = "https://vgoai.cn/downloads/vgo-code/version.json";
+  async function runUpdateCheck(force = false) {
+    try {
+      const updateResult = force
+        ? await checkForUpdates(app.getVersion(), { updateUrl: UPDATE_URL, force: true })
+        : await initializeAutoCheck(app.getVersion(), { updateUrl: UPDATE_URL });
+      if (updateResult?.updateAvailable) {
+        lastDetectedUpdate = {
+          currentVersion: updateResult.currentVersion,
+          latestVersion: updateResult.latestVersion,
+          downloadUrl: updateResult.downloadUrl,
+          releaseNotes: updateResult.releaseNotes,
+          releaseDate: updateResult.releaseDate
+        };
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  // 等 renderer 加载完再发，避免 IPC 消息丢失
+  mainWindow.webContents.once("did-finish-load", async () => {
+    const hasUpdate = await runUpdateCheck(false);
+    if (hasUpdate && lastDetectedUpdate) {
+      // 再等 1 秒确保前端 JS 事件监听器已注册
+      setTimeout(() => sendUpdateEvent("update:available", lastDetectedUpdate), 1000);
+    }
+  });
+
+  // 每 6 小时周期检查一次
+  setInterval(async () => {
+    const hasUpdate = await runUpdateCheck(true);
+    if (hasUpdate && lastDetectedUpdate) {
       sendUpdateEvent("update:available", lastDetectedUpdate);
     }
-  }, 5000);
+  }, 6 * 60 * 60 * 1000);
 
   ipcMain.handle("settings:updateAppearance", (_event, payload = {}) =>
     mergeSettingsSection("appearance", {
