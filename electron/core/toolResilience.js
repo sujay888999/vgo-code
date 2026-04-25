@@ -54,12 +54,55 @@ function normalizeWriteFileAliases(name, args = {}) {
   return normalized;
 }
 
+function normalizeRunCommandAliases(name, args = {}) {
+  if (name !== "run_command") return args;
+  const normalized = { ...args };
+  const assignFirstString = (targetKey, candidateKeys = []) => {
+    if (typeof normalized[targetKey] === "string" && normalized[targetKey].trim()) return;
+    for (const key of candidateKeys) {
+      if (typeof normalized[key] === "string" && normalized[key].trim()) {
+        normalized[targetKey] = normalized[key];
+        return;
+      }
+    }
+  };
+  // vgo-music 和其他别名工具常用的参数名
+  assignFirstString("command", [
+    "cmd", "shell", "script", "cmdline", "cmdLine", "shell_command", "shellCommand",
+    "song", "music", "play", "track", "query", "input", "text", "body", "value", "arguments"
+  ]);
+  return normalized;
+}
+
+function normalizeToolAliases(name, args = {}) {
+  const n = normalizeWriteFileAliases(name, args);
+  return normalizeRunCommandAliases(name, n);
+}
+
+const TOOL_NAME_ALIASES = {
+  "vgo-music": "run_command",
+  "vgo_music": "run_command",
+  "vgomusic": "run_command",
+  "cli-mcp-server_run_command": "run_command",
+  copy: "copy_file",
+  move: "move_file",
+  rename: "rename_file",
+  mkdir: "make_dir",
+  create_directory: "make_dir"
+};
+
+function resolveToolName(name = "") {
+  const lower = String(name || "").trim().toLowerCase();
+  return TOOL_NAME_ALIASES[lower] || lower;
+}
+
 function getMissingRequiredToolArgument(call = {}) {
-  const name = String(call?.name || "").trim().toLowerCase();
+  const rawName = String(call?.name || "").trim().toLowerCase();
+  const name = resolveToolName(rawName);
   const rawArgs = toObjectArgs(call);
   // Normalize aliases before checking required fields so that e.g. {text: "..."} is
   // treated as a valid content value and doesn't produce a false-positive precheck failure.
-  const args = normalizeWriteFileAliases(name, rawArgs);
+  const args = normalizeToolAliases(name, rawArgs);
   if (name === "run_command") {
     const action = String(args.processAction || args.action || "").trim().toLowerCase();
     if (action === "list") {
@@ -335,8 +378,8 @@ async function executeToolCallWithResilience({
   const attemptResults = [];
   const seenFailureSignatures = new Map();
   const primaryCall = {
-    name: String(call?.name || ""),
-    arguments: normalizeWriteFileAliases(String(call?.name || "").trim().toLowerCase(), toObjectArgs(call))
+    name: resolveToolName(String(call?.name || "")),
+    arguments: normalizeToolAliases(resolveToolName(String(call?.name || "")), toObjectArgs(call))
   };
 
   const missingPrimaryArgument = getMissingRequiredToolArgument(primaryCall);
