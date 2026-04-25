@@ -37,9 +37,29 @@ function buildFailureSignature(result = {}) {
   return `${tool}::${summary}`;
 }
 
+function normalizeWriteFileAliases(name, args = {}) {
+  if (!["write_file", "append_file"].includes(name)) return args;
+  const normalized = { ...args };
+  const assignFirstString = (targetKey, candidateKeys = []) => {
+    if (typeof normalized[targetKey] === "string" && normalized[targetKey].trim()) return;
+    for (const key of candidateKeys) {
+      if (typeof normalized[key] === "string" && normalized[key].trim()) {
+        normalized[targetKey] = normalized[key];
+        return;
+      }
+    }
+  };
+  assignFirstString("path", ["filePath", "filepath", "file", "filename", "target", "output", "destination"]);
+  assignFirstString("content", ["contents", "conten", "text", "body", "value", "data", "code"]);
+  return normalized;
+}
+
 function getMissingRequiredToolArgument(call = {}) {
   const name = String(call?.name || "").trim().toLowerCase();
-  const args = toObjectArgs(call);
+  const rawArgs = toObjectArgs(call);
+  // Normalize aliases before checking required fields so that e.g. {text: "..."} is
+  // treated as a valid content value and doesn't produce a false-positive precheck failure.
+  const args = normalizeWriteFileAliases(name, rawArgs);
   if (name === "run_command") {
     const action = String(args.processAction || args.action || "").trim().toLowerCase();
     if (action === "list") {
@@ -316,7 +336,7 @@ async function executeToolCallWithResilience({
   const seenFailureSignatures = new Map();
   const primaryCall = {
     name: String(call?.name || ""),
-    arguments: toObjectArgs(call)
+    arguments: normalizeWriteFileAliases(String(call?.name || "").trim().toLowerCase(), toObjectArgs(call))
   };
 
   const missingPrimaryArgument = getMissingRequiredToolArgument(primaryCall);
