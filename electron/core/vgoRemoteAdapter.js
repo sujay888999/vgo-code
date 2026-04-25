@@ -179,7 +179,31 @@ function normalizeToolCalls(calls = []) {
     "vgo-music": "run_command",
     "vgo_music": "run_command",
     "vgomusic": "run_command",
-    "cli-mcp-server_run_command": "run_command"
+    "cli-mcp-server_run_command": "run_command",
+    "shell_command": "run_command",
+    "bash": "run_command",
+    "powershell": "run_command",
+    "exec": "run_command",
+    "execute": "run_command",
+    "copy": "copy_file",
+    "move": "move_file",
+    "rename": "rename_file",
+    "mkdir": "make_dir",
+    "create_directory": "make_dir",
+    "create_dir": "make_dir",
+    "rm": "delete_file",
+    "remove_file": "delete_file",
+    "rmdir": "delete_dir",
+    "remove_dir": "delete_dir",
+    "ls": "list_dir",
+    "dir": "list_dir",
+    "cat": "read_file",
+    "open": "open_path",
+    "browse": "fetch_web",
+    "get_url": "fetch_web",
+    "http_get": "fetch_web",
+    "transcribe": "transcribe_media",
+    "speech_to_text": "transcribe_media"
   };
   const pathLikeTools = new Set([
     "read_file",
@@ -240,6 +264,23 @@ function normalizeToolCalls(calls = []) {
       ) {
         normalized.timeoutMs = normalized.timeout_ms;
       }
+    }
+    if (["copy_file", "move_file"].includes(name)) {
+      assignFirstString("source", ["src", "from", "origin", "input", "file", "path"]);
+      assignFirstString("destination", ["dest", "dst", "to", "target", "output", "newPath"]);
+    }
+    if (name === "rename_file") {
+      assignFirstString("path", ["filePath", "filepath", "file", "filename", "source", "from", "input"]);
+      assignFirstString("newName", ["new_name", "newname", "name", "to", "target", "rename_to", "renameTo"]);
+    }
+    if (name === "fetch_web") {
+      assignFirstString("url", ["link", "href", "uri", "address", "website", "site", "page"]);
+    }
+    if (name === "search_code") {
+      assignFirstString("query", ["keyword", "pattern", "text", "search", "term", "find", "input"]);
+    }
+    if (name === "transcribe_media") {
+      assignFirstString("path", ["filePath", "filepath", "file", "filename", "media", "audio", "video", "input"]);
     }
     return normalized;
   };

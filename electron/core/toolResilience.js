@@ -66,7 +66,6 @@ function normalizeRunCommandAliases(name, args = {}) {
       }
     }
   };
-  // vgo-music 和其他别名工具常用的参数名
   assignFirstString("command", [
     "cmd", "shell", "script", "cmdline", "cmdLine", "shell_command", "shellCommand",
     "song", "music", "play", "track", "query", "input", "text", "body", "value", "arguments"
@@ -74,9 +73,101 @@ function normalizeRunCommandAliases(name, args = {}) {
   return normalized;
 }
 
+function normalizePathLikeToolAliases(name, args = {}) {
+  const pathLike = new Set(["read_file", "list_dir", "open_path", "delete_file", "delete_dir",
+    "make_dir", "transcribe_media", "generate_word_doc"]);
+  if (!pathLike.has(name)) return args;
+  const normalized = { ...args };
+  const assignFirstString = (targetKey, candidateKeys = []) => {
+    if (typeof normalized[targetKey] === "string" && normalized[targetKey].trim()) return;
+    for (const key of candidateKeys) {
+      if (typeof normalized[key] === "string" && normalized[key].trim()) {
+        normalized[targetKey] = normalized[key];
+        return;
+      }
+    }
+  };
+  assignFirstString("path", ["filePath", "filepath", "file", "filename", "target", "input",
+    "dir", "directory", "source", "media", "audio", "video"]);
+  return normalized;
+}
+
+function normalizeCopyMoveAliases(name, args = {}) {
+  if (!["copy_file", "move_file"].includes(name)) return args;
+  const normalized = { ...args };
+  const assignFirstString = (targetKey, candidateKeys = []) => {
+    if (typeof normalized[targetKey] === "string" && normalized[targetKey].trim()) return;
+    for (const key of candidateKeys) {
+      if (typeof normalized[key] === "string" && normalized[key].trim()) {
+        normalized[targetKey] = normalized[key];
+        return;
+      }
+    }
+  };
+  assignFirstString("source", ["src", "from", "origin", "input", "file", "path"]);
+  assignFirstString("destination", ["dest", "dst", "to", "target", "output", "newPath"]);
+  return normalized;
+}
+
+function normalizeRenameAliases(name, args = {}) {
+  if (name !== "rename_file") return args;
+  const normalized = { ...args };
+  const assignFirstString = (targetKey, candidateKeys = []) => {
+    if (typeof normalized[targetKey] === "string" && normalized[targetKey].trim()) return;
+    for (const key of candidateKeys) {
+      if (typeof normalized[key] === "string" && normalized[key].trim()) {
+        normalized[targetKey] = normalized[key];
+        return;
+      }
+    }
+  };
+  assignFirstString("path", ["filePath", "filepath", "file", "filename", "source", "from", "input"]);
+  assignFirstString("newName", ["new_name", "newname", "name", "to", "target", "rename_to", "renameTo"]);
+  return normalized;
+}
+
+function normalizeFetchWebAliases(name, args = {}) {
+  if (name !== "fetch_web") return args;
+  const normalized = { ...args };
+  const assignFirstString = (targetKey, candidateKeys = []) => {
+    if (typeof normalized[targetKey] === "string" && normalized[targetKey].trim()) return;
+    for (const key of candidateKeys) {
+      if (typeof normalized[key] === "string" && normalized[key].trim()) {
+        normalized[targetKey] = normalized[key];
+        return;
+      }
+    }
+  };
+  assignFirstString("url", ["link", "href", "uri", "address", "website", "site", "page"]);
+  return normalized;
+}
+
+function normalizeSearchCodeAliases(name, args = {}) {
+  if (name !== "search_code") return args;
+  const normalized = { ...args };
+  const assignFirstString = (targetKey, candidateKeys = []) => {
+    if (typeof normalized[targetKey] === "string" && normalized[targetKey].trim()) return;
+    for (const key of candidateKeys) {
+      if (typeof normalized[key] === "string" && normalized[key].trim()) {
+        normalized[targetKey] = normalized[key];
+        return;
+      }
+    }
+  };
+  assignFirstString("query", ["keyword", "pattern", "text", "search", "term", "find", "input"]);
+  assignFirstString("path", ["dir", "directory", "filePath", "filepath", "root"]);
+  return normalized;
+}
+
 function normalizeToolAliases(name, args = {}) {
-  const n = normalizeWriteFileAliases(name, args);
-  return normalizeRunCommandAliases(name, n);
+  let n = normalizeWriteFileAliases(name, args);
+  n = normalizeRunCommandAliases(name, n);
+  n = normalizePathLikeToolAliases(name, n);
+  n = normalizeCopyMoveAliases(name, n);
+  n = normalizeRenameAliases(name, n);
+  n = normalizeFetchWebAliases(name, n);
+  n = normalizeSearchCodeAliases(name, n);
+  return n;
 }
 
 const TOOL_NAME_ALIASES = {
@@ -84,11 +175,30 @@ const TOOL_NAME_ALIASES = {
   "vgo_music": "run_command",
   "vgomusic": "run_command",
   "cli-mcp-server_run_command": "run_command",
+  "shell_command": "run_command",
+  "bash": "run_command",
+  "powershell": "run_command",
+  "exec": "run_command",
+  "execute": "run_command",
   copy: "copy_file",
   move: "move_file",
   rename: "rename_file",
   mkdir: "make_dir",
-  create_directory: "make_dir"
+  create_directory: "make_dir",
+  create_dir: "make_dir",
+  rm: "delete_file",
+  remove_file: "delete_file",
+  rmdir: "delete_dir",
+  remove_dir: "delete_dir",
+  ls: "list_dir",
+  dir: "list_dir",
+  cat: "read_file",
+  open: "open_path",
+  browse: "fetch_web",
+  get_url: "fetch_web",
+  http_get: "fetch_web",
+  transcribe: "transcribe_media",
+  speech_to_text: "transcribe_media"
 };
 
 function resolveToolName(name = "") {
@@ -114,7 +224,9 @@ function getMissingRequiredToolArgument(call = {}) {
     }
   }
   const requiredByTool = {
+    list_dir: ["path"],
     read_file: ["path"],
+    search_code: ["query"],
     write_file: ["path", "content"],
     append_file: ["path", "content"],
     run_command: ["command"],
@@ -126,6 +238,7 @@ function getMissingRequiredToolArgument(call = {}) {
     delete_dir: ["path"],
     open_path: ["path"],
     fetch_web: ["url"],
+    transcribe_media: ["path"],
     generate_word_doc: ["path"]
   };
   const required = requiredByTool[name] || [];
