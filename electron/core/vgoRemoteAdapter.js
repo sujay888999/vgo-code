@@ -175,6 +175,12 @@ function safeParseJson(value) {
 }
 
 function normalizeToolCalls(calls = []) {
+  const CALL_NAME_ALIASES = {
+    "vgo-music": "run_command",
+    "vgo_music": "run_command",
+    "vgomusic": "run_command",
+    "cli-mcp-server_run_command": "run_command"
+  };
   const pathLikeTools = new Set([
     "read_file",
     "list_dir",
@@ -208,7 +214,8 @@ function normalizeToolCalls(calls = []) {
       assignFirstString("path", ["filePath", "filepath", "file", "filename", "target", "input", "dir", "directory"]);
     }
     if (name === "run_command") {
-      assignFirstString("command", ["cmdline", "cmdLine", "shell", "script", "text", "body", "value", "content"]);
+      assignFirstString("command", ["cmdline", "cmdLine", "shell", "script", "text", "body", "value", "content",
+        "song", "music", "play", "track", "query", "input"]);
       if (
         (normalized.command === undefined || String(normalized.command || "").trim() === "") &&
         typeof normalized.cmd === "string"
@@ -289,10 +296,13 @@ function normalizeToolCalls(calls = []) {
 
   return calls
     .filter((call) => call && typeof call === "object" && call.name)
-    .map((call) => ({
-      name: String(call.name),
-      arguments: coerceToolArguments(call.name, call)
-    }));
+    .map((call) => {
+      const resolvedName = CALL_NAME_ALIASES[String(call.name).trim().toLowerCase()] || String(call.name);
+      return {
+        name: resolvedName,
+        arguments: coerceToolArguments(resolvedName, call)
+      };
+    });
 }
 
 function isRateLimitLikeFailure(status, errorText = "") {
