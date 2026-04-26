@@ -46,7 +46,11 @@ function assertSafeInputPath(inputPath = "") {
 
 function resolveInputPath(workspace, inputPath = ".") {
   assertSafeInputPath(inputPath);
-  const raw = String(inputPath || ".").trim();
+  // Strip model output artifacts that can leak into path args (e.g. <|"|>, <|...|>)
+  const raw = String(inputPath || ".").trim()
+    .replace(/<\|[^|]*\|>/g, "")
+    .replace(/[<>]/g, "")
+    .trim();
   if (!raw || raw === ".") {
     return path.resolve(workspace);
   }
@@ -123,11 +127,15 @@ function readFile(workspace, args = {}, options = {}) {
   const content = fs.readFileSync(targetPath, "utf8");
   const maxLines = clamp(args.maxLines, 1, 400, 200);
   const lines = content.split(/\r?\n/);
+  const totalLines = lines.length;
   const selected = lines.slice(0, maxLines);
+  const truncated = totalLines > maxLines;
   return {
     ok: true,
     name: "read_file",
-    summary: `Read ${targetPath} lines 1-${selected.length}.`,
+    summary: truncated
+      ? `Read ${targetPath} lines 1-${selected.length} of ${totalLines} total. File has more content — use maxLines or startLine/endLine to read further.`
+      : `Read ${targetPath} lines 1-${selected.length} (complete file, ${totalLines} lines total).`,
     output: selected.join("\n")
   };
 }
