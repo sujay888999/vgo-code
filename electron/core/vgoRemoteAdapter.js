@@ -2178,15 +2178,40 @@ async function runRealVgoPrompt({
         args: JSON.stringify(call.arguments || call.args || {}).slice(0, 500),
         outputPreview: String(result.output || "").slice(0, 300)
       });
-      emitEvent(onEvent, rawEvents, {
-        type: "tool_result",
-        step: step + 1,
-        tool: call.name,
-        ok: result.ok,
-        recovered: Boolean(result?.recovered),
-        summary: result.summary,
-        output: result.output
-      });
+      // 只在成功、或已恢复、或最终失败（非可重试类）时才向前端发 tool_result
+      // 中间的兜底重试过程静默处理，避免向用户暴露中间失败状态
+      const isRetryableFailure = !result.ok && !result.recovered && (
+        /Command exited with code|ENOENT|timed out|timeout/i.test(String(result.summary || ""))
+      );
+      if (result.ok || result.recovered || !isRetryableFailure) {
+        emitEvent(onEvent, rawEvents, {
+          type: "tool_result",
+          step: step + 1,
+          tool: call.name,
+          ok: result.ok,
+          recovered: Boolean(result?.recovered),
+          summary: result.summary,
+          output: result.output
+        });
+      } else {
+        // 可重试类失败只发 task_status，不发 tool_result 错误卡片
+        emitEvent(onEvent, rawEvents, {
+          type: "task_status",
+          status: "retrying",
+          step: step + 1,
+          message: `工具执行遇到问题，正在处理中...`
+        });
+        // 仍然需要把 tool_result 加入 rawEvents 供内部逻辑使用，但不通知前端
+        rawEvents.push({
+          type: "tool_result",
+          step: step + 1,
+          tool: call.name,
+          ok: result.ok,
+          recovered: Boolean(result?.recovered),
+          summary: result.summary,
+          output: result.output
+        });
+      }
     }
 
     const hasWriteArgumentFailure = results.some(
@@ -2597,13 +2622,31 @@ async function runLocalPrompt({
             emitStatus: (event) => emitEvent(onEvent, localRawEvents, event)
           });
           const toolResult = execution.result;
-          emitEvent(onEvent, localRawEvents, {
-            type: "tool_result",
-            tool: call.name,
-            ok: toolResult.ok,
-            summary: toolResult.summary,
-            output: toolResult.output
-          });
+          const isRetryableFailureLocal = !toolResult.ok && !toolResult.recovered && (
+            /Command exited with code|ENOENT|timed out|timeout/i.test(String(toolResult.summary || ""))
+          );
+          if (toolResult.ok || toolResult.recovered || !isRetryableFailureLocal) {
+            emitEvent(onEvent, localRawEvents, {
+              type: "tool_result",
+              tool: call.name,
+              ok: toolResult.ok,
+              summary: toolResult.summary,
+              output: toolResult.output
+            });
+          } else {
+            emitEvent(onEvent, localRawEvents, {
+              type: "task_status",
+              status: "retrying",
+              message: `工具执行遇到问题，正在处理中...`
+            });
+            localRawEvents.push({
+              type: "tool_result",
+              tool: call.name,
+              ok: toolResult.ok,
+              summary: toolResult.summary,
+              output: toolResult.output
+            });
+          }
         }
 
         const toolMessage = protocol.buildToolResultMessage(
