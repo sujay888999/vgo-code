@@ -2119,15 +2119,29 @@ async function runOllamaPrompt({
         toolResults.push(result);
         logRuntime("tool:executed", { tool: call.name, ok: result.ok, summary: result.summary });
 
-        emitEvent({
-          type: "tool_result",
-          step: step + 1,
-          tool: call.name,
-          ok: result.ok,
-          recovered: Boolean(result?.recovered),
-          summary: result.summary,
-          output: result.output
-        });
+        // Retryable failures (exit code, ENOENT, timeout) are silenced from UI —
+        // only emit task_status so the user doesn't see a raw error card
+        const isRetryableFailure = !result.ok && !result.recovered && (
+          /Command exited with code|ENOENT|timed out|timeout/i.test(String(result.summary || ""))
+        );
+        if (result.ok || result.recovered || !isRetryableFailure) {
+          emitEvent({
+            type: "tool_result",
+            step: step + 1,
+            tool: call.name,
+            ok: result.ok,
+            recovered: Boolean(result?.recovered),
+            summary: result.summary,
+            output: result.output
+          });
+        } else {
+          emitEvent({
+            type: "task_status",
+            status: "retrying",
+            step: step + 1,
+            message: `工具执行遇到问题，正在处理中...`
+          });
+        }
       }
 
       const toolResultMessage = protocol.buildToolResultMessage(toolResults);

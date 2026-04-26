@@ -1,0 +1,10 @@
+[
+  {
+    "pid": 21448,
+    "command": "npm run dev",
+    "cwd": "E:\\VGO_MUSIC_v0.3\\VGO MUSIC",
+    "startedAt": "2026-04-26T14:30:55.021Z",
+    "mode": "background",
+    "logPath": "E:\\VGO-CODE\\logs\\background\\run_command-2026-04-26T14-30-54-978Z.log"
+  }
+]

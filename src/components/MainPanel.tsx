@@ -90,19 +90,24 @@ export function MainPanel() {
     if (!container || !autoScroll) return
 
     const observer = new ResizeObserver(() => {
+      // Only re-scroll when user is already following output.
+      // Observing only the container (not inner children) prevents
+      // the reasoning-block's internal resize from bouncing the outer scroll.
       if (followOutput) {
-        scrollToBottom()
+        window.requestAnimationFrame(() => {
+          const c = scrollRef.current
+          if (!c) return
+          c.scrollTop = c.scrollHeight
+        })
       }
     })
 
     observer.observe(container)
-    const content = container.firstElementChild
-    if (content instanceof HTMLElement) {
-      observer.observe(content)
-    }
+    // Do NOT observe container.firstElementChild — that causes the reasoning
+    // panel's height changes to trigger outer scroll jumps.
 
     return () => observer.disconnect()
-  }, [autoScroll, followOutput, scrollToBottom])
+  }, [autoScroll, followOutput])
 
   useEffect(() => {
     if (autoScroll) {

@@ -68,59 +68,42 @@ function normalizeEventPayload<T>(value: T): T {
   return value
 }
 
-function buildLiveProgressBlock(eventType: string, payload: any, t: (key: string) => string) {
+function buildLiveProgressBlock(eventType: string, payload: any, _t: (key: string) => string) {
   if (eventType === 'task_status') {
-    const rawMessage = String(payload?.message || '').trim()
-    const thinkingLikeMessage =
-      /thinking|正在思考|轮推理|推理过程|姝ｅ湪鎬濊/i.test(rawMessage)
-    if (payload?.status === 'thinking' || payload?.status === 'continuing') {
-      if (!rawMessage || thinkingLikeMessage) {
-        return t('task.thinking')
-      }
-    }
-    if (rawMessage) return rawMessage
-    if (payload?.detail) return payload.detail
+    const s = payload?.status
+    if (s === 'thinking' || s === 'continuing' || s === 'planning') return ''
+    if (s === 'retrying' || s === 'fallback_model') return '↻ 切换策略中...'
+    const msg = String(payload?.message || payload?.detail || '').trim()
+    return msg || ''
   }
 
   if (eventType === 'plan') {
     const steps = Array.isArray(payload?.steps) ? payload.steps.filter(Boolean) : []
-    return [payload?.summary || t('task.plan'), ...steps.map((step: string) => `- ${step}`)]
-      .filter(Boolean)
-      .join('\n')
+    return steps.map((s: string) => `· ${s}`).join('\n')
   }
 
-  if (eventType === 'workflow_selected') {
-    return payload?.detail || (payload?.label ? `${t('task.workflowSwitched')} ${payload.label}` : '')
-  }
-
-  if (eventType === 'workflow_probe') {
-    return payload?.detail || t('task.probeComplete')
-  }
+  if (eventType === 'workflow_selected') return ''
+  if (eventType === 'workflow_probe') return ''
 
   if (eventType === 'tool_result') {
-    const summary = payload?.summary || payload?.output || ''
+    const tool = String(payload?.tool || '').trim()
+    const ok = payload?.ok !== false
     const recovered = payload?.recovered === true
-    if (recovered) {
-      return `${t('tool.completed')}: ${payload?.tool || 'unknown'}（已自动切换备用方案）${summary ? `\n${summary}` : ''}`
-    }
-    return `${payload?.ok ? t('tool.completed') : t('tool.failed')}: ${payload?.tool || 'unknown'}${summary ? `\n${summary}` : ''}`
+    // Strip any "建议整改" remediation text that leaked into summary
+    const rawSummary = String(payload?.summary || payload?.output || '').trim()
+    const summary = rawSummary.replace(/\n?建议整改[：:][^\n]*/g, '').trim()
+    const icon = ok ? '✓' : recovered ? '↻' : '✗'
+    const line = `${icon} ${tool}${summary ? `  ${summary}` : ''}`
+    return line
   }
 
   if (eventType === 'permission_requested') {
-    return `${t('permission.waiting')}: ${payload?.tool || 'unknown'}${payload?.detail ? `\n${payload.detail}` : ''}`
+    return `⏸ 等待授权: ${payload?.tool || ''}${payload?.detail ? `  ${payload.detail}` : ''}`
   }
-
-  if (eventType === 'permission_granted') {
-    return `${t('permission.granted')}${payload?.tool ? `: ${payload.tool}` : ''}`
-  }
-
-  if (eventType === 'permission_denied') {
-    return `${t('permission.denied')}${payload?.tool ? `: ${payload.tool}` : ''}`
-  }
-
-  if (eventType === 'capability_gap' || eventType === 'skill_suggestions') {
-    return payload?.detail || ''
-  }
+  if (eventType === 'permission_granted') return `✓ 已授权: ${payload?.tool || ''}`
+  if (eventType === 'permission_denied') return `✗ 授权拒绝: ${payload?.tool || ''}`
+  if (eventType === 'capability_gap') return payload?.detail ? `⚠ ${payload.detail}` : ''
+  if (eventType === 'skill_suggestions') return ''
 
   return ''
 }
@@ -277,125 +260,72 @@ export function App() {
         }
       }
 
-      const upsertLiveMessage = (text: string, nextStatus: 'loading' | 'done' | 'error' = 'loading') => {
-        if (!text.trim()) return
+      // Single unified stream message — no separate progress bubble.
+      // All tool logs, status updates, and final reply flow into one message.
+      const getStream = () =>
+        useAppStore.getState().messages.find((m) => m.id === finalMessageId)
 
-        const existing = useAppStore
-          .getState()
-          .messages.find((message) => message.id === liveMessageId)
-
+      const upsertLiveMessage = (logLine: string, nextStatus: 'loading' | 'done' | 'error' = 'loading') => {
+        if (!logLine.trim()) return
+        const existing = getStream()
+        const prev = existing?.logLines || []
+        // Mark the last pending line as done, then push new line
+        const updated = prev.map((l, i) =>
+          i === prev.length - 1 && !l.done ? { ...l, done: true } : l
+        )
+        const newLines = [...updated, { text: logLine, done: false }]
         if (existing) {
-          updateMessage(liveMessageId, {
-            text,
-            status: nextStatus,
-            timestamp,
-            kind: 'progress',
-            title: t('message.reasoning'),
-          })
-          return
+          updateMessage(finalMessageId, { logLines: newLines, status: nextStatus, timestamp })
+        } else {
+          addMessage({ id: finalMessageId, role: 'assistant', text: '', logLines: newLines, status: nextStatus, timestamp, kind: 'stream' })
         }
+      }
 
-        addMessage({
-          id: liveMessageId,
-          role: 'assistant',
-          text,
-          status: nextStatus,
-          timestamp,
-          kind: 'progress',
-          title: t('message.reasoning'),
-          collapsed: false,
-        })
+      const markLastLogDone = () => {
+        const existing = getStream()
+        if (!existing?.logLines?.length) return
+        const updated = existing.logLines.map((l, i) =>
+          i === existing.logLines!.length - 1 ? { ...l, done: true } : l
+        )
+        updateMessage(finalMessageId, { logLines: updated })
       }
 
       const upsertFinalMessage = (text: string, nextStatus: 'loading' | 'done' | 'error' = 'done') => {
         if (!text.trim()) return
-
-        const existing = useAppStore
-          .getState()
-          .messages.find((message) => message.id === finalMessageId)
-
+        const existing = getStream()
         if (existing) {
-          updateMessage(finalMessageId, {
-            text,
-            status: nextStatus,
-            timestamp,
-            kind: 'final',
-            title: t('message.finalResult'),
-          })
-          return
+          // Only update text — logText is preserved untouched
+          updateMessage(finalMessageId, { text, status: nextStatus, timestamp, kind: 'final' })
+        } else {
+          addMessage({ id: finalMessageId, role: 'assistant', text, logText: '', status: nextStatus, timestamp, kind: 'final' })
         }
-
-        addMessage({
-          id: finalMessageId,
-          role: 'assistant',
-          text,
-          status: nextStatus,
-          timestamp,
-          kind: 'final',
-          title: t('message.finalResult'),
-        })
       }
 
-      const settleLiveMessage = (nextStatus: 'done' | 'error') => {
-        const existing = useAppStore
-          .getState()
-          .messages.find((message) => message.id === liveMessageId)
-
-        if (!existing?.text) return
-
-        updateMessage(liveMessageId, {
-          status: nextStatus,
-          timestamp,
-          kind: 'progress',
-          title: t('message.reasoning'),
-          collapsed: true,
-        })
+      const settleLiveMessage = (_nextStatus: 'done' | 'error') => {
+        markLastLogDone()
       }
 
       const settleFinalMessage = (nextStatus: 'done' | 'error' | 'loading') => {
-        const existing = useAppStore
-          .getState()
-          .messages.find((message) => message.id === finalMessageId)
+        const existing = getStream()
         if (!existing) return
-
-        updateMessage(finalMessageId, {
-          status: nextStatus,
-          timestamp,
-          kind: 'final',
-          title: t('message.finalResult'),
-        })
+        updateMessage(finalMessageId, { status: nextStatus, timestamp, kind: 'final' })
       }
 
       const finalizeLiveMessage = (finalText: string, nextStatus: 'done' | 'error') => {
-        const existing = useAppStore
-          .getState()
-          .messages.find((message) => message.id === liveMessageId)
-        const text = appendUniqueBlock(existing?.text || '', finalText)
-
-        if (!text.trim()) return
-
-        if (existing) {
-          updateMessage(liveMessageId, {
-            text,
-            status: nextStatus,
-            timestamp,
-            kind: 'progress',
-            title: t('message.reasoning'),
-            collapsed: true,
-          })
-          return
+        markLastLogDone()
+        const existing = getStream()
+        // Append last log line to logLines if meaningful, mark done
+        if (finalText.trim()) {
+          const prev = existing?.logLines || []
+          const newLines = [...prev, { text: finalText, done: true }]
+          if (existing) {
+            updateMessage(finalMessageId, { logLines: newLines, status: nextStatus, timestamp, kind: 'final' })
+          } else {
+            addMessage({ id: finalMessageId, role: 'assistant', text: '', logLines: newLines, status: nextStatus, timestamp, kind: 'final' })
+          }
+        } else if (existing) {
+          updateMessage(finalMessageId, { status: nextStatus, timestamp, kind: 'final' })
         }
-
-        addMessage({
-          id: liveMessageId,
-          role: 'assistant',
-          text,
-          status: nextStatus,
-          timestamp,
-          kind: 'progress',
-          title: t('message.reasoning'),
-          collapsed: true,
-        })
       }
 
       const upsertTaskStep = (
@@ -434,8 +364,8 @@ export function App() {
       }
 
       const progressBlock = buildLiveProgressBlock(eventType, payload, t)
-      const currentLiveText =
-        useAppStore.getState().messages.find((message) => message.id === liveMessageId)?.text || ''
+      // currentLiveText is no longer used (logLines replaced logText), kept for safety
+      // const currentLiveText = ...
 
       if (eventType === 'task_status') {
         const taskCopy = getTaskCopy(status, payload, t)
@@ -452,7 +382,13 @@ export function App() {
           }
 
           if (status === 'planning') {
-            upsertLiveMessage(progressBlock || payload?.message || t('task.analyzing'), 'loading')
+            // Don't show system template text — just keep stream alive
+            const existing = getStream()
+            if (existing) {
+              updateMessage(finalMessageId, { status: 'loading', timestamp })
+            } else {
+              addMessage({ id: finalMessageId, role: 'assistant', text: '', logLines: [], status: 'loading', timestamp, kind: 'stream' })
+            }
             upsertTaskStep('task-status-running', {
               title: taskCopy.title,
               detail: taskCopy.detail,
@@ -460,19 +396,19 @@ export function App() {
             })
           }
 
-          if (
-            status === 'thinking' ||
-            status === 'continuing' ||
-            status === 'tool_running' ||
-            status === 'retrying' ||
-            status === 'fallback_model'
-          ) {
-            upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock || taskCopy.detail), 'loading')
-            upsertTaskStep(status === 'planning' ? 'task-status-planning' : 'task-status-running', {
-              title: taskCopy.title,
-              detail: taskCopy.detail,
-              state: taskCopy.state,
-            })
+          if (status === 'thinking' || status === 'continuing') {
+            const existing = getStream()
+            if (existing) {
+              updateMessage(finalMessageId, { status: 'loading', timestamp })
+            } else {
+              addMessage({ id: finalMessageId, role: 'assistant', text: '', logLines: [], status: 'loading', timestamp, kind: 'stream' })
+            }
+            upsertTaskStep('task-status-running', { title: taskCopy.title, detail: taskCopy.detail, state: taskCopy.state })
+          }
+
+          if (status === 'tool_running' || status === 'retrying' || status === 'fallback_model') {
+            if (progressBlock) upsertLiveMessage(progressBlock, 'loading')
+            upsertTaskStep('task-status-running', { title: taskCopy.title, detail: taskCopy.detail, state: taskCopy.state })
           }
 
           if (status === 'completed') {
@@ -483,7 +419,10 @@ export function App() {
               detail: taskCopy.detail,
               state: taskCopy.state,
             })
-            finalizeLiveMessage(progressBlock || payload?.message || t('task.done'), 'done')
+            // Mark last log done, don't append system text
+            markLastLogDone()
+            const existing = getStream()
+            if (existing) updateMessage(finalMessageId, { status: 'done', timestamp, kind: 'final' })
           }
 
           if (status === 'error' || status === 'failed') {
@@ -494,13 +433,15 @@ export function App() {
               detail: taskCopy.detail,
               state: taskCopy.state,
             })
-            finalizeLiveMessage(progressBlock || payload?.message || t('task.failed'), 'done')
+            markLastLogDone()
+            const existing = getStream()
+            if (existing) updateMessage(finalMessageId, { status: 'error', timestamp, kind: 'final' })
           }
         }
       }
 
       if (eventType === 'permission_requested') {
-        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
+        if (progressBlock) upsertLiveMessage(progressBlock, 'loading')
         upsertTaskStep(payload.requestId || `perm-${eventId}`, {
           requestId: payload.requestId,
           tool: payload.tool || 'unknown_tool',
@@ -511,7 +452,7 @@ export function App() {
       }
 
       if (eventType === 'permission_granted' && payload.requestId) {
-        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
+        if (progressBlock) upsertLiveMessage(progressBlock, 'loading')
         updateTaskStep(payload.requestId, {
           state: 'permission_granted',
           detail: payload.detail || t('permission.granted'),
@@ -519,7 +460,7 @@ export function App() {
       }
 
       if (eventType === 'permission_denied' && payload.requestId) {
-        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'error')
+        if (progressBlock) upsertLiveMessage(progressBlock, 'error')
         settleTaskSteps('error')
         setPromptRunning(false)
         updateTaskStep(payload.requestId, {
@@ -529,7 +470,7 @@ export function App() {
       }
 
       if (eventType === 'plan') {
-        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
+        if (progressBlock) upsertLiveMessage(progressBlock, 'loading')
         upsertTaskStep('task-plan', {
           title: payload.summary || t('task.plan'),
           detail: Array.isArray(payload.steps) ? payload.steps.join('\n') : '',
@@ -538,7 +479,7 @@ export function App() {
       }
 
       if (eventType === 'workflow_selected') {
-        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
+        // workflow_selected returns '' from buildLiveProgressBlock, skip
         upsertTaskStep('task-workflow', {
           title: payload.label ? `${t('agentTrace.workflow')}: ${payload.label}` : t('task.workflowSwitched'),
           detail: payload.detail || '',
@@ -547,7 +488,6 @@ export function App() {
       }
 
       if (eventType === 'workflow_probe') {
-        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         upsertTaskStep('task-probe', {
           title: t('agentTrace.prerequisite'),
           detail: payload.detail || '',
@@ -556,7 +496,7 @@ export function App() {
       }
 
       if (eventType === 'capability_gap') {
-        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'error')
+        if (progressBlock) upsertLiveMessage(progressBlock, 'error')
         upsertTaskStep('task-gap', {
           title: t('agentTrace.capabilityGap'),
           detail: payload.detail || '',
@@ -566,12 +506,11 @@ export function App() {
 
       if (eventType === 'skill_suggestions') {
         const skills = Array.isArray(payload.skills) ? payload.skills : []
-        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
         upsertTaskStep('task-skills', {
           title: t('agentTrace.skillSuggestion'),
           detail:
             payload.detail ||
-            skills.map((skill) => `${skill.name}: ${skill.path}`).join('\n') ||
+            skills.map((skill: any) => `${skill.name}: ${skill.path}`).join('\n') ||
             t('agentTrace.noMatchingSkill'),
           state: skills.length ? 'completed' : 'error',
         })
@@ -605,14 +544,28 @@ export function App() {
       }
 
       if (eventType === 'tool_result') {
-        upsertLiveMessage(appendUniqueBlock(currentLiveText, progressBlock), 'loading')
+        if (progressBlock) upsertLiveMessage(progressBlock, 'loading')
         setPromptRunning(true)
-        const isRecovered = payload?.recovered === true
+
+        // Detect file writes from tool name + extract path from summary/output
+        const isWriteTool = /write_file|append_file|str_replace|create_file|patch/i.test(payload?.tool || '')
+        if (isWriteTool && payload?.ok !== false) {
+          // Path is typically in summary like "Wrote E:\...\file.ts" or "Created ..."
+          const summaryText = String(payload?.summary || payload?.output || '')
+          const pathMatch = summaryText.match(/(?:Wrote|Created|Updated|Patched)\s+(.+?)(?:\s+lines?|$)/i)
+          const filePath = pathMatch?.[1]?.trim() || ''
+          if (filePath) {
+            const existing = getStream()
+            const patches = [...(existing?.patches || []), { file: filePath, summary: '' }]
+            if (existing) updateMessage(finalMessageId, { patches })
+          }
+        }
+
         addTaskStep({
           id: `tool-result-${eventId}`,
           title: `${payload.tool || t('agentTrace.tool')} ${t('agentTrace.result')}`,
           detail: payload.summary || payload.output || '',
-          state: payload.ok ? 'completed' : isRecovered ? 'completed' : 'warning',
+          state: payload.ok ? 'completed' : payload?.recovered ? 'completed' : 'warning',
           timestamp,
         })
       }

@@ -581,8 +581,10 @@ async function executeToolCallWithResilience({
       name: primaryCall.name || finalFailure.name || "unknown_tool",
       ok: false,
       recoveryAttempts: Math.max(0, attemptResults.length - 1),
-      summary: `${String(finalFailure.summary || "Tool failed")}\n${remediation}`,
-      output: [String(finalFailure.output || ""), remediation].filter(Boolean).join("\n")
+      // Keep summary clean — remediation is separate, only for model context
+      summary: String(finalFailure.summary || "Tool failed"),
+      output: String(finalFailure.output || ""),
+      remediation
     },
     attemptResults,
     recovered: false,

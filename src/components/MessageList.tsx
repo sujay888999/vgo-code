@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import type { Message } from '../store/appStore'
+import type { Message, LogLine } from '../store/appStore'
 import { useI18n } from '../i18n'
 import {
   Copy,
@@ -48,129 +48,94 @@ interface MessageItemProps {
 function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
   const { t } = useI18n()
   const isUser = message.role === 'user'
-  const isAssistant = message.role === 'assistant'
   const isLoading = message.status === 'loading'
-  const isProgressMessage = message.kind === 'progress'
-  const isFinalMessage = message.kind === 'final'
-  const [isCollapsed, setIsCollapsed] = useState(
-    message.collapsed ?? (isProgressMessage && !isLoading),
-  )
   const displayedText = message.text || ''
-  const isStreaming = isLoading
-  const isProgressExpanded = isProgressMessage && !isLoading && !isCollapsed
-  const isProgressCollapsed = isProgressMessage && !isLoading && isCollapsed
+  const patches = message.patches || []
+  const logLines: LogLine[] = message.logLines || []
+  const [patchExpanded, setPatchExpanded] = useState(false)
 
-  useEffect(() => {
-    setIsCollapsed(message.collapsed ?? (isProgressMessage && !isLoading))
-  }, [message.collapsed, message.id, isProgressMessage, isLoading])
+  const formatTime = (ts: number) =>
+    new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 
-  const formatTime = (timestamp: number) =>
-    new Date(timestamp).toLocaleTimeString('zh-CN', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-
-  const previewLine = (() => {
-    const lines = (displayedText || message.text || '')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-    return lines[0] || t('message.clickToExpand')
-  })()
-  const reasoningTitle =
-    message.title === '推理过程' || message.title === 'Reasoning'
-      ? t('message.reasoning')
-      : message.title || t('message.reasoning')
-
-  const renderContent = () => {
-    if (isProgressMessage && !isLoading && isCollapsed) {
-      return (
-        <button
-          type="button"
-          className="message-progress-toggle"
-          onClick={() => setIsCollapsed(false)}
-        >
-            <span className="message-progress-toggle-meta">
-              <ChevronRight size={14} />
-              <span>{reasoningTitle}</span>
-            </span>
-          <span className="message-progress-toggle-preview">{previewLine}</span>
-        </button>
-      )
-    }
-
-    if (isLoading) {
-      return (
-        <div className="message-loading message-loading-stream">
-          <span className="loading-text">{message.title || t('message.thinking')}</span>
-          <StreamingContent text={displayedText || t('message.preparing')} isStreaming={true} />
+  if (isUser) {
+    return (
+      <div className="message-item user">
+        <div className="message-avatar"><User size={18} /></div>
+        <div className="message-body">
+          <div className="message-meta">
+            <span className="message-role">{t('message.roleUser')}</span>
+            <span className="message-time"><Clock size={12} />{formatTime(message.timestamp)}</span>
+          </div>
+          <div className="message-bubble">
+            <div className="message-content">{message.text}</div>
+          </div>
         </div>
-      )
-    }
-
-    if (isAssistant && displayedText) {
-      return (
-        <>
-          {isProgressMessage && (
-            <button
-              type="button"
-              className="message-progress-inline-toggle"
-              onClick={() => setIsCollapsed(true)}
-            >
-              <ChevronDown size={14} />
-              <span>{reasoningTitle}</span>
-            </button>
-          )}
-          <StreamingContent text={displayedText} isStreaming={isStreaming} />
-        </>
-      )
-    }
-
-    return <div className="message-content">{message.text}</div>
+      </div>
+    )
   }
 
+  const hasLines = logLines.length > 0
+  const hasReply = displayedText.trim().length > 0
+  const showThinking = isLoading && !hasLines && !hasReply
+
   return (
-    <div
-      className={`message-item ${message.role} ${message.status || ''} ${isProgressMessage ? 'progress-message' : ''} ${isFinalMessage ? 'final-message' : ''} ${isProgressExpanded ? 'progress-expanded' : ''} ${isProgressCollapsed ? 'progress-collapsed' : ''}`}
-    >
-      <div className="message-avatar">
-        {isUser ? <User size={18} /> : <Bot size={18} />}
-      </div>
-
+    <div className={`message-item assistant ${message.status || ''}`}>
+      <div className="message-avatar"><Bot size={18} /></div>
       <div className="message-body">
-        <div className="message-meta">
-          {(isUser || isProgressMessage) && (
-            <span className="message-role">
-              {isUser ? t('message.roleUser') : reasoningTitle}
-            </span>
-          )}
-          <span className="message-time">
-            <Clock size={12} />
-            {formatTime(message.timestamp)}
-          </span>
-        </div>
-
-        <div className={`message-bubble ${isProgressExpanded ? 'progress-bubble-expanded' : ''}`}>
-          {renderContent()}
-          {message.status === 'error' && (
-            <div className="message-error">
-              <AlertTriangle size={14} />
-              <span>{t('message.failed')}</span>
-            </div>
-          )}
-        </div>
-
+        {showThinking && (
+          <div className="thinking-indicator">
+            <span className="executing-shimmer-text">{t('task.thinking')}</span>
+          </div>
+        )}
+        {hasLines && (
+          <div className="exec-log">
+            {logLines.map((line, i) => (
+              <div key={i} className={`exec-log-line ${!line.done ? 'exec-log-line--active' : ''}`}>
+                <span className="exec-log-icon">{line.done ? '✓' : <span className="exec-dot-pulse" />}</span>
+                <span className="exec-log-text">{line.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {(hasReply || (isLoading && hasLines)) && (
+          <div className="message-bubble">
+            {hasReply ? <StreamingContent text={displayedText} isStreaming={isLoading} /> : null}
+            {message.status === 'error' && (
+              <div className="message-error">
+                <AlertTriangle size={14} />
+                <span>{t('message.failed')}</span>
+              </div>
+            )}
+          </div>
+        )}
+        {patches.length > 0 && (
+          <div className="patch-summary">
+            <button type="button" className="patch-toggle" onClick={() => setPatchExpanded(v => !v)}>
+              {patchExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              <span>改动了 {patches.length} 个文件</span>
+            </button>
+            {patchExpanded && (
+              <ul className="patch-list">
+                {patches.map((p, idx) => (
+                  <li key={idx} className="patch-item">
+                    <code className="patch-file">{p.file}</code>
+                    {p.summary && <span className="patch-desc">{p.summary}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         {!isLoading && (
           <div className="message-actions">
-            <button
-              className="message-action"
-              onClick={() => onCopy(message.id, message.text)}
-              title="复制"
-            >
+            <button className="message-action" onClick={() => onCopy(message.id, message.text)} title="复制">
               {copiedId === message.id ? <CheckCheck size={14} /> : <Copy size={14} />}
             </button>
           </div>
         )}
+        <div className="message-meta message-meta-bottom">
+          <span className="message-time"><Clock size={12} />{formatTime(message.timestamp)}</span>
+        </div>
       </div>
     </div>
   )

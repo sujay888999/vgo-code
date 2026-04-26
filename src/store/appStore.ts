@@ -1,14 +1,22 @@
 import { create } from 'zustand'
 
+export interface LogLine {
+  text: string
+  done: boolean
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system'
   text: string
+  logText?: string   // execution log lines, always preserved
+  logLines?: LogLine[]
   status?: 'done' | 'error' | 'loading'
   timestamp: number
-  kind?: 'default' | 'progress' | 'final'
+  kind?: 'default' | 'progress' | 'final' | 'stream'
   collapsed?: boolean
   title?: string
+  patches?: Array<{ file: string; summary: string }>
 }
 
 const LIVE_TRANSIENT_PREFIX = 'live-assistant-'
