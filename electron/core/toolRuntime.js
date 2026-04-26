@@ -133,15 +133,29 @@ function readFile(workspace, args = {}, options = {}) {
 }
 
 function writeFile(workspace, args = {}, options = {}) {
-  if (!args.path) {
+  // Normalize common content/path aliases before validation
+  const normalizedArgs = { ...args };
+  if (!normalizedArgs.path) {
+    const pathAlias = normalizedArgs.filePath || normalizedArgs.filepath || normalizedArgs.file ||
+      normalizedArgs.filename || normalizedArgs.target || normalizedArgs.output || normalizedArgs.destination;
+    if (typeof pathAlias === "string" && pathAlias.trim()) normalizedArgs.path = pathAlias;
+  }
+  if (typeof normalizedArgs.content !== "string" || !normalizedArgs.content) {
+    const contentAlias = normalizedArgs.contents || normalizedArgs.conten || normalizedArgs.text ||
+      normalizedArgs.body || normalizedArgs.value || normalizedArgs.data || normalizedArgs.code;
+    if (typeof contentAlias === "string") normalizedArgs.content = contentAlias;
+  }
+  const resolvedArgs = normalizedArgs;
+
+  if (!resolvedArgs.path) {
     return { ok: false, name: "write_file", summary: "Missing required argument: path", output: "" };
   }
-  if (typeof args.content !== "string") {
+  if (typeof resolvedArgs.content !== "string") {
     return { ok: false, name: "write_file", summary: "Missing required argument: content", output: "" };
   }
 
-  const targetPath = ensureWorkspacePath(workspace, args.path, options);
-  let content = args.content;
+  const targetPath = ensureWorkspacePath(workspace, resolvedArgs.path, options);
+  let content = resolvedArgs.content;
   // Recover from escaped multiline payloads like "\\n" that should be real line breaks.
   if (typeof content === "string") {
     const escapedNewlineCount = (content.match(/\\n/g) || []).length;
@@ -169,16 +183,28 @@ function writeFile(workspace, args = {}, options = {}) {
 }
 
 function appendFile(workspace, args = {}, options = {}) {
-  if (!args.path) {
+  const normalizedArgs = { ...args };
+  if (!normalizedArgs.path) {
+    const pathAlias = normalizedArgs.filePath || normalizedArgs.filepath || normalizedArgs.file ||
+      normalizedArgs.filename || normalizedArgs.target || normalizedArgs.output || normalizedArgs.destination;
+    if (typeof pathAlias === "string" && pathAlias.trim()) normalizedArgs.path = pathAlias;
+  }
+  if (typeof normalizedArgs.content !== "string" || !normalizedArgs.content) {
+    const contentAlias = normalizedArgs.contents || normalizedArgs.conten || normalizedArgs.text ||
+      normalizedArgs.body || normalizedArgs.value || normalizedArgs.data || normalizedArgs.code;
+    if (typeof contentAlias === "string") normalizedArgs.content = contentAlias;
+  }
+
+  if (!normalizedArgs.path) {
     return { ok: false, name: "append_file", summary: "Missing required argument: path", output: "" };
   }
-  if (typeof args.content !== "string") {
+  if (typeof normalizedArgs.content !== "string") {
     return { ok: false, name: "append_file", summary: "Missing required argument: content", output: "" };
   }
 
-  const targetPath = ensureWorkspacePath(workspace, args.path, options);
+  const targetPath = ensureWorkspacePath(workspace, normalizedArgs.path, options);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.appendFileSync(targetPath, args.content, "utf8");
+  fs.appendFileSync(targetPath, normalizedArgs.content, "utf8");
 
   const exists = fs.existsSync(targetPath);
   const size = exists ? fs.statSync(targetPath).size : 0;
