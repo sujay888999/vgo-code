@@ -2181,7 +2181,7 @@ async function runOllamaPrompt({
         messages.push({
           role: "user",
           content:
-            "write_file 失败：请检查并补全 content 字段。若需追加内容，可使用 append_file，避免重复覆盖。"
+            "write_file 失败：content 参数为空，可能是内容太长被截断。请将文件拆分为多段：第一段用 write_file（不超过 150 行），后续用 append_file 追加。每次调用必须包含完整的 path 和 content。"
         });
       }
 
@@ -2197,7 +2197,7 @@ async function runOllamaPrompt({
       if (
         hasGenericMissingArgumentFailure &&
         missingArgumentRetrySent &&
-        (consecutiveMissingArgumentSteps >= 2 || totalMissingArgumentFailures >= 4)
+        (consecutiveMissingArgumentSteps >= 3 || totalMissingArgumentFailures >= 5)
       ) {
         const exhaustedMessage =
           "多次重试后仍缺少必填参数，已停止本轮自动执行。请先补全参数后再继续。";

@@ -2246,7 +2246,7 @@ async function runRealVgoPrompt({
       activeHistory.push({
         role: "user",
         content:
-          "你刚才已经调用了 write_file，但参数不完整。下一条请重新调用 write_file，并至少提供 path 和 content。若用户要求放到桌面，请把 path 写成 Desktop/notes.txt 这种明确路径。不要解释，只输出工具调用。"
+          "你刚才调用了 write_file，但 content 参数为空或缺失。原因可能是文件内容太长导致输出被截断。请按以下方式重试：\n1. 将文件内容拆分为多个 write_file + append_file 调用，每次不超过 150 行。\n2. 第一次用 write_file 写入前 150 行，后续用 append_file 追加。\n3. 必须包含完整的 path 和 content 参数。\n不要解释，直接输出工具调用。"
       });
     }
 
@@ -2262,7 +2262,7 @@ async function runRealVgoPrompt({
     if (
       hasGenericMissingArgumentFailure &&
       missingArgumentRetrySent &&
-      (consecutiveMissingArgumentSteps >= 2 || totalMissingArgumentFailures >= 4)
+      (consecutiveMissingArgumentSteps >= 3 || totalMissingArgumentFailures >= 5)
     ) {
       const exhaustedMessage =
         "工具调用连续缺少必填参数，已停止自动重试以避免死循环。请改用明确完整的工具调用（例如 run_command 必须包含 command）后再继续。";
