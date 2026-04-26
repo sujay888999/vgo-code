@@ -1,5 +1,3 @@
-export {}
-
 interface AttachmentItem {
   name: string
   path: string

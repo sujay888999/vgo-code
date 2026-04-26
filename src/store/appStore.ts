@@ -1,4 +1,12 @@
+/// <reference path="../types/electron.d.ts" />
 import { create } from 'zustand'
+
+// Augment Window so window.vgoDesktop is typed in this module
+declare global {
+  interface Window {
+    vgoDesktop?: VGODesktopAPI
+  }
+}
 
 export interface LogLine {
   text: string
@@ -305,7 +313,7 @@ export interface AppState {
   hydrate: (state: Partial<AppState>) => void
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>((set) => ({
   // Initial UI State
   settingsOverlayOpen: false,
   renameOverlayOpen: false,
@@ -535,7 +543,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     const localization = settings.localization || {}
     const behavior = settings.behavior || {}
     const agent = settings.agent || {}
-    const remote = settings.remote || {}
     const remoteProfiles = settings.remoteProfiles || []
     
     // Convert history entries to messages format
@@ -549,11 +556,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       timestamp: entry.createdAt ? new Date(entry.createdAt).getTime() : Date.now()
     }))
     const transientMessages = current.messages.filter((message) => isTransientMessage(message))
-    const persistedAssistantTexts = new Set(
+    const persistedAssistantTexts = new Set<string>(
       historyMessages
-        .filter((message) => message.role === 'assistant')
-        .map((message) => normalizeMessageText(message.text))
-        .filter(Boolean),
+        .filter((message: Message) => message.role === 'assistant')
+        .map((message: Message) => normalizeMessageText(message.text))
+        .filter(Boolean) as string[],
     )
     const dedupedTransientMessages = transientMessages.filter((message) => {
       // Keep transient progress messages visible in the conversation timeline,
@@ -569,7 +576,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       // Be tolerant: backend final text may include a closing summary wrapper.
       return !Array.from(persistedAssistantTexts).some(
-        (persistedText) =>
+        (persistedText: string) =>
           persistedText === normalizedTransientText ||
           persistedText.includes(normalizedTransientText) ||
           normalizedTransientText.includes(persistedText),
