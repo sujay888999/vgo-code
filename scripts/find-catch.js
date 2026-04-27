@@ -1,0 +1,1 @@
+﻿const fs=require("fs"); let s=fs.readFileSync("electron/core/vgoRemoteAdapter.js","utf8"); const dead_start=s.indexOf("      throw lastError || new Error(\"remote_local_prompt_failed\");"); const catch_idx=s.indexOf("} catch (error) {",dead_start); console.log("dead="+dead_start+" catch="+catch_idx);

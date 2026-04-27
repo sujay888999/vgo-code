@@ -1,0 +1,1 @@
+﻿const fs=require("fs"); let s=fs.readFileSync("electron/core/vgoRemoteAdapter.js","utf8"); if(!s.includes("agentLoop")){const firstLine=s.indexOf("\n"); s=s.slice(0,firstLine)+"\nconst agentLoop=require(\"./agentLoop\");"+s.slice(firstLine); fs.writeFileSync("electron/core/vgoRemoteAdapter.js",s,"utf8"); console.log("added");} else {console.log("already present");}

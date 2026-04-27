@@ -1,0 +1,1 @@
+﻿const fs=require("fs"); let s=fs.readFileSync("electron/core/vgoRemoteAdapter.js","utf8"); const dead=82117; const cat=96048; s=s.slice(0,dead)+s.slice(cat); fs.writeFileSync("electron/core/vgoRemoteAdapter.js",s,"utf8"); console.log("done lines:"+s.split("\n").length);

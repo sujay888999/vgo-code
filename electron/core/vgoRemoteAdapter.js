@@ -1,4 +1,5 @@
 ﻿const fs = require("node:fs");
+const { runAgentLoop } = require("./agentLoop");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { executeToolCall } = require("./toolRuntime");
@@ -2351,420 +2352,98 @@ async function runLocalPrompt({
   try {
     const finalPrompt = [prompt, skillPreflightNudge, skillWorkflowNudge, attachmentSummary].filter(Boolean).join("\n\n");
     const systemPrompt = buildSafeSystemPrompt(settings, sessionMeta, activeSkills);
-    const requestPayload = {
-      model: normalizedModelId,
-      systemPrompt,
-      workspace,
-      sessionId,
-      prompt: finalPrompt,
-      history
-    };
-    const openAiPayload = {
-      model: normalizedModelId,
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt
-        },
-        ...normalizeHistoryMessages(history),
-        {
-          role: "user",
-          content: finalPrompt
-        }
-      ],
-      stream: false
-    };
-    const ollamaPayload = {
-      model: normalizedModelId,
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt
-        },
-        ...normalizeHistoryMessages(history),
-        {
-          role: "user",
-          content: finalPrompt
-        }
-      ],
-      stream: false
-    };
     const authorizationHeader = resolveAuthorizationHeaderValue(remote, endpointPlan.requestUrl);
-    const requestBody = JSON.stringify(
-      endpointPlan.mode === "openai"
-        ? openAiPayload
-        : endpointPlan.mode === "ollama"
-          ? ollamaPayload
-          : requestPayload
-    );
-    let response = null;
-    let lastError = null;
-    for (let attempt = 1; attempt <= DEFAULT_REMOTE_NETWORK_RETRIES; attempt += 1) {
-      const timeoutController = new AbortController();
-      const timer = setTimeout(
-        () => timeoutController.abort(new Error("remote_local_prompt_timeout")),
-        DEFAULT_REMOTE_REQUEST_TIMEOUT_MS
-      );
-      try {
-        response = await fetch(endpointPlan.requestUrl, {
-          method: "POST",
-          signal: timeoutController.signal,
-          headers: {
-            "Content-Type": "application/json",
-            ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
-          },
-          body: requestBody
-        });
-        clearTimeout(timer);
-        break;
-      } catch (error) {
-        clearTimeout(timer);
-        lastError = error;
-        if (!isNetworkFetchFailure(error) || attempt >= DEFAULT_REMOTE_NETWORK_RETRIES) {
-          throw error;
-        }
-        await wait(computeRetryDelayMs(attempt));
+
+    // Build messages in OpenAI/Ollama format for the initial request
+    const buildMsgs = (hist, sysPr, pr) => {
+      if (endpointPlan.mode === "openai" || endpointPlan.mode === "ollama") {
+        return [
+          { role: "system", content: sysPr },
+          ...normalizeHistoryMessages(hist),
+          { role: "user", content: pr }
+        ];
       }
-    }
+      // Generic/VGO format — wrap as user message
+      return [{ role: "user", content: pr }];
+    };
 
-    if (!response) {
-      throw lastError || new Error("remote_local_prompt_failed");
-    }
+    // sendRequest: one HTTP call, returns { text, toolCalls }
+    const sendRequest = async (messages) => {
+      const body = (endpointPlan.mode === "openai" || endpointPlan.mode === "ollama")
+        ? JSON.stringify({ model: normalizedModelId, messages, stream: false })
+        : JSON.stringify({ model: normalizedModelId, systemPrompt, workspace, sessionId, prompt: finalPrompt, history });
 
-    let payload = await parseJsonResponse(response);
-    let localRateLimitRetryUsed = 0;
-    while (
-      !response.ok &&
-      isRateLimitLikeFailure(response.status, payload?.error?.message || payload?.error || payload?.message || payload?.rawText || "") &&
-      !isQuotaLikeFailure(response.status, payload?.error?.message || payload?.error || payload?.message || payload?.rawText || "") &&
-      localRateLimitRetryUsed < MAX_UPSTREAM_RATE_LIMIT_RETRIES
-    ) {
-      localRateLimitRetryUsed += 1;
-      const waitMs = computeRateLimitRetryDelayMs(localRateLimitRetryUsed);
-      const waitSec = Math.round(waitMs / 1000);
-      emitEvent(onEvent, [], {
-        type: "task_status",
-        status: "retrying",
-        message: `上游模型限流，${waitSec}秒后自动重试（${localRateLimitRetryUsed}/${MAX_UPSTREAM_RATE_LIMIT_RETRIES}）...`
-      });
-      await wait(waitMs);
-      const retryResponse = await fetch(endpointPlan.requestUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
-        },
-        body: requestBody
-      });
-      response = retryResponse;
-      payload = await parseJsonResponse(retryResponse);
-    }
-
-    const text =
-      extractOpenAiMessageText(payload) ||
-      payload?.message?.content ||
-      payload.output ||
-      payload.text ||
-      payload.message ||
-      payload.rawText ||
-      (response.ok ? "本地测试引擎已响应，但没有返回文本。" : "本地测试引擎调用失败。");
-
-    const normalizedText = protocol.tryRecoverMojibake(String(text || ""));
-    const errorDetail = payload?.error?.message || payload?.error || payload?.message || `http_${response.status}`;
-    const errorText = String(errorDetail || "");
-    const isAuthFailure =
-      !response.ok &&
-      (response.status === 401 ||
-        response.status === 403 ||
-        /token|api[\s_-]?key|auth|unauthor|forbidden|浠ょ墝|閴存潈|楠岃瘉/i.test(errorText));
-    let resolvedResponse = response;
-    let resolvedPayload = payload;
-    let resolvedText = normalizedText || text;
-    let resolvedErrorDetail = errorDetail;
-    let resolvedErrorText = errorText;
-    let resolvedUsedModel = payload.model || normalizedModelId;
-
-    if (
-      !response.ok &&
-      endpointPlan.mode === "openai" &&
-      isBigModelHost(endpointPlan.requestUrl) &&
-      isQuotaLikeFailure(response.status, errorText)
-    ) {
-      const fallbackModels = buildBigModelFallbackModels(normalizedModelId);
-      for (const fallbackModel of fallbackModels) {
-        try {
-          const fallbackOpenAiPayload = {
-            ...openAiPayload,
-            model: fallbackModel
-          };
-          const fallbackResponse = await fetch(endpointPlan.requestUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
-            },
-            body: JSON.stringify(fallbackOpenAiPayload)
-          });
-          const fallbackPayload = await parseJsonResponse(fallbackResponse);
-          const fallbackText =
-            extractOpenAiMessageText(fallbackPayload) ||
-            fallbackPayload?.message?.content ||
-            fallbackPayload.output ||
-            fallbackPayload.text ||
-            fallbackPayload.message ||
-            fallbackPayload.rawText ||
-            "";
-          const fallbackErrorDetail =
-            fallbackPayload?.error?.message ||
-            fallbackPayload?.error ||
-            fallbackPayload?.message ||
-            `http_${fallbackResponse.status}`;
-
-          if (fallbackResponse.ok) {
-            resolvedResponse = fallbackResponse;
-            resolvedPayload = fallbackPayload;
-            resolvedText = `[Auto fallback] ${normalizedModelId} quota/resource unavailable, switched to ${fallbackModel}.\n\n${fallbackText}`.trim();
-            resolvedErrorDetail = "";
-            resolvedErrorText = "";
-            resolvedUsedModel = fallbackPayload.model || fallbackModel;
-            break;
-          }
-
-          if (!isQuotaLikeFailure(fallbackResponse.status, fallbackErrorDetail)) {
-            resolvedResponse = fallbackResponse;
-            resolvedPayload = fallbackPayload;
-            resolvedText = fallbackText;
-            resolvedErrorDetail = fallbackErrorDetail;
-            resolvedErrorText = String(fallbackErrorDetail || "");
-            resolvedUsedModel = fallbackPayload.model || fallbackModel;
-            break;
-          }
-        } catch {}
-      }
-    }
-
-    if (
-      !resolvedResponse.ok &&
-      isRateLimitLikeFailure(resolvedResponse.status, resolvedErrorText) &&
-      !isQuotaLikeFailure(resolvedResponse.status, resolvedErrorText)
-    ) {
-      const fallbackModels = buildFallbackModelCandidates(settings, resolvedUsedModel);
-      for (const fallbackModel of fallbackModels) {
-        try {
-          const fallbackPayloadBody =
-            endpointPlan.mode === "openai"
-              ? JSON.stringify({ ...openAiPayload, model: fallbackModel })
-              : endpointPlan.mode === "ollama"
-                ? JSON.stringify({ ...ollamaPayload, model: fallbackModel })
-                : JSON.stringify({ ...requestPayload, model: fallbackModel });
-          const fallbackResponse = await fetch(endpointPlan.requestUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
-            },
-            body: fallbackPayloadBody
-          });
-          const fallbackData = await parseJsonResponse(fallbackResponse);
-          const fallbackText =
-            extractOpenAiMessageText(fallbackData) ||
-            fallbackData?.message?.content ||
-            fallbackData?.output ||
-            fallbackData?.text ||
-            fallbackData?.message ||
-            fallbackData?.rawText ||
-            "";
-          if (fallbackResponse.ok) {
-            resolvedResponse = fallbackResponse;
-            resolvedPayload = fallbackData;
-            resolvedText = `[Auto fallback] ${resolvedUsedModel} rate-limited, switched to ${fallbackModel}.\n\n${fallbackText}`.trim();
-            resolvedErrorDetail = "";
-            resolvedErrorText = "";
-            resolvedUsedModel = fallbackData.model || fallbackModel;
-            break;
-          }
-        } catch {}
-      }
-    }
-
-    const finalAuthFailure =
-      !resolvedResponse.ok &&
-      (resolvedResponse.status === 401 ||
-        resolvedResponse.status === 403 ||
-        /token|api[\s_-]?key|auth|unauthor|forbidden|浠ょ墝|閴存潈|楠岃瘉/i.test(resolvedErrorText));
-    const failureText = finalAuthFailure
-      ? `Custom HTTP Provider auth failed (${endpointPlan.requestUrl}): ${resolvedErrorText}`
-      : `Custom HTTP Provider request failed (${endpointPlan.requestUrl}): ${resolvedErrorText}`;
-    let finalText = resolvedResponse.ok ? resolvedText : failureText;
-    const localRawEvents = Array.isArray(resolvedPayload?.events) ? [...resolvedPayload.events] : [];
-
-    // 杞婚噺 Agent 寰幆锛氭湰鍦?鑷畾涔夐€氶亾鑻ヨ緭鍑轰簡宸ュ叿璋冪敤鏍囩锛岀珛鍗崇湡瀹炴墽琛屽苟鍥炲～缁撴灉锛岄伩鍏嶅彧鏄剧ず <vgo_tool_call> 鏂囨湰銆?
-    if (resolvedResponse.ok) {
-      const assistantRawText = extractAssistantRawText(resolvedPayload);
-      const toolExtractionSource = [
-        assistantRawText,
-        resolvedText,
-        normalizedText,
-        resolvedPayload?.rawText,
-        payload?.rawText
-      ]
-        .filter((item) => typeof item === "string" && item.trim())
-        .join("\n\n");
-      const extractedToolCalls = extractToolCalls(toolExtractionSource);
-      if (extractedToolCalls.length) {
-        for (const call of extractedToolCalls) {
-          emitEvent(onEvent, localRawEvents, {
-            type: "task_status",
-            status: "tool_running",
-            message: `正在执行工具：${call.name}`
-          });
-          const execution = await executeToolCallWithResilience({
-            workspace,
-            call,
-            executeToolCall,
-            executeOptions: {
-              accessScope: settings?.access?.scope || "workspace-and-desktop"
-            },
-            emitStatus: (event) => emitEvent(onEvent, localRawEvents, event)
-          });
-          const toolResult = execution.result;
-          const isRetryableFailureLocal = !toolResult.ok && !toolResult.recovered && (
-            /Command exited with code|ENOENT|timed out|timeout/i.test(String(toolResult.summary || ""))
-          );
-          if (toolResult.ok || toolResult.recovered || !isRetryableFailureLocal) {
-            emitEvent(onEvent, localRawEvents, {
-              type: "tool_result",
-              tool: call.name,
-              ok: toolResult.ok,
-              summary: toolResult.summary,
-              output: toolResult.output
-            });
-          } else {
-            emitEvent(onEvent, localRawEvents, {
-              type: "task_status",
-              status: "retrying",
-              message: `工具执行遇到问题，正在处理中...`
-            });
-            localRawEvents.push({
-              type: "tool_result",
-              tool: call.name,
-              ok: toolResult.ok,
-              summary: toolResult.summary,
-              output: toolResult.output
-            });
-          }
-        }
-
-        const toolMessage = protocol.buildToolResultMessage(
-          localRawEvents
-            .filter((event) => event?.type === "tool_result")
-            .map((event) => ({
-              ok: event.ok,
-              name: event.tool,
-              summary: event.summary,
-              output: event.output
-            }))
+      let response = null;
+      let lastError = null;
+      for (let attempt = 1; attempt <= DEFAULT_REMOTE_NETWORK_RETRIES; attempt += 1) {
+        const timeoutController = new AbortController();
+        const timer = setTimeout(
+          () => timeoutController.abort(new Error("remote_local_prompt_timeout")),
+          DEFAULT_REMOTE_REQUEST_TIMEOUT_MS
         );
-
-        if (endpointPlan.mode === "openai" || endpointPlan.mode === "ollama") {
-          try {
-            const followupPayload = {
-              model: resolvedUsedModel || normalizedModelId,
-              messages: [
-                { role: "system", content: systemPrompt },
-                ...normalizeHistoryMessages(history),
-                { role: "user", content: finalPrompt },
-                { role: "assistant", content: clampText(toolExtractionSource, 4000) },
-                { role: "user", content: clampText(toolMessage, 5000) },
-                {
-                  role: "user",
-                  content:
-                    "Based on the tool results above, provide a concrete final answer with key findings and direct conclusion. Do not output tool tags. Do not reply with generic completion text."
-                },
-                {
-                  role: "user",
-                  content:
-                    "基于以上工具结果，直接给出最终结论与关键发现，不要输出工具调用标签，不要只说已完成。"
-                }
-              ],
-              stream: false
-            };
-            const followupResponse = await fetch(endpointPlan.requestUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
-              },
-              body: JSON.stringify(followupPayload)
-            });
-            const followupData = await parseJsonResponse(followupResponse);
-            if (followupResponse.ok) {
-              const followupText =
-                extractOpenAiMessageText(followupData) ||
-                followupData?.message?.content ||
-                followupData?.output ||
-                followupData?.text ||
-                "";
-              const cleanedFollowup = modelAdapters.stripCustomerServiceBoilerplate(
-                protocol.sanitizeAssistantText(followupText),
-                prompt
-              );
-              finalText =
-                cleanedFollowup ||
-                protocol.buildFallbackCompletionFromResults(
-                  prompt,
-                  extractToolResultSummaries(localRawEvents)
-                );
-            } else {
-              finalText = protocol.buildFallbackCompletionFromResults(
-                prompt,
-                extractToolResultSummaries(localRawEvents)
-              );
-            }
-          } catch {
-            finalText = protocol.buildFallbackCompletionFromResults(
-              prompt,
-              extractToolResultSummaries(localRawEvents)
-            );
-          }
-        } else {
-          finalText = protocol.buildFallbackCompletionFromResults(
-            prompt,
-            extractToolResultSummaries(localRawEvents)
-          );
+        try {
+          response = await fetch(endpointPlan.requestUrl, {
+            method: "POST",
+            signal: timeoutController.signal,
+            headers: {
+              "Content-Type": "application/json",
+              ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
+            },
+            body
+          });
+          clearTimeout(timer);
+          break;
+        } catch (error) {
+          clearTimeout(timer);
+          lastError = error;
+          if (!isNetworkFetchFailure(error) || attempt >= DEFAULT_REMOTE_NETWORK_RETRIES) throw error;
+          await wait(computeRetryDelayMs(attempt));
         }
       }
-    }
+      if (!response) throw lastError || new Error("remote_local_prompt_failed");
 
-    if (resolvedResponse.ok) {
-      const sanitizedFinalText = protocol.sanitizeAssistantText(finalText);
-      finalText = modelAdapters.stripCustomerServiceBoilerplate(sanitizedFinalText, prompt) || sanitizedFinalText;
-    }
+      const payload = await parseJsonResponse(response);
+      const text =
+        extractOpenAiMessageText(payload) ||
+        payload?.message?.content ||
+        payload?.output ||
+        payload?.text ||
+        payload?.message ||
+        payload?.rawText ||
+        (response.ok ? "" : "Custom HTTP Provider request failed.");
+
+      const rawText = extractAssistantRawText(payload) || text;
+      const toolCalls = extractToolCalls(rawText);
+      return { text: protocol.sanitizeAssistantText(rawText), toolCalls, raw: payload };
+    };
+
+    // Run the unified agent loop
+    const loopResult = await runAgentLoop({
+      sendRequest,
+      prompt: finalPrompt,
+      sessionId,
+      workspace,
+      history,
+      settings,
+      emitEvent: (ev) => emitEvent(onEvent, [], ev),
+      logRuntime: () => {},
+      buildMessages: buildMsgs,
+      systemPrompt,
+      usedModel: normalizedModelId,
+      channelId: endpointPlan.mode === "openai" ? "custom-openai-agent" : endpointPlan.mode === "ollama" ? "custom-ollama-agent" : "local-agent"
+    });
 
     return {
-      ok: resolvedResponse.ok,
-      exitCode: resolvedResponse.ok ? 0 : 1,
+      ok: loopResult.ok,
+      exitCode: loopResult.exitCode,
       sessionId,
-      text: finalText,
-      error:
-        resolvedResponse.ok
-          ? ""
-          : resolvedErrorDetail,
-      rawEvents: localRawEvents,
-      usedModel: resolvedUsedModel,
-      actualChannel:
-        resolvedPayload.channel ||
-        (endpointPlan.mode === "openai"
-          ? "custom-openai-agent"
-          : endpointPlan.mode === "ollama"
-            ? "custom-ollama-agent"
-            : "local-mock"),
-      actualContextWindow: toNumber(resolvedPayload?.contextWindow),
-      usageInputTokens: toNumber(resolvedPayload?.usage?.inputTokens || resolvedPayload?.usage?.prompt_tokens),
-      usageOutputTokens: toNumber(resolvedPayload?.usage?.outputTokens || resolvedPayload?.usage?.completion_tokens),
-      usageTotalTokens: toNumber(resolvedPayload?.usage?.totalTokens || resolvedPayload?.usage?.total_tokens)
+      text: loopResult.text,
+      error: loopResult.error || "",
+      rawEvents: loopResult.rawEvents,
+      usedModel: normalizedModelId,
+      actualChannel: loopResult.actualChannel
     };
-  } catch (error) {
+} catch (error) {
     return {
       ok: false,
       exitCode: 1,
