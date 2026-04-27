@@ -1165,89 +1165,65 @@ function hasUnfinishedRequiredReads(prompt = "", rawEvents = [], workspace = "")
   return getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace).length > 0;
 }
 
-function promptAllowsAutonomousContinuation(prompt = "") {
-  const normalized = String(prompt || "").trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  const autonomyPatterns = [
-    /继续/,
-    /自动/,
-    /自行/,
-    /完整落地/,
-    /完整方案/,
-    /直到完成/,
-    /修复完/,
-    /排查并修复/,
-    /鎸佺画鎵ц/,
-    /continue/,
-    /keep going/,
-    /autonom/i,
-    /end[- ]to[- ]end/
-  ];
-  return autonomyPatterns.some((pattern) => pattern.test(normalized));
+function promptAllowsAutonomousContinuation(prompt) {
+  const n = String(prompt || "").trim().toLowerCase();
+  if (!n) return false;
+  return (/继续|自动|完整|直到完成|修复完|排查并修复/.test(n) ||
+    /continue|keep going|autonom|end-to-end/.test(n) ||
+    /检查|查看|分析|扫描|诊断|排查|帮我/.test(n) ||
+    /是否|能否|可以|有没有|是什么|怎么样/.test(n) ||
+    /check|inspect|analyz|diagnos|scan|review|audit|find|look/i.test(n));
 }
-
-function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", workspace = "") {
+function shouldContinueAutonomously(text, rawEvents, prompt, workspace) {
   const normalized = String(text || "").trim();
-  if (!normalized) {
-    return false;
-  }
+  if (!normalized) { return false; }
 
-  const hasToolResults = rawEvents.some((event) => event && event.type === "tool_result");
+  const hasToolResults = rawEvents.some((e) => e && e.type === "tool_result");
   const unfinishedRequiredReads = hasUnfinishedRequiredReads(prompt, rawEvents, workspace);
-  const continuationPatterns = [
-    /下一步/i,
-    /下一步行动/i,
-    /继续/i,
-    /接下来/i,
-    /然后/i,
-    /现在我将/i,
-    /先读取/i,
-    /先检查/i,
-    /先列出/i,
-    /我将读取/i,
-    /我将继续/i,
-    /需要先/i,
-    /需要继续/i
-  ];
+  const successfulWrite = rawEvents.some((e) => e && e.type === "tool_result" && e.tool === "write_file" && e.ok);
+  const allReadsFailed = rawEvents.some((e) => e && e.type === "tool_result" && e.tool === "read_file" && !e.ok);
+
+  if (successfulWrite && allReadsFailed) { return false; }
+
   const finalPatterns = [
-    /最终结论/i,
-    /简短结论/i,
-    /总结/i,
-    /分析如下/i,
-    /优化建议/i,
-    /检查结果汇总/i,
-    /所有要求的文件均已检查完毕/i,
-    /所有请求的文件.*已检查完/i
+    /agent\s*\u5df2\u5b8c\u6210\u672c\u8f6e\u4efb\u52a1/i,
+    /\u4efb\u52a1\u5b8c\u6210/i, /\u5904\u7406\u5b8c\u6210/i,
+    /\u7ed3\u8bba[::\uff1a]/i, /final answer/i, /done/i, /completed/i
   ];
+  if (finalPatterns.some((p) => p.test(normalized))) {
+    return unfinishedRequiredReads && !allReadsFailed;
+  }
 
-  if (!hasToolResults && continuationPatterns.some((pattern) => pattern.test(normalized))) {
+  // If there are unfinished reads and reads haven't all failed, keep going
+  if (unfinishedRequiredReads && !allReadsFailed) { return true; }
+  if (allReadsFailed && successfulWrite) { return false; }
+
+  const continuationPatterns = [
+    /\u7ee7\u7eed\u601d\u8003/i, /\u7ee7\u7eed\u5904\u7406/i, /\u7ee7\u7eed\u6267\u884c/i,
+    /\u6b63\u5728\u601d\u8003/i, /thinking/i, /continue/i, /keep going/i,
+    /next step/i, /step\s*\d+\s*\/\s*\d+/i,
+    // Intent patterns: model says "let me check X" but hasn't called the tool yet
+    /\u8ba9\u6211\u8fdb\u4e00\u6b65/i, /\u8ba9\u6211\u68c0\u67e5/i, /\u8ba9\u6211\u67e5\u770b/i,
+    /\u8ba9\u6211\u5148/i, /\u6211\u5c06\u8fdb\u4e00\u6b65/i, /\u6211\u9700\u8981\u68c0\u67e5/i,
+    /\u6211\u9700\u8981\u67e5\u770b/i, /\u6211\u5c06\u68c0\u67e5/i, /\u6211\u5c06\u67e5\u770b/i,
+    /let me.*check/i, /let me.*inspect/i, /let me.*look/i, /let me.*read/i,
+    /i will.*check/i, /i will.*inspect/i, /i need to.*check/i, /next.*i will/i
+  ];
+  if (continuationPatterns.some((p) => p.test(normalized))) {
     return unfinishedRequiredReads || promptAllowsAutonomousContinuation(prompt);
   }
 
-  if (finalPatterns.some((pattern) => pattern.test(normalized))) {
-    if (unfinishedRequiredReads) {
-      return true;
-    }
-    return false;
-  }
-
-  if (protocol.looksLikeContinuationIntent(normalized)) {
+  const pendingActionPatterns = [
+    /\u6b63\u5728\u6267\u884c\u5de5\u5177/i, /\u6b63\u5728\u8c03\u7528\u5de5\u5177/i,
+    /\u51c6\u5907\u6267\u884c/i, /\u5373\u5c06\u6267\u884c/i,
+    /running tool/i, /executing/i
+  ];
+  if (!hasToolResults && pendingActionPatterns.some((p) => p.test(normalized))) {
     return unfinishedRequiredReads || promptAllowsAutonomousContinuation(prompt);
-  }
-
-  if (unfinishedRequiredReads) {
-    return true;
-  }
-
-  if (!promptAllowsAutonomousContinuation(prompt)) {
-    return false;
   }
 
   return false;
 }
-
 function hasSuccessfulMutatingTool(rawEvents = []) {
   return rawEvents.some(
     (event) =>
