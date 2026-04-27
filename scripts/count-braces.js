@@ -1,0 +1,1 @@
+﻿const fs=require("fs"); const s=fs.readFileSync("electron/core/agentLoop.js","utf8"); let o=0,c=0; for(const ch of s){if(ch==="{")o++;if(ch==="}") c++;} process.stdout.write("open="+o+" close="+c+"\n");

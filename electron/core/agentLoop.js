@@ -123,11 +123,14 @@ function shouldContinueAutonomously(text, rawEvents, prompt, workspace) {
     /继续思考|继续处理|继续执行|正在思考|thinking|continue|keep going|next step/i,
     /step\s*\d+\s*\/\s*\d+/i,
     /让我进一步|让我检查|让我查看|让我先|我将进一步|我需要检查|我需要查看|我将检查|我将查看/i,
+    /我先检查|我先查看|我先读取|我先列出|我先扫描|我来检查|我来查看|我来读取/i,
+    /先检查|先查看|先读取|先列出|先扫描|先分析/i,
     /let me.*check|let me.*inspect|let me.*look|let me.*read/i,
     /i will.*check|i will.*inspect|i need to.*check|next.*i will/i
   ];
+  // If model expressed intent to act, always nudge  don't gate on prompt keywords
   if (continuationPatterns.some((p) => p.test(normalized))) {
-    return unfinished || promptAllowsAutonomousContinuation(prompt);
+    return true;
   }
 
   const pendingActionPatterns = [

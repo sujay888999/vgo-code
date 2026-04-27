@@ -1,6 +1,6 @@
 {
   "name": "vgo-code",
-  "version": "1.2.14",
+  "version": "1.2.15",
   "description": "VGO CODE desktop agent workspace.",
   "main": "electron/main.js",
   "author": "VGO CODE",

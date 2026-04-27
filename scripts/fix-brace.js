@@ -1,0 +1,1 @@
+﻿const fs=require("fs"); let s=fs.readFileSync("electron/core/agentLoop.js","utf8"); s=s.replace("    return true;\n  } }","    return true;\n  }"); fs.writeFileSync("electron/core/agentLoop.js",s,"utf8"); console.log("fixed");
