@@ -1828,6 +1828,9 @@ async function runOllamaPrompt({
   let consecutiveMissingArgumentSteps = 0;
   let totalMissingArgumentFailures = 0;
   let rateLimitRetryUsed = 0;
+  // Repetition detection
+  let lastToolCallFingerprint = "";
+  let consecutiveIdenticalToolSteps = 0;
   let autoContinueNudgeCount = 0;
 
   for (let step = 0; step < maxToolSteps; step += 1) {
@@ -2081,6 +2084,32 @@ async function runOllamaPrompt({
       messages.push({ role: "assistant", content: messageText });
 
       const toolResults = [];
+
+      // Detect infinite loop: same tool calls repeated consecutively
+      if (toolCalls.length > 0) {
+        const fingerprint = toolCalls.map(c =>
+          `${c.name}:${JSON.stringify(c.arguments || {})}`
+        ).join("|");
+        if (fingerprint === lastToolCallFingerprint) {
+          consecutiveIdenticalToolSteps += 1;
+        } else {
+          consecutiveIdenticalToolSteps = 0;
+          lastToolCallFingerprint = fingerprint;
+        }
+        if (consecutiveIdenticalToolSteps >= 2) {
+          messages.push({
+            role: "user",
+            content: `你已经连续 ${consecutiveIdenticalToolSteps + 1} 次调用了完全相同的工具（${toolCalls.map(c => c.name).join(", ")}），但结果没有变化。请停止重复调用，基于已有结果直接给出结论或尝试不同的工具/路径。`
+          });
+          consecutiveIdenticalToolSteps = 0;
+          lastToolCallFingerprint = "";
+          continue;
+        }
+      } else {
+        consecutiveIdenticalToolSteps = 0;
+        lastToolCallFingerprint = "";
+      }
+
       for (const call of toolCalls) {
         if (signal?.aborted) {
           return {

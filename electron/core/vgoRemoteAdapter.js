@@ -1555,6 +1555,9 @@ async function runRealVgoPrompt({
   let upstreamRateLimitRetryUsed = 0;
   let consecutiveMissingArgumentSteps = 0;
   let totalMissingArgumentFailures = 0;
+  // Repetition detection: track last step's tool call fingerprint
+  let lastToolCallFingerprint = "";
+  let consecutiveIdenticalToolSteps = 0;
 
   const requestWithRetry = async (targetModel) => {
     let attempt = 0;
@@ -2074,6 +2077,33 @@ async function runRealVgoPrompt({
     }
 
     const results = [];
+
+    // Detect infinite loop: same tool calls with same args repeated consecutively
+    if (toolCalls.length > 0) {
+      const fingerprint = toolCalls.map(c =>
+        `${c.name}:${JSON.stringify(c.arguments || {})}`
+      ).join("|");
+      if (fingerprint === lastToolCallFingerprint) {
+        consecutiveIdenticalToolSteps += 1;
+      } else {
+        consecutiveIdenticalToolSteps = 0;
+        lastToolCallFingerprint = fingerprint;
+      }
+      if (consecutiveIdenticalToolSteps >= 2) {
+        // Model is stuck in a loop — break it with a nudge
+        activeHistory.push({
+          role: "user",
+          content: `你已经连续 ${consecutiveIdenticalToolSteps + 1} 次调用了完全相同的工具（${toolCalls.map(c => c.name).join(", ")}），但结果没有变化。请停止重复调用，基于已有结果直接给出结论或尝试不同的工具/路径。`
+        });
+        consecutiveIdenticalToolSteps = 0;
+        lastToolCallFingerprint = "";
+        continue;
+      }
+    } else {
+      consecutiveIdenticalToolSteps = 0;
+      lastToolCallFingerprint = "";
+    }
+
     for (const call of toolCalls) {
       if (signal?.aborted) {
         return {
