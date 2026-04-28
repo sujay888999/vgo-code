@@ -73,6 +73,10 @@ function sanitizeAssistantText(text = "") {
   cleaned = normalizeEscapedToolMarkup(cleaned);
   cleaned = cleaned.replace(/\uFFFD/g, "");
   cleaned = cleaned.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+  // Strip DeepSeek/QwQ reasoning blocks — <think>...</think>
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  // Also strip partial/unclosed think blocks at end of stream
+  cleaned = cleaned.replace(/<think>[\s\S]*$/gi, "").trim();
   cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, "");
   cleaned = cleaned.replace(/<(script|iframe|object|embed|style|link|meta|svg|math)\b[\s\S]*?<\/\1>/gi, "");
   cleaned = cleaned.replace(/<\/?(script|iframe|object|embed|style|link|meta|svg|math)\b[^>]*>/gi, "");

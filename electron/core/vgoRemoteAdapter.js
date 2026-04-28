@@ -1203,15 +1203,22 @@ function shouldContinueAutonomously(text, rawEvents, prompt, workspace) {
     /\u7ee7\u7eed\u601d\u8003/i, /\u7ee7\u7eed\u5904\u7406/i, /\u7ee7\u7eed\u6267\u884c/i,
     /\u6b63\u5728\u601d\u8003/i, /thinking/i, /continue/i, /keep going/i,
     /next step/i, /step\s*\d+\s*\/\s*\d+/i,
-    // Intent patterns: model says "let me check X" but hasn't called the tool yet
     /\u8ba9\u6211\u8fdb\u4e00\u6b65/i, /\u8ba9\u6211\u68c0\u67e5/i, /\u8ba9\u6211\u67e5\u770b/i,
     /\u8ba9\u6211\u5148/i, /\u6211\u5c06\u8fdb\u4e00\u6b65/i, /\u6211\u9700\u8981\u68c0\u67e5/i,
     /\u6211\u9700\u8981\u67e5\u770b/i, /\u6211\u5c06\u68c0\u67e5/i, /\u6211\u5c06\u67e5\u770b/i,
+    // "让我更广泛地搜索" / "搜索不够深入" type patterns
+    /\u8ba9\u6211\u66f4/i, /\u8ba9\u6211\u5c1d\u8bd5/i, /\u8ba9\u6211\u641c\u7d22/i,
+    /\u8ba9\u6211\u6df1\u5165/i, /\u8ba9\u6211\u5e7f\u6cdb/i, /\u8ba9\u6211\u76f4\u63a5/i,
+    /\u641c\u7d22\u4e0d\u591f/i, /\u4e0d\u591f\u6df1\u5165/i, /\u9700\u8981\u66f4\u5e7f/i,
+    /\u66f4\u5e7f\u6cdb\u5730/i, /\u91cd\u65b0\u641c\u7d22/i, /\u6df1\u5165\u67e5\u770b/i,
     /let me.*check/i, /let me.*inspect/i, /let me.*look/i, /let me.*read/i,
-    /i will.*check/i, /i will.*inspect/i, /i need to.*check/i, /next.*i will/i
+    /let me.*search/i, /let me.*try/i, /let me.*broader/i, /let me.*deeper/i,
+    /i will.*check/i, /i will.*inspect/i, /i need to.*check/i, /next.*i will/i,
+    /need.*deeper/i, /not.*enough/i, /try.*different/i, /search.*more/i, /look.*further/i
   ];
+  // Always nudge when model expresses intent — don't gate on prompt keywords
   if (continuationPatterns.some((p) => p.test(normalized))) {
-    return unfinishedRequiredReads || promptAllowsAutonomousContinuation(prompt);
+    return true;
   }
 
   const pendingActionPatterns = [
