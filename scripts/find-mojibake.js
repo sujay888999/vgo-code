@@ -1,0 +1,1 @@
+﻿const fs=require("fs"); const s=fs.readFileSync("electron/core/vgoRemoteAdapter.js","utf8"); const i=s.indexOf("title:"); const j=s.indexOf("\n",i); console.log("at",i); console.log(JSON.stringify(s.slice(i,j)));

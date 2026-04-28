@@ -22,8 +22,11 @@ const {
 } = require("./localSkillDiscovery");
 
 const LOG_DIR = path.join(process.cwd(), "logs");
-const LOG_FILE = path.join(LOG_DIR, "ollama-engine.log");
+const LOG_FILE = path.join(LOG_DIR, "agent.log");
 
+function logRuntime(event, payload = {}) {
+  appendEngineLog(LOG_FILE, event, { channel: "ollama", ...payload });
+}
 const DEFAULT_MAX_TOOL_STEPS = 120;
 const MIN_TOOL_STEPS = 20;
 const MAX_TOOL_STEPS = 300;
@@ -55,10 +58,6 @@ function getMaxToolSteps(settings) {
 
 function getNumPredict(settings) {
   return Number(settings?.remote?.numPredict) || DEFAULT_NUM_PREDICT;
-}
-
-function logRuntime(event, payload = {}) {
-  appendEngineLog(LOG_FILE, event, payload);
 }
 
 async function parseJsonResponse(response) {

@@ -231,11 +231,13 @@ async function runAgentLoop(opts) {
       return { ok: false, exitCode: 1, sessionId, text: "请求失败: " + err.message, error: err.message, rawEvents, usedModel, actualChannel: channelId };
     }
 
-    const { text: rawText, toolCalls, intentText: stepIntentText } = stepResult;
-    latestText = rawText || "";
+    const { text: rawText, toolCalls, intentText: stepIntentText, rawForHistory } = stepResult;
+    // Only update latestText if we got actual display content (not empty after think-strip)
+    if (rawText) latestText = rawText;
     // Use intentText (includes think content) for continuation detection
-    // Fall back to rawText if intentText not provided (other channels)
     const textForContinuation = stepIntentText || latestText;
+    // Use rawForHistory for message history (keeps think tags for model context)
+    const historyContent = rawForHistory || rawText || "";
 
     logRuntime("model:response", { step, hasToolCalls: toolCalls.length > 0, textPreview: (textForContinuation || latestText).slice(0, 200) });
 
@@ -251,7 +253,7 @@ async function runAgentLoop(opts) {
           return { ok: true, exitCode: 0, sessionId, text: latestText || "", error: "", rawEvents, usedModel, actualChannel: channelId };
         }
         forcedFinalAnswerAttempts += 1;
-        messages.push({ role: "assistant", content: rawText });
+        messages.push({ role: "assistant", content: historyContent });
         messages.push({ role: "user", content: "Based only on the tool results already inspected, provide the final answer now. Do not ask for more tasks." });
         continue;
       }
@@ -264,7 +266,7 @@ async function runAgentLoop(opts) {
         const unfinishedPaths = getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace);
         const nextPath = unfinishedPaths[0] || "";
         logRuntime("model:auto_continue", { step, autoContinueNudgeCount, nextPath });
-        messages.push({ role: "assistant", content: rawText });
+        messages.push({ role: "assistant", content: historyContent });
         messages.push({
           role: "user",
           content: unfinishedPaths.length > 0
@@ -278,7 +280,7 @@ async function runAgentLoop(opts) {
       return { ok: true, exitCode: 0, sessionId, text: latestText || "", error: "", rawEvents, usedModel, actualChannel: channelId };
     }
 
-    messages.push({ role: "assistant", content: rawText });
+    messages.push({ role: "assistant", content: historyContent });
 
     //  Loop detection 
     if (toolCalls.length > 0) {

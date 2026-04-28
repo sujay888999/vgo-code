@@ -1441,7 +1441,7 @@ function createRemoteProfileState(payload = {}, { activate = true } = {}) {
       : incomingApiKey;
   const profile = {
     id: profileId,
-    name: (payload.name || "").trim() || `杩滅▼閰嶇疆 ${(settings.remoteProfiles || []).length + 1}`,
+    name: (payload.name || "").trim() || `远程配置 ${(settings.remoteProfiles || []).length + 1}`,
     provider: normalizedProvider,
     baseUrl: payload.baseUrl || settings.remote.baseUrl,
     modelListUrl: payload.modelListUrl || "",
@@ -2490,7 +2490,7 @@ function readAttachmentPreview(filePath) {
 }
 
 app.whenReady().then(async () => {
-  normalizeEngineLogFile(path.join(process.cwd(), "logs", "ollama-engine.log"));
+  normalizeEngineLogFile(path.join(process.cwd(), "logs", "agent.log"));
   store.load();
   await validateStoredRealLogin();
 
@@ -2538,7 +2538,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("app:getState", () => serializeState());
   ipcMain.handle("settings:get", () => serializeSettings());
   ipcMain.handle("logs:normalizeEngine", () =>
-    normalizeEngineLogFile(path.join(process.cwd(), "logs", "ollama-engine.log"))
+    normalizeEngineLogFile(path.join(process.cwd(), "logs", "agent.log"))
   );
   ipcMain.handle("runtime:installWhisper", () => installWhisperRuntime());
   ipcMain.handle("runtime:installSkill", (_event, payload = {}) => {

@@ -25,17 +25,10 @@ const REMOTE_MAX_HISTORY_MESSAGES = 24;
 const REMOTE_MAX_MESSAGE_CHARS = 5000;
 const REMOTE_MAX_TOTAL_CHARS = 60000;
 const LOG_DIR = path.join(process.cwd(), "logs");
-const LOG_FILE = path.join(LOG_DIR, "vgo-remote.log");
+const LOG_FILE = path.join(LOG_DIR, "agent.log");
 
 function logRuntime(event, payload = {}) {
-  try {
-    fs.mkdirSync(LOG_DIR, { recursive: true });
-    fs.appendFileSync(
-      LOG_FILE,
-      `${JSON.stringify({ ts: new Date().toISOString(), event, ...payload })}\n`,
-      "utf8"
-    );
-  } catch {}
+  appendEngineLog(LOG_FILE, event, { channel: "vgo-remote", ...payload });
 }
 
 async function parseJsonResponse(response) {
@@ -2430,6 +2423,7 @@ async function runLocalPrompt({
       return {
         text: cleanText,           // display text — think stripped
         intentText: cleanText || thinkContent,  // for continuation detection
+        rawForHistory: rawText,    // full raw text for message history (keeps think for context)
         toolCalls,
         raw: payload
       };
@@ -2444,7 +2438,7 @@ async function runLocalPrompt({
       history,
       settings,
       emitEvent: (ev) => emitEvent(onEvent, [], ev),
-      logRuntime: (event, data) => appendEngineLog({ event, ...data }),
+      logRuntime: (event, data) => logRuntime(event, { channel: "custom-http", ...data }),
       buildMessages: buildMsgs,
       systemPrompt,
       usedModel: normalizedModelId,
