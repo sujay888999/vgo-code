@@ -11,7 +11,7 @@ const GUEST_MODEL_LABELS = {
   "glm-4-flash-250414": "GLM-4-Flash-250414（免费）"
 };
 
-const MOJIBAKE_PATTERN = /[锛鏃鍏璐鐧诲綍鏈]/;
+const MOJIBAKE_PATTERN = /[]/;
 
 function buildGuestModelCatalog() {
   return Object.entries(GUEST_MODEL_LABELS).map(([id, label]) => ({

@@ -2252,7 +2252,7 @@ async function runOllamaPrompt({
         ok: false,
         exitCode: 1,
         sessionId,
-        text: "Ollama 閺夆晝鍋炵敮瀛樺緞鏉堫偉袝: " + error.message,
+        text: "Ollama 请求异常: " + error.message,
         error: error.message,
         rawEvents,
         usedModel: model,

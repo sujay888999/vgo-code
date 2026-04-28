@@ -1,0 +1,1 @@
+﻿const fs=require("fs"); let s=fs.readFileSync("electron/core/vgoRemoteAdapter.js","utf8"); const lines=s.split("\n"); lines.splice(930,1); s=lines.join("\n"); fs.writeFileSync("electron/core/vgoRemoteAdapter.js",s,"utf8"); console.log("removed line 931");

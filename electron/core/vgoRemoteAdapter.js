@@ -127,7 +127,7 @@ function isQuotaLikeFailure(status, errorText = "") {
     Number(status) === 429 &&
     (
       text.includes("浣欓涓嶈冻") ||
-      text.includes("鏃犲彲鐢ㄨ祫婧愬寘") ||
+      text.includes("无可用资源包") ||
       text.includes("quota") ||
       text.includes("insufficient") ||
       text.includes("balance")
@@ -573,12 +573,12 @@ function buildSafeSystemPrompt(settings, sessionMeta, activeSkills = []) {
       error: error.message
     });
     return [
-      "?? VGO CODE ??????? Agent?",
-      "????????????????????????????",
-      "???????????????????????????????",
-      "??????????????????????????????",
+      "VGO CODE 桌面 Agent",
+      "你是一个专业的桌面 AI 助手。",
+      "你是一个专业的桌面 AI 助手。???",
+      "你是一个专业的桌面 AI 助手。??",
       appendix,
-      `?????????????${error.message}`
+      `技能附录：${error.message}`
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -897,27 +897,36 @@ function normalizeHistoryMessages(history = []) {
 }
 
 function extractOpenAiMessageText(payload = {}) {
-  const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content === "string") {
-    return content;
-  }
+  const message = payload?.choices?.[0]?.message;
+  const content = message?.content;
+  // DeepSeek and similar models put reasoning in reasoning_content separately
+  // Reconstruct the full text with <think> wrapper so sanitizeAssistantText can strip it
+  const reasoningContent = String(message?.reasoning_content || "").trim();
 
-  if (Array.isArray(content)) {
-    return content
+  let mainText = "";
+  if (typeof content === "string") {
+    mainText = content;
+  } else if (Array.isArray(content)) {
+    mainText = content
       .map((part) => {
-        if (typeof part === "string") {
-          return part;
-        }
-        if (part && typeof part === "object") {
-          return part.text || part.content || "";
-        }
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object") return part.text || part.content || "";
         return "";
       })
       .join("")
       .trim();
+  } else {
+    mainText = String(payload?.output_text || payload?.text || "");
   }
 
-  return String(payload?.output_text || payload?.text || "");
+  // If reasoning_content exists, prepend it as <think>...</think>
+  if (reasoningContent) {
+    // Strip any stray </think> from mainText since we're reconstructing it
+    const cleanMain = mainText.replace(/<\/think>/gi, "").trim();
+    return `<think>${reasoningContent}</think>${cleanMain ? "\n" + cleanMain : ""}`;
+  }
+
+  return mainText;
 }
 
 function isRetryableUpstreamFailure(response, payload) {
@@ -2629,7 +2638,7 @@ async function runHealthCheck(_workspace, settings) {
       ? {
           ok: true,
           title: "鏈湴娴嬭瘯寮曟搸鍦ㄧ嚎",
-          details: payload.message || payload.status || `宸叉垚鍔熻繛鎺ュ埌 ${baseUrl}`
+          details: payload.message || payload.status || `已成功连接到 ${baseUrl}`
         }
       : {
           ok: false,

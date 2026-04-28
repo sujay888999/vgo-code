@@ -77,6 +77,8 @@ function sanitizeAssistantText(text = "") {
   cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
   // Also strip partial/unclosed think blocks at end of stream
   cleaned = cleaned.replace(/<think>[\s\S]*$/gi, "").trim();
+  // Strip orphaned closing </think> tags (when reasoning_content was separate)
+  cleaned = cleaned.replace(/<\/think>/gi, "").trim();
   cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, "");
   cleaned = cleaned.replace(/<(script|iframe|object|embed|style|link|meta|svg|math)\b[\s\S]*?<\/\1>/gi, "");
   cleaned = cleaned.replace(/<\/?(script|iframe|object|embed|style|link|meta|svg|math)\b[^>]*>/gi, "");
