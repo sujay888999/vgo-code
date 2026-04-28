@@ -657,7 +657,7 @@ export function Sidebar() {
                     {manualCloudProfiles.length > 0 && (
                       <>
                         <div className="model-list-section-title">
-                          <span>云端配置</span>
+                          <span>自定义模型</span>
                           {activeProfile && activeProfile.id !== 'default' && activeProfile.provider !== 'Ollama' && (
                             <span className="active-indicator">使用中</span>
                           )}
