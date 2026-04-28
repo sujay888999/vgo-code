@@ -2494,6 +2494,9 @@ app.whenReady().then(async () => {
   store.load();
   await validateStoredRealLogin();
 
+  // Auto-sync model catalog on startup so stale models are refreshed
+  syncVgoAiModels().catch(() => {});
+
   try {
     const serverInfo = await startMockServer({
       getSettings: () => settings,
