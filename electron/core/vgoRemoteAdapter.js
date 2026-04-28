@@ -1,5 +1,6 @@
 ﻿const fs = require("node:fs");
 const { runAgentLoop } = require("./agentLoop");
+const { appendEngineLog } = require("./engineLog");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { executeToolCall } = require("./toolRuntime");
