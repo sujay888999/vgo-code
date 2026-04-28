@@ -2421,7 +2421,17 @@ async function runLocalPrompt({
 
       const rawText = extractAssistantRawText(payload) || text;
       const toolCalls = extractToolCalls(rawText);
-      return { text: protocol.sanitizeAssistantText(rawText), toolCalls, raw: payload };
+      const cleanText = protocol.sanitizeAssistantText(rawText);
+      // Extract think content for intent detection (shouldContinueAutonomously needs it)
+      // but don't show it to the user
+      const thinkMatch = rawText.match(/<think>([\s\S]*?)<\/think>/i);
+      const thinkContent = thinkMatch ? thinkMatch[1].trim() : "";
+      return {
+        text: cleanText,           // display text — think stripped
+        intentText: cleanText || thinkContent,  // for continuation detection
+        toolCalls,
+        raw: payload
+      };
     };
 
     // Run the unified agent loop
@@ -2433,7 +2443,7 @@ async function runLocalPrompt({
       history,
       settings,
       emitEvent: (ev) => emitEvent(onEvent, [], ev),
-      logRuntime: () => {},
+      logRuntime: (event, data) => appendEngineLog({ event, ...data }),
       buildMessages: buildMsgs,
       systemPrompt,
       usedModel: normalizedModelId,

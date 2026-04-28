@@ -231,10 +231,13 @@ async function runAgentLoop(opts) {
       return { ok: false, exitCode: 1, sessionId, text: "请求失败: " + err.message, error: err.message, rawEvents, usedModel, actualChannel: channelId };
     }
 
-    const { text: rawText, toolCalls } = stepResult;
+    const { text: rawText, toolCalls, intentText: stepIntentText } = stepResult;
     latestText = rawText || "";
+    // Use intentText (includes think content) for continuation detection
+    // Fall back to rawText if intentText not provided (other channels)
+    const textForContinuation = stepIntentText || latestText;
 
-    logRuntime("model:response", { step, hasToolCalls: toolCalls.length > 0, textPreview: latestText.slice(0, 200) });
+    logRuntime("model:response", { step, hasToolCalls: toolCalls.length > 0, textPreview: (textForContinuation || latestText).slice(0, 200) });
 
     emitEvent({ type: "model_response", step: step + 1, model: usedModel, text: latestText, toolCalls });
     if (latestText) {
@@ -243,7 +246,7 @@ async function runAgentLoop(opts) {
 
     //  No tool calls: decide whether to continue or return 
     if (!toolCalls.length) {
-      if (needsForcedFinalAnswer(latestText, rawEvents, prompt, workspace)) {
+      if (needsForcedFinalAnswer(textForContinuation, rawEvents, prompt, workspace)) {
         if (forcedFinalAnswerAttempts >= 1) {
           return { ok: true, exitCode: 0, sessionId, text: latestText || "", error: "", rawEvents, usedModel, actualChannel: channelId };
         }
@@ -253,7 +256,7 @@ async function runAgentLoop(opts) {
         continue;
       }
 
-      if (shouldContinueAutonomously(latestText, rawEvents, prompt, workspace)) {
+      if (shouldContinueAutonomously(textForContinuation, rawEvents, prompt, workspace)) {
         if (autoContinueNudgeCount >= MAX_AUTO_CONTINUE_NUDGES) {
           return { ok: true, exitCode: 0, sessionId, text: latestText || "", error: "", rawEvents, usedModel, actualChannel: channelId };
         }
