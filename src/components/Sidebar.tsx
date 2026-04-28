@@ -453,7 +453,10 @@ export function Sidebar() {
       }))
     })
 
-    return activeCustomCloudProfile ? fromCustom : [...fromCustom, ...fromDefault]
+    // When a Custom HTTP Profile is active, only show VGO AI Cloud models in the cloud section.
+    // The custom profile's own models are already shown in the "自定义模型" section above.
+    // Never mix custom profile models into the cloud model list.
+    return fromDefault
   }, [activeCustomCloudProfile, modelCatalog, manualCloudProfiles, defaultCloudProfile?.name])
 
   const filteredCloudEntries = useMemo(() => {
