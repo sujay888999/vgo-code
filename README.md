@@ -1,82 +1,90 @@
 # VGO CODE
 
-VGO CODE 是一个桌面端 Agent 工作台项目。
-当前工程已完成前端主链路迁移，默认使用 React + Vite 构建产物作为 Electron 渲染层。
+VGO CODE is a professional desktop agent workspace designed for advanced conversational AI workflows, built on Electron with a React + Vite rendering layer.
 
-## 当前能力
+## Overview
 
-- Electron 桌面应用
-- 多会话管理
-- 多引擎切换（含 VGO Remote）
-- VGO AI 账号绑定与模型选择
-- 本地 API 模板服务（`server/`）
+VGO CODE delivers a polished desktop application experience for managing multiple AI sessions, switching between model engines, and integrating remote AI backends. Its architecture is optimized for desktop deployment and includes a local API template service for rapid extension.
 
-## 工程结构
+## Key Features
+
+- Fully packaged Electron desktop application
+- Multi-session chat management
+- Multiple engine selection with VGO Remote support
+- VGO AI account binding and model selection
+- Local API service template in `server/`
+- Production-ready desktop installer distribution
+
+## Installation
+
+Download the latest installer from:
+
+- <https://vgoai.cn/downloads/vgo-code/VGO-CODE-Setup-1.3.0.exe>
+
+For registration, deployment, or product updates, visit:
+
+- <https://vgoai.cn>
+
+## Repository Structure
 
 ```text
 E:\VGO-CODE
-├─ build/
-├─ docs/
-├─ electron/
+├─ build/                # Electron build resources
+├─ docs/                 # Project documentation
+├─ electron/             # Electron main process and preload logic
 │  ├─ main.js
 │  ├─ preload.js
 │  └─ core/
-├─ src/                  # 前端源码（开发入口）
-├─ dist-web/             # 前端构建产物（运行入口）
-├─ server/
-├─ scripts/
-├─ ui/                   # 旧版静态页面，仅兼容兜底
-├─ vendor/
-├─ package.json
-└─ README.md
+├─ src/                  # Frontend source code
+├─ dist-web/             # Built frontend assets for Electron rendering
+├─ server/               # Local API and integration service templates
+├─ scripts/              # Utility and release scripts
+├─ ui/                   # Legacy static UI fallback assets
+├─ vendor/               # Embedded third-party libraries
+├─ package.json          # Project metadata and scripts
+└─ README.md             # Project overview and instructions
 ```
 
-## 渲染层加载策略
+## Rendering Strategy
 
-Electron 主进程优先加载 `dist-web/index.html`。
-仅在以下情况允许回退旧版 `ui/index.html`：
+The Electron main process loads `dist-web/index.html` by default. Legacy UI fallback to `ui/index.html` is only allowed during development or when explicitly enabled.
 
-- 开发模式（`app.isPackaged === false`）
-- 显式设置环境变量：`VGO_ALLOW_LEGACY_UI_FALLBACK=1`
+## Recommended Development Commands
 
-如果缺少 `dist-web` 且未开启回退，会显示错误提示页，避免生产环境误回退旧 UI。
-
-## 常用命令
-
-开发运行：
+Start the application in development mode:
 
 ```powershell
 npm start
 ```
 
-构建前端：
+Build the frontend assets:
 
 ```powershell
 npm run build:web
 ```
 
-目录版打包：
+Create directory-based Electron package:
 
 ```powershell
 npm run pack
 ```
 
-安装包打包：
+Generate the installer package:
 
 ```powershell
 npm run dist
 ```
 
-## 本地 API 服务
+## Local API Service
 
-单独启动本地 API：
+Start the API server independently from the repository root:
 
 ```powershell
 cd E:\VGO-CODE\server
 npm start
 ```
 
-默认接口：
+Common endpoints:
 
 - `GET /health`
 - `GET /models`
@@ -84,7 +92,13 @@ npm start
 - `POST /auth/login`
 - `POST /chat`
 
-## 相关文档
+## Documentation
 
 - `docs/ARCHITECTURE.md`
 - `docs/VGO-CORE-ROADMAP.md`
+
+## Support
+
+For guided setup, installer downloads, and release notes, visit:
+
+- <https://vgoai.cn>
