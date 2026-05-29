@@ -39,7 +39,6 @@ E:\VGO-CODE
 ├─ dist-web/             # Built frontend assets for Electron rendering
 ├─ server/               # Local API and integration service templates
 ├─ scripts/              # Utility and release scripts
-├─ ui/                   # Legacy static UI fallback assets
 ├─ vendor/               # Embedded third-party libraries
 ├─ package.json          # Project metadata and scripts
 └─ README.md             # Project overview and instructions
@@ -47,7 +46,7 @@ E:\VGO-CODE
 
 ## Rendering Strategy
 
-The Electron main process loads `dist-web/index.html` by default. Legacy UI fallback to `ui/index.html` is only allowed during development or when explicitly enabled.
+The Electron main process loads the single React/Vite renderer bundle at `dist-web/index.html`. The old static UI fallback has been removed to keep one production UI path.
 
 ## Recommended Development Commands
 

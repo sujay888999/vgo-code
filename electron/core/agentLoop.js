@@ -196,7 +196,12 @@ async function runAgentLoop(opts) {
   const rawEvents = [];
   const maxSteps = Number(settings?.agent?.maxToolSteps || settings?.remote?.maxToolSteps || DEFAULT_MAX_STEPS);
 
-  let messages = buildMessages(history, systemPrompt, prompt);
+  let messages;
+  try {
+    messages = buildMessages(history, systemPrompt, prompt);
+  } catch (err) {
+    return { ok: false, exitCode: 1, sessionId, text: "构建消息失败: " + err.message, error: "build_messages_error: " + err.message, rawEvents, usedModel, actualChannel: channelId };
+  }
   let latestText = "";
   let writeArgumentRetrySent = false;
   let missingArgumentRetrySent = false;

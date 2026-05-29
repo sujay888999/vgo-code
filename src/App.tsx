@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useI18n, setI18nLocale } from './i18n'
 import { useAppStore } from './store/appStore'
+import { tryRecoverMojibake } from './utils/mojibake'
 import { Sidebar } from './components/Sidebar'
 import { MainPanel } from './components/MainPanel'
 import { SettingsModal } from './components/SettingsModal'
@@ -27,28 +28,6 @@ function appendUniqueBlock(currentText: string, nextBlock: string) {
   if (normalizedCurrent.includes(normalizedNext)) return normalizedCurrent
 
   return `${normalizedCurrent}\n\n${normalizedNext}`.trim()
-}
-
-function looksLikeMojibake(text: string) {
-  const sample = String(text || '')
-  if (!sample) return false
-  const weirdMatches = sample.match(/[娴ｉ幋鐠囬弬鍥︽瀹告彃寮張顏呮閸掗梻顔藉灉]/g) || []
-  return weirdMatches.length >= 3
-}
-
-function tryRecoverMojibake(text: string) {
-  const source = String(text || '')
-  if (!source || !looksLikeMojibake(source)) return source
-  try {
-    const bytes = Uint8Array.from(Array.from(source).map((char) => char.charCodeAt(0) & 0xff))
-    const recovered = new TextDecoder('utf-8').decode(bytes)
-    if (recovered && !looksLikeMojibake(recovered)) {
-      return recovered
-    }
-  } catch {
-    // noop
-  }
-  return source
 }
 
 function normalizeEventPayload<T>(value: T): T {

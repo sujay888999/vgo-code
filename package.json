@@ -12,11 +12,6 @@
     "build:web": "npm --prefix ./src run build",
     "pack": "npm run build:web && electron-builder --win dir",
     "dist": "npm run build:web && electron-builder --win nsis",
-    "plan:next": "node ./scripts/auto-plan.js",
-    "audit:brand": "node ./scripts/brand-audit.js",
-    "sync:nvidia-free-models": "node ./scripts/sync-nvidia-free-models.js",
-    "test:release-smoke": "node ./scripts/release-smoke.js",
-    "test:resilience-replay": "node ./scripts/resilience-replay.js",
     "verify:release": "powershell -ExecutionPolicy Bypass -File ./scripts/release-check.ps1",
     "release:single": "powershell -ExecutionPolicy Bypass -File ./scripts/publish-single-version-release.ps1 -LocalOnly",
     "release:remote": "powershell -ExecutionPolicy Bypass -File ./scripts/publish-single-version-release.ps1"
@@ -26,10 +21,10 @@
     "productName": "VGO CODE",
     "files": [
       "electron/**/*",
+      "build/**/*",
       "server/**/*",
       "vendor/package/**/*",
       "dist-web/**/*",
-      "ui/**/*",
       "package.json"
     ],
     "asarUnpack": [
@@ -61,5 +56,8 @@
     "rcedit": "^5.0.2",
     "sharp": "^0.34.5",
     "to-ico": "^1.1.5"
+  },
+  "dependencies": {
+    "app-builder-bin": "^5.0.0-alpha.10"
   }
 }

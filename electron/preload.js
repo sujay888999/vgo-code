@@ -81,29 +81,24 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
 
 // Forward auth state updates to renderer
 ipcRenderer.on("auth:stateUpdate", (_event, state) => {
-  console.log("Received auth:stateUpdate:", state.status);
   window.dispatchEvent(new CustomEvent("vgoAuthStateUpdate", { detail: state }));
 });
 
 // Forward state refresh to renderer
 ipcRenderer.on("app:stateRefresh", (_event, state) => {
-  console.log("Received app:stateRefresh");
   window.dispatchEvent(new CustomEvent("vgoStateRefresh", { detail: state }));
 });
 
 // Forward agent events to renderer
 ipcRenderer.on("agent:event", (_event, payload) => {
-  console.log("Received agent:event:", payload);
   window.dispatchEvent(new CustomEvent("vgoAgentEvent", { detail: payload }));
 });
 
 // Forward update available events to renderer
 ipcRenderer.on("update:available", (_event, payload) => {
-  console.log("Received update:available:", payload);
   window.dispatchEvent(new CustomEvent("vgoUpdateAvailable", { detail: payload }));
 });
 
 ipcRenderer.on("update:status", (_event, payload) => {
-  console.log("Received update:status:", payload);
   window.dispatchEvent(new CustomEvent("vgoUpdateStatus", { detail: payload }));
 });

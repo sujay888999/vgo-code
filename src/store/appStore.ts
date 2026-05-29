@@ -1,5 +1,6 @@
 /// <reference path="../types/electron.d.ts" />
 import { create } from 'zustand'
+import { tryRecoverMojibake } from '../utils/mojibake'
 
 // Augment Window so window.vgoDesktop is typed in this module
 declare global {
@@ -43,31 +44,6 @@ function isFinalTransientMessage(message?: Partial<Message> | null) {
 
 function normalizeMessageText(text: string) {
   return String(text || '').replace(/\s+/g, ' ').trim()
-}
-
-function looksLikeMojibake(text: string) {
-  const sample = String(text || '')
-  if (!sample) return false
-  const weirdMatches =
-    sample.match(
-      /[ÃÂÐÑæçèéêëìíîïðñòóôõöøùúûüýþÿ]|[锛銆鍙鍚鍒姝涓浠鍦杩缁鎵宸妯璇缃粶]|[娴彃寮顏掗顔濂妹婊鎴]/g,
-    ) || []
-  return weirdMatches.length >= 2
-}
-
-function tryRecoverMojibakeText(text: string) {
-  const source = String(text || '')
-  if (!source || !looksLikeMojibake(source)) return source
-  try {
-    const bytes = Uint8Array.from(Array.from(source).map((char) => char.charCodeAt(0) & 0xff))
-    const recovered = new TextDecoder('utf-8').decode(bytes)
-    if (recovered && !looksLikeMojibake(recovered)) {
-      return recovered
-    }
-  } catch {
-    // noop
-  }
-  return source
 }
 
 export interface Session {
@@ -394,8 +370,8 @@ export const useAppStore = create<AppState>((set) => ({
       ...state.messages,
       {
         ...message,
-        text: tryRecoverMojibakeText(message.text || ''),
-        title: message.title ? tryRecoverMojibakeText(message.title) : message.title,
+        text: tryRecoverMojibake(message.text || ''),
+        title: message.title ? tryRecoverMojibake(message.title) : message.title,
       },
     ] 
   })),
@@ -405,9 +381,9 @@ export const useAppStore = create<AppState>((set) => ({
         ? {
             ...m,
             ...updates,
-            ...(updates.text !== undefined ? { text: tryRecoverMojibakeText(updates.text || '') } : {}),
+            ...(updates.text !== undefined ? { text: tryRecoverMojibake(updates.text || '') } : {}),
             ...(updates.title !== undefined
-              ? { title: updates.title ? tryRecoverMojibakeText(updates.title) : updates.title }
+              ? { title: updates.title ? tryRecoverMojibake(updates.title) : updates.title }
               : {}),
           }
         : m,
@@ -450,8 +426,8 @@ export const useAppStore = create<AppState>((set) => ({
       ...state.taskSteps.slice(-12),
       {
         ...step,
-        title: tryRecoverMojibakeText(step.title || ''),
-        detail: tryRecoverMojibakeText(step.detail || ''),
+        title: tryRecoverMojibake(step.title || ''),
+        detail: tryRecoverMojibake(step.detail || ''),
       },
     ] 
   })),
@@ -461,9 +437,9 @@ export const useAppStore = create<AppState>((set) => ({
         ? {
             ...s,
             ...updates,
-            ...(updates.title !== undefined ? { title: tryRecoverMojibakeText(updates.title || '') } : {}),
+            ...(updates.title !== undefined ? { title: tryRecoverMojibake(updates.title || '') } : {}),
             ...(updates.detail !== undefined
-              ? { detail: tryRecoverMojibakeText(updates.detail || '') }
+              ? { detail: tryRecoverMojibake(updates.detail || '') }
               : {}),
           }
         : s,
@@ -551,7 +527,7 @@ export const useAppStore = create<AppState>((set) => ({
     const historyMessages = history.map((entry: any, index: number) => ({
       id: entry.id || `msg-${index}`,
       role: entry.role || 'assistant',
-      text: tryRecoverMojibakeText(entry.text || ''),
+      text: tryRecoverMojibake(entry.text || ''),
       status: entry.status || 'done',
       timestamp: entry.createdAt ? new Date(entry.createdAt).getTime() : Date.now()
     }))

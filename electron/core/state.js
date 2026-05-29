@@ -163,7 +163,7 @@ function normalizeSession(session, workspace = "") {
     title: sanitizeStoredText(session.title) || DEFAULT_SESSION_TITLE,
     directory: normalizedDirectory,
     manualTitle: Boolean(session.manualTitle),
-    history: Array.isArray(session.history) ? session.history.slice(-120).map(normalizeHistoryEntry) : [],
+    history: Array.isArray(session.history) ? session.history.slice(-200).map(normalizeHistoryEntry) : [],
     pinned: Boolean(session.pinned),
     contextSummary: sanitizeStoredText(session.contextSummary),
     compressionCount: Number.isFinite(session.compressionCount) ? session.compressionCount : 0,
@@ -274,7 +274,7 @@ function appendHistory(role, text, status = "done") {
         createdAt: new Date().toISOString()
       })
     );
-    session.history = session.history.slice(-120);
+    session.history = session.history.slice(-200);
     touchSession(session);
     persistAndSort();
   }
@@ -285,7 +285,7 @@ function appendHistory(role, text, status = "done") {
       return null;
     }
 
-    session.history = Array.isArray(history) ? history.slice(-120).map(normalizeHistoryEntry) : [];
+    session.history = Array.isArray(history) ? history.slice(-200).map(normalizeHistoryEntry) : [];
     touchSession(session);
     persistAndSort();
     return session;

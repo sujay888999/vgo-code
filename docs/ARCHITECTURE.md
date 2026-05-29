@@ -1,45 +1,25 @@
-# VGO CODE 架构说明
+# VGO CODE Architecture
 
-## 当前架构（迁移后）
+## Desktop Runtime
 
-`VGO CODE` 已完成前端迁移，运行链路为：
+VGO CODE is now a single Electron desktop application with one renderer path:
 
-1. 前端源码层：`src/`（React + Vite + TypeScript）
-2. 前端构建产物：`dist-web/`（Electron 加载入口）
-3. 桌面主进程层：`electron/main.js` + `electron/core/*`
-4. 本地服务层：`server/`
+- `src/`: React + Vite + TypeScript source.
+- `dist-web/`: built renderer bundle loaded by Electron.
+- `electron/`: main process, preload bridge, and desktop agent runtime.
+- `server/`: local API template used by the desktop app.
+- `vendor/`: bundled runtime dependencies required by the agent.
 
-## 关键目录
+## Renderer Loading
 
-```text
-E:\VGO-CODE
-├─ electron
-│  ├─ main.js
-│  ├─ preload.js
-│  └─ core/
-├─ src/                  # 前端源码（开发入口）
-├─ dist-web/             # 前端构建产物（运行入口）
-├─ server/
-├─ docs/
-└─ ui/                   # 旧版静态页面（仅兼容兜底，不作为主链路）
-```
+`electron/main.js` loads only `dist-web/index.html`.
 
-## 加载策略
+The old static `ui/` fallback has been removed. If `dist-web/index.html` is missing, the app shows a build error page instead of falling back to another UI version.
 
-`electron/main.js` 的窗口加载逻辑：
+## Release Flow
 
-1. 优先加载 `dist-web/index.html`
-2. 仅在开发模式或显式设置 `VGO_ALLOW_LEGACY_UI_FALLBACK=1` 时，允许回退到 `ui/index.html`
-3. 其它情况下，若缺少 `dist-web`，直接显示错误提示页，避免线上误回退到旧 UI
+1. Edit UI source under `src/`.
+2. Run `npm run build:web` to refresh `dist-web/`.
+3. Run `npm run pack` or `npm run dist` for Electron packaging.
 
-## 开发与发布
-
-- 开发前端：在 `src/` 下进行组件与样式改动
-- 生成运行产物：`npm run build:web`
-- Electron 打包时依赖 `dist-web/**/*`
-
-## 迁移约束
-
-- 新功能默认落在 `src/`，不再向 `ui/renderer.js` 添加业务逻辑
-- 自动分析/修复的前置检查文件统一指向 `src/*`
-- `ui/` 目录仅用于短期兼容，后续可按发布节奏下线
+New UI work should only target `src/`; do not reintroduce a second renderer tree.

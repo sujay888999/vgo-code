@@ -1,7 +1,7 @@
-const MAX_CONTEXT_TOKENS = 32000;
+const MAX_CONTEXT_TOKENS = 128000;
 const COMPRESSION_TRIGGER_RATIO = 0.9;
-const KEEP_RECENT_MESSAGES = 12;
-const MAX_SUMMARY_CHARS = 3600;
+const KEEP_RECENT_MESSAGES = 40;
+const MAX_SUMMARY_CHARS = 30000;
 const MODEL_CONTEXT_DEFAULTS = {
   "claude-haiku-4-5": 200000,
   "claude-sonnet-4": 200000,
@@ -84,12 +84,12 @@ function mergeSummary(existingSummary, entries) {
   const lines = [];
 
   if (existingSummary) {
-    lines.push("既有摘要：");
+    lines.push("既有摘要");
     lines.push(existingSummary.trim());
     lines.push("");
   }
 
-  lines.push("本轮压缩追加摘要：");
+  lines.push("本轮压缩追加摘要");
   for (const entry of entries) {
     const prefix =
       entry.role === "user"
@@ -97,7 +97,7 @@ function mergeSummary(existingSummary, entries) {
         : entry.role === "assistant"
           ? "助手"
           : "系统";
-    lines.push(`- ${prefix}: ${truncate(entry.text, 220)}`);
+    lines.push(`- ${prefix}: ${truncate(entry.text, 2000)}`);
   }
 
   const combined = lines.join("\n").trim();
@@ -162,3 +162,5 @@ module.exports = {
   resolveCompressionThresholdRatio,
   resolveModelContextWindow
 };
+
+

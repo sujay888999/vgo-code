@@ -2,8 +2,9 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
-const { spawnSync, spawn } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const { shell } = require("electron");
+const { normalizeToolName } = require("./toolAliases");
 
 function clamp(value, min, max, fallback) {
   const number = Number(value);
@@ -11,6 +12,22 @@ function clamp(value, min, max, fallback) {
     return fallback;
   }
   return Math.min(max, Math.max(min, number));
+}
+
+function spawnAsync(command, argsOrOpts, opts) {
+  let args;
+  if (Array.isArray(argsOrOpts)) { args = argsOrOpts; } else { opts = argsOrOpts; args = []; }
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { ...opts, stdio: opts?.stdio || ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = opts?.timeout ? setTimeout(() => { timedOut = true; child.kill(); }, opts.timeout) : null;
+    child.stdout?.on("data", (chunk) => { stdout += String(chunk || ""); });
+    child.stderr?.on("data", (chunk) => { stderr += String(chunk || ""); });
+    child.on("error", (err) => { if (timer) clearTimeout(timer); resolve({ stdout, stderr, status: null, error: err, timedOut }); });
+    child.on("close", (code) => { if (timer) clearTimeout(timer); resolve({ stdout, stderr, status: code, error: null, timedOut }); });
+  });
 }
 
 function isPathInside(parentPath, childPath) {
@@ -426,15 +443,14 @@ async function waitForUrlReady(url, timeoutMs = 12000) {
   return false;
 }
 
-function stopBackgroundProcess(pid) {
+async function stopBackgroundProcess(pid) {
   const numericPid = Number(pid);
   if (!Number.isInteger(numericPid) || numericPid <= 0) {
     return { ok: false, message: "Invalid pid." };
   }
   try {
     if (process.platform === "win32") {
-      const taskkill = spawnSync("taskkill", ["/PID", String(numericPid), "/T", "/F"], {
-        encoding: "utf8",
+      const taskkill = await spawnAsync("taskkill", ["/PID", String(numericPid), "/T", "/F"], {
         shell: false
       });
       const output = [String(taskkill.stdout || "").trim(), String(taskkill.stderr || "").trim()]
@@ -525,7 +541,7 @@ async function runCommand(workspace, args = {}, options = {}) {
     if (!Number.isInteger(pid) || pid <= 0) {
       return { ok: false, name: "run_command", summary: "Missing required argument: pid", output: "" };
     }
-    const stopped = stopBackgroundProcess(pid);
+    const stopped = await stopBackgroundProcess(pid);
     cleanupBackgroundRegistry();
     return {
       ok: stopped.ok,
@@ -654,36 +670,30 @@ async function runCommand(workspace, args = {}, options = {}) {
   const defaultTimeout = looksLongRunning ? 120000 : 60000;
   const timeoutMs = clamp(requestedTimeout, 1000, 600000, defaultTimeout);
 
-  let result;
-  try {
-    result = spawnSync(command, {
-      cwd,
-      encoding: "utf8",
-      timeout: timeoutMs,
-      maxBuffer: 10 * 1024 * 1024,
-      shell: shellValue,
-      env: process.env
-    });
-  } catch (error) {
+  const result = await spawnAsync(command, {
+    cwd,
+    timeout: timeoutMs,
+    shell: shellValue,
+    env: process.env
+  });
+
+  if (result.error && !result.timedOut) {
     return {
       ok: false,
       name: "run_command",
-      summary: `Command execution failed: ${error.message}`,
+      summary: `Command execution failed: ${result.error.message}`,
       output: ""
     };
   }
 
-  if (result.error) {
-    const isTimeout = result.error.message?.includes("timeout") || result.error.code === "ETIMEDOUT";
+  if (result.timedOut) {
     return {
       ok: false,
       name: "run_command",
-      summary: isTimeout
-        ? `Command timed out after ${timeoutMs}ms.${looksLongRunning ? " Detected long-running task; try background mode." : ""}`
-        : `Error: ${result.error.message}`,
-      output: isTimeout && looksLongRunning
-        ? `${result.error.message || ""}\nhint=use_background\nexample={\"name\":\"run_command\",\"arguments\":{\"command\":\"${command}\",\"cwd\":\"${cwd}\",\"background\":true}}`
-        : (result.error.message || "")
+      summary: `Command timed out after ${timeoutMs}ms.${looksLongRunning ? " Detected long-running task; try background mode." : ""}`,
+      output: looksLongRunning
+        ? `hint=use_background\nexample={\"name\":\"run_command\",\"arguments\":{\"command\":\"${command}\",\"cwd\":\"${cwd}\",\"background\":true}}`
+        : ""
     };
   }
 
@@ -701,7 +711,7 @@ async function runCommand(workspace, args = {}, options = {}) {
   };
 }
 
-function transcribeMedia(workspace, args = {}, options = {}) {
+async function transcribeMedia(workspace, args = {}, options = {}) {
   if (!args.path) {
     return { ok: false, name: "transcribe_media", summary: "Missing required argument: path", output: "" };
   }
@@ -733,21 +743,12 @@ function transcribeMedia(workspace, args = {}, options = {}) {
   const baseName = path.basename(mediaPath, path.extname(mediaPath));
   const transcriptPath = path.join(outputDir, `${baseName}.txt`);
 
-  const probe = spawnSync(
-    "python",
-    ["-X", "utf8", "-c", "import whisper; print('ok')"],
-    {
-      cwd: workspace,
-      encoding: "utf8",
-      timeout: 20_000,
-      shell: false,
-      env: {
-        ...process.env,
-        PYTHONUTF8: "1",
-        PYTHONIOENCODING: "utf-8"
-      }
-    }
-  );
+  const probe = await spawnAsync("python", ["-X", "utf8", "-c", "import whisper; print('ok')"], {
+    cwd: workspace,
+    timeout: 20_000,
+    shell: false,
+    env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" }
+  });
 
   if (probe.status !== 0) {
     return {
@@ -783,32 +784,31 @@ function transcribeMedia(workspace, args = {}, options = {}) {
     "print(text[:4000])"
   ].join("\n");
 
-  const result = spawnSync(
-    "python",
-    ["-X", "utf8", "-c", script, mediaPath, outputDir, model, language, task],
-    {
-      cwd: workspace,
-      encoding: "utf8",
-      timeout: timeoutMs,
-      maxBuffer: 20 * 1024 * 1024,
-      shell: false,
-      env: {
-        ...process.env,
-        PYTHONUTF8: "1",
-        PYTHONIOENCODING: "utf-8"
-      }
-    }
-  );
+  const result = await spawnAsync("python", ["-X", "utf8", "-c", script, mediaPath, outputDir, model, language, task], {
+    cwd: workspace,
+    timeout: timeoutMs,
+    shell: false,
+    env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" }
+  });
 
   const stdout = String(result.stdout || "");
   const stderr = String(result.stderr || "");
   const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
 
-  if (result.error) {
+  if (result.error && !result.timedOut) {
     return {
       ok: false,
       name: "transcribe_media",
       summary: `Transcription failed: ${result.error.message}`,
+      output: combined
+    };
+  }
+
+  if (result.timedOut) {
+    return {
+      ok: false,
+      name: "transcribe_media",
+      summary: `Transcription timed out after ${timeoutMs}ms.`,
       output: combined
     };
   }
@@ -1343,18 +1343,6 @@ const TOOL_MAP = {
   transcribe_media: transcribeMedia
 };
 
-const TOOL_ALIASES = {
-  "cli-mcp-server_run_command": "run_command",
-  "vgo-music": "run_command",
-  "vgo_music": "run_command",
-  "vgomusic": "run_command",
-  copy: "copy_file",
-  move: "move_file",
-  rename: "rename_file",
-  mkdir: "make_dir",
-  create_directory: "make_dir"
-};
-
 const DANGEROUS_TOOLS = new Set([
   "run_command",
   "write_file",
@@ -1365,12 +1353,6 @@ const DANGEROUS_TOOLS = new Set([
   "delete_file",
   "delete_dir"
 ]);
-
-function normalizeToolName(name = "") {
-  const raw = String(name || "").trim();
-  const lowered = raw.toLowerCase();
-  return TOOL_ALIASES[raw] || TOOL_ALIASES[lowered] || raw;
-}
 
 async function executeToolCall(workspace, call = {}, options = {}) {
   const args =

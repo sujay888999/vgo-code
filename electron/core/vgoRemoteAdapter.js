@@ -21,9 +21,9 @@ const DEFAULT_REMOTE_NETWORK_RETRIES = 3;
 const REMOTE_RETRY_BASE_DELAY_MS = 600;
 const MAX_UPSTREAM_RATE_LIMIT_RETRIES = 4;
 const DEFAULT_VGO_PROFILE_ID = "default";
-const REMOTE_MAX_HISTORY_MESSAGES = 24;
-const REMOTE_MAX_MESSAGE_CHARS = 5000;
-const REMOTE_MAX_TOTAL_CHARS = 60000;
+const REMOTE_MAX_HISTORY_MESSAGES = 60;
+const REMOTE_MAX_MESSAGE_CHARS = 20000;
+const REMOTE_MAX_TOTAL_CHARS = 500000;
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "agent.log");
 
@@ -1515,809 +1515,128 @@ async function runRealVgoPrompt({
       content: skillWorkflowNudge
     });
   }
-  let usedModel = initialModel;
-  let payload;
-  let latestText = "";
-  let usage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0
-  };
+  let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   let contextWindow = 0;
-  const rawEvents = [];
-  let writeNudgeSent = false;
-  let writeArgumentRetrySent = false;
-  let finalAnswerNudgeSent = false;
-  let didCallWriteTool = false;
-  let toolProtocolNudgeSent = false;
-  let repairActionNudgeSent = false;
-  let verificationNudgeSent = false;
-  let dependencyVerificationNudgeSent = false;
-  let missingArgumentRetrySent = false;
+
+  const emitRealEvent = (event) => {
+    if (typeof onEvent === "function") onEvent(event);
+  };
+
+  const finalPrompt = [prompt, skillPreflightNudge, skillWorkflowNudge].filter(Boolean).join("\n\n");
+
+  const buildMessages = (hist, sysPr, pr) => {
+    const msgs = buildMessageHistory(hist, sysPr, pr, attachments);
+    return msgs;
+  };
+
+  let currentModel = initialModel;
   let upstreamRetryUsed = false;
   let upstreamFallbackModelUsed = false;
-  let payloadTooLargeRetryCount = 0;
-  let autoContinueNudgeCount = 0;
-  let networkRetryUsed = 0;
   let upstreamRateLimitRetryUsed = 0;
-  let consecutiveMissingArgumentSteps = 0;
-  let totalMissingArgumentFailures = 0;
-  // Repetition detection: track last step's tool call fingerprint
-  let lastToolCallFingerprint = "";
-  let consecutiveIdenticalToolSteps = 0;
 
-  const requestWithRetry = async (targetModel) => {
-    let attempt = 0;
-    let lastError = null;
-    while (attempt < DEFAULT_REMOTE_NETWORK_RETRIES) {
-      attempt += 1;
+  const sendRequest = async (messages) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let response;
+      let payload;
+
       try {
-        return await sendRealVgoRequest({
-          token,
-          model: targetModel,
-          activeHistory,
-          signal
-        });
+        ({ response, payload: payload } = await (async (targetModel) => {
+          for (let netAttempt = 0; netAttempt < DEFAULT_REMOTE_NETWORK_RETRIES; netAttempt++) {
+            try {
+              return await sendRealVgoRequest({ token, model: targetModel, activeHistory: messages, signal });
+            } catch (error) {
+              if (signal?.aborted || error?.name === "AbortError") throw error;
+              if (!isNetworkFetchFailure(error) || netAttempt >= DEFAULT_REMOTE_NETWORK_RETRIES - 1) throw error;
+              emitRealEvent({ type: "task_status", status: "retrying", message: "网络波动，正在自动重试..." });
+              await wait(computeRetryDelayMs(netAttempt + 1));
+            }
+          }
+        })(currentModel));
       } catch (error) {
-        lastError = error;
-        if (signal?.aborted || error?.name === "AbortError" || error?.message === "aborted_by_user") {
-          throw error;
-        }
-        if (!isNetworkFetchFailure(error) || attempt >= DEFAULT_REMOTE_NETWORK_RETRIES) {
-          throw error;
-        }
-        networkRetryUsed += 1;
-        const isTimeout = /timeout|timed out|remote_request_timeout/i.test(String(error?.message || ""));
-        const waitMs = computeRetryDelayMs(attempt);
-        emitEvent(onEvent, rawEvents, {
-          type: "task_status",
-          status: "retrying",
-          message: `${isTimeout ? "请求超时" : "网络波动"}，正在自动重试（${attempt}/${DEFAULT_REMOTE_NETWORK_RETRIES}）...`
-        });
-        await wait(waitMs);
+        throw error;
       }
+      payload = payload;
+
+      let messageText = formatRemoteServiceError(settings, response, payload);
+
+      if (isRateLimitUpstreamFailure(response, payload) && upstreamRateLimitRetryUsed < MAX_UPSTREAM_RATE_LIMIT_RETRIES) {
+        upstreamRateLimitRetryUsed += 1;
+        emitRealEvent({ type: "task_status", status: "retrying", message: `上游模型限流，${Math.round(computeRateLimitRetryDelayMs(upstreamRateLimitRetryUsed) / 1000)}秒后自动重试...` });
+        await wait(computeRateLimitRetryDelayMs(upstreamRateLimitRetryUsed));
+        continue;
+      }
+
+      if (isRetryableUpstreamFailure(response, payload) && !upstreamRetryUsed) {
+        upstreamRetryUsed = true;
+        emitRealEvent({ type: "task_status", status: "retrying", message: "上游通道连接失败，正在自动重试..." });
+        await wait(1200);
+        continue;
+      }
+
+      if (isRetryableUpstreamFailure(response, payload) && !upstreamFallbackModelUsed) {
+        upstreamFallbackModelUsed = true;
+        const fallbackCandidates = buildFallbackModelCandidates(settings, currentModel);
+        for (const candidateModel of fallbackCandidates) {
+          emitRealEvent({ type: "task_status", status: "fallback_model", message: `正在切换备用模型：${candidateModel}` });
+          currentModel = candidateModel;
+          try {
+            ({ response, payload } = await sendRealVgoRequest({ token, model: currentModel, activeHistory: messages, signal }));
+          } catch (e) { continue; }
+          messageText = formatRemoteServiceError(settings, response, payload);
+          if (!isRetryableUpstreamFailure(response, payload)) break;
+        }
+        if (!isRetryableUpstreamFailure(response, payload)) break;
+      }
+
+      usage = extractUsage(payload);
+      contextWindow = extractContextWindow(payload);
+
+      if (!response.ok) {
+        throw new Error(messageText || `HTTP ${response.status}`);
+      }
+
+      const rawText = extractAssistantRawText(payload);
+      const cleanText = modelAdapters.stripCustomerServiceBoilerplate(protocol.sanitizeAssistantText(rawText), prompt);
+      const toolCalls = extractToolCalls(rawText);
+
+      return { text: cleanText, toolCalls, raw: payload };
     }
-    throw lastError || new Error("remote_request_failed");
+
+    throw new Error("remote_request_failed");
   };
 
-  const maxAgentSteps = getMaxAgentSteps(settings);
-  for (let step = 0; step < maxAgentSteps; step += 1) {
-    if (signal?.aborted) {
-      return {
-        ok: false,
-        exitCode: 130,
-        sessionId,
-        text: "本轮任务已手动停止。",
-        error: "aborted_by_user",
-        rawEvents,
-        remoteConversationId: "",
-        remoteTitle: "",
-        usedModel,
-        actualChannel: "real-remote-agent",
-        actualContextWindow: contextWindow,
-        usageInputTokens: usage.inputTokens,
-        usageOutputTokens: usage.outputTokens,
-        usageTotalTokens: usage.totalTokens
-      };
-    }
-
-    emitEvent(onEvent, rawEvents, {
-      type: "task_status",
-      status: step === 0 ? "thinking" : "continuing",
-      message: "正在思考..."
+  let loopResult;
+  try {
+    loopResult = await runAgentLoop({
+      sendRequest,
+      prompt: finalPrompt,
+      sessionId,
+      workspace,
+      history,
+      settings,
+      signal,
+      emitEvent: emitRealEvent,
+      logRuntime: (ev, data) => logRuntime(ev, { channel: "real-remote", ...data }),
+      buildMessages,
+      systemPrompt,
+      usedModel: currentModel,
+      channelId: "real-remote-agent",
+      requestToolPermission
     });
-
-    compactActiveHistoryInPlace(activeHistory, {
-      maxMessages: REMOTE_MAX_HISTORY_MESSAGES,
-      maxMessageChars: REMOTE_MAX_MESSAGE_CHARS,
-      maxTotalChars: REMOTE_MAX_TOTAL_CHARS
-    });
-
-    let response;
-    let nextPayload;
-    try {
-      ({ response, payload: nextPayload } = await requestWithRetry(usedModel));
-    } catch (error) {
-      if (rawEvents.some((event) => event?.type === "tool_result")) {
-        return {
-          ok: true,
-          exitCode: 0,
-          sessionId,
-          text: [
-            "远程网络中断，已基于本轮已执行结果先输出可用结论。",
-            protocol.buildFallbackCompletionFromResults(prompt, extractToolResultSummaries(rawEvents)),
-            "建议：网络恢复后可继续同一任务做补充验证。"
-          ].join("\n\n"),
-          error: "",
-          rawEvents,
-          remoteConversationId: "",
-          remoteTitle: "",
-          usedModel,
-          actualChannel: "real-remote-agent-degraded",
-          actualContextWindow: contextWindow,
-          usageInputTokens: usage.inputTokens,
-          usageOutputTokens: usage.outputTokens,
-          usageTotalTokens: usage.totalTokens
-        };
-      }
-      throw error;
-    }
-    payload = nextPayload;
-
-    let messageText = formatRemoteServiceError(settings, response, payload);
-    if (
-      isRateLimitUpstreamFailure(response, payload) &&
-      upstreamRateLimitRetryUsed < MAX_UPSTREAM_RATE_LIMIT_RETRIES
-    ) {
-      upstreamRateLimitRetryUsed += 1;
-      const waitMs = computeRateLimitRetryDelayMs(upstreamRateLimitRetryUsed);
-      const waitSec = Math.round(waitMs / 1000);
-      emitEvent(onEvent, rawEvents, {
-        type: "task_status",
-        status: "retrying",
-        message: `上游模型限流，${waitSec}秒后自动重试（${upstreamRateLimitRetryUsed}/${MAX_UPSTREAM_RATE_LIMIT_RETRIES}）...`
-      });
-      await wait(waitMs);
-      ({ response, payload } = await requestWithRetry(usedModel));
-      messageText = formatRemoteServiceError(settings, response, payload);
-    }
-
-    if (isRetryableUpstreamFailure(response, payload) && !upstreamRetryUsed) {
-      upstreamRetryUsed = true;
-      emitEvent(onEvent, rawEvents, {
-        type: "task_status",
-        status: "retrying",
-        message: isRateLimitUpstreamFailure(response, payload)
-          ? "上游模型限流，正在自动重试..."
-          : "上游通道连接失败，正在自动重试..."
-      });
-      await wait(1200);
-      ({ response, payload } = await requestWithRetry(usedModel));
-      messageText = formatRemoteServiceError(settings, response, payload);
-    }
-
-    if (isRetryableUpstreamFailure(response, payload) && !upstreamFallbackModelUsed) {
-      upstreamFallbackModelUsed = true;
-      const fallbackCandidates = buildFallbackModelCandidates(settings, usedModel);
-      for (const candidateModel of fallbackCandidates) {
-        emitEvent(onEvent, rawEvents, {
-          type: "task_status",
-          status: "fallback_model",
-          message: isRateLimitUpstreamFailure(response, payload)
-            ? `当前模型触发限流，正在切换备用模型：${candidateModel}`
-            : `上游通道仍不可用，正在切换备用模型：${candidateModel}`
-        });
-        usedModel = candidateModel;
-        ({ response, payload } = await requestWithRetry(usedModel));
-        messageText = formatRemoteServiceError(settings, response, payload);
-        if (!isRetryableUpstreamFailure(response, payload)) {
-          break;
-        }
-      }
-    }
-
-    const fallbackModel = getCatalogModels(settings).find((item) => item.id !== usedModel)?.id;
-    if (!response.ok && fallbackModel && /No available channel for this model/i.test(messageText)) {
-      usedModel = fallbackModel;
-      ({ response, payload } = await requestWithRetry(usedModel));
-      messageText = formatRemoteServiceError(settings, response, payload);
-    }
-
-    if (!response.ok && Number(response.status) === 413) {
-      if (payloadTooLargeRetryCount < 2) {
-        payloadTooLargeRetryCount += 1;
-        emitEvent(onEvent, rawEvents, {
-          type: "task_status",
-          status: "retrying",
-          message: "上下文过长，正在自动压缩并重试..."
-        });
-        compactActiveHistoryInPlace(activeHistory, {
-          maxMessages: 12,
-          maxMessageChars: 2200,
-          maxTotalChars: 22000
-        });
-        activeHistory.push({
-          role: "user",
-          content:
-            "Context limit reached. Continue with concise reasoning and minimal output. Use only essential tool results."
-        });
-        continue;
-      }
-    }
-
-    const data = payload?.data || payload;
-    usage = extractUsage(payload);
-    contextWindow = extractContextWindow(payload);
-
-    const rawText = extractAssistantRawText(payload);
-    logRuntime("model:raw_response", {
-      model: usedModel,
-      rawTextPreview: String(rawText || "").slice(0, 500),
-      hasToolCall: /<\w+[\s\S]*?>[\s\S]*?\{[\s\S]*?\}[\s\S]*?<\/\w+>|```[\s\S]*?```/.test(rawText || "")
-    });
-    latestText = modelAdapters.stripCustomerServiceBoilerplate(
-      protocol.sanitizeAssistantText(rawText),
-      prompt
-    );
-    const plan = protocol.parsePlanBlock(rawText);
-    const toolCalls = extractToolCalls(rawText);
-    const toolNudges = familyTools.getToolProtocolTemplates(usedModel);
-    const hasPlatformPersona = looksLikePlatformPersona(rawText) || looksLikePlatformPersona(latestText);
-
-    if (plan) {
-      emitEvent(onEvent, rawEvents, {
-        type: "plan",
-        step: step + 1,
-        summary: plan.summary,
-        steps: plan.steps
-      });
-    }
-
-    if (step === 0 && activeSkills.length) {
-      emitEvent(onEvent, rawEvents, {
-        type: "skill_selection",
-        step: step + 1,
-        skills: activeSkills.map((skill) => ({
-          id: skill.id,
-          name: skill.name,
-          category: skill.category
-        }))
-      });
-    }
-
-    emitEvent(onEvent, rawEvents, {
-      type: "model_response",
-      step: step + 1,
-      model: usedModel,
-      text: latestText,
-      toolCalls
-    });
-
-    if (latestText) {
-      emitEvent(onEvent, rawEvents, {
-        type: "model_stream_delta",
-        step: step + 1,
-        model: usedModel,
-        text: latestText,
-        done: true
-      });
-    }
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        exitCode: 1,
-        sessionId,
-        text: latestText || messageText || `HTTP ${response.status}`,
-        error: messageText || `http_${response.status}`,
-        rawEvents,
-        remoteConversationId: "",
-        remoteTitle: "",
-        usedModel,
-        actualChannel: "real-remote",
-        actualContextWindow: contextWindow,
-        usageInputTokens: usage.inputTokens,
-        usageOutputTokens: usage.outputTokens,
-        usageTotalTokens: usage.totalTokens
-      };
-    }
-
-    if (!toolCalls.length) {
-      const hadToolResults = rawEvents.some((event) => event.type === "tool_result");
-      const hadMutatingToolResults = hasSuccessfulMutatingTool(rawEvents);
-      const hadVerificationAfterMutation = hasVerificationAfterLastMutation(rawEvents);
-      const unverifiedMutatedPaths = getUnverifiedMutatedPaths(rawEvents);
-      const changedPackageManifest = hasPackageManifestMutation(rawEvents);
-      const hadDependencyVerification = hasDependencyVerification(rawEvents);
-
-      if (
-        !hadToolResults &&
-        protocol.promptRequiresTools(prompt) &&
-        (protocol.looksLikeGenericAcknowledgement(latestText) || hasPlatformPersona) &&
-        !toolProtocolNudgeSent
-      ) {
-        toolProtocolNudgeSent = true;
-        activeHistory.push({ role: "assistant", content: rawText });
-        activeHistory.push({ role: "user", content: toolNudges.genericAcknowledgementNudge });
-        continue;
-      }
-
-      if (!hadToolResults && protocol.promptRequiresTools(prompt) && !toolProtocolNudgeSent) {
-        toolProtocolNudgeSent = true;
-        activeHistory.push({ role: "assistant", content: rawText });
-        activeHistory.push({ role: "user", content: toolNudges.missingToolsNudge });
-        continue;
-      }
-
-      if (!hadToolResults && protocol.promptRequiresTools(prompt) && toolProtocolNudgeSent) {
-        return {
-          ok: false,
-          exitCode: 1,
-          sessionId,
-          text:
-            "当前模型没有按 Agent 工具协议执行任务：它没有真正调用任何本地工具，所以这轮任务被中止。请切换到更稳定的 Agent 模型，或继续让我为这个模型单独做工具协议适配。",
-          error: "model_did_not_call_tools",
-          rawEvents,
-          remoteConversationId: "",
-          remoteTitle: "",
-          usedModel,
-          actualChannel: "real-remote-noncompliant",
-          actualContextWindow: contextWindow,
-          usageInputTokens: usage.inputTokens,
-          usageOutputTokens: usage.outputTokens,
-          usageTotalTokens: usage.totalTokens
-        };
-      }
-
-      if (hadToolResults && protocol.promptRequiresWrite(prompt) && !didCallWriteTool && !writeNudgeSent) {
-        writeNudgeSent = true;
-        activeHistory.push({ role: "assistant", content: rawText });
-        activeHistory.push({ role: "user", content: toolNudges.writeFollowupNudge });
-        continue;
-      }
-
-      if (isRepairTask && !hadMutatingToolResults && !repairActionNudgeSent) {
-        repairActionNudgeSent = true;
-        activeHistory.push({ role: "assistant", content: rawText });
-        activeHistory.push({
-          role: "user",
-          content:
-            "This is a repair task. You must not claim success unless you actually modify at least one real project file using a mutating tool such as write_file, move_file, rename_file, make_dir, delete_file, or delete_dir. Read-only inspection is not a repair. Perform the smallest concrete fix now."
-        });
-        continue;
-      }
-
-      if (
-        isRepairTask &&
-        hadMutatingToolResults &&
-        (!hadVerificationAfterMutation || unverifiedMutatedPaths.length > 0) &&
-        !verificationNudgeSent
-      ) {
-        verificationNudgeSent = true;
-        emitVerificationEvent(
-          onEvent,
-          rawEvents,
-          "pending",
-          "已检测到修复动作，但修改后还没有复检。正在要求模型继续执行至少一步验证。"
-        );
-        activeHistory.push({ role: "assistant", content: rawText });
-        activeHistory.push({
-          role: "user",
-          content:
-            "Before finalizing a repair task, run at least one verification step after the modification. Read the modified file, inspect the affected directory, or verify the changed artifact now, then give the final answer."
-        });
-        continue;
-      }
-
-      if (changedPackageManifest && !hadDependencyVerification && !dependencyVerificationNudgeSent) {
-        dependencyVerificationNudgeSent = true;
-        emitVerificationEvent(
-          onEvent,
-          rawEvents,
-          "dependency_pending",
-          "已修改 package.json，但还没有验证 package-lock.json 或依赖安装状态。"
-        );
-        activeHistory.push({ role: "assistant", content: rawText });
-        activeHistory.push({
-          role: "user",
-          content:
-            "You changed package.json. Before claiming the dependency repair is complete, verify the dependency state by reading package-lock.json or running an install verification step. Then report whether the manifest and lockfile are aligned."
-        });
-        continue;
-      }
-
-      if (hadToolResults && protocol.looksLikeGenericAcknowledgement(latestText) && !finalAnswerNudgeSent) {
-        finalAnswerNudgeSent = true;
-        activeHistory.push({ role: "assistant", content: rawText });
-        activeHistory.push({
-          role: "user",
-          content:
-            "Do not output generic completion text. Based on the tool results in this round, provide concrete findings and conclusions: what you checked, what you found, what is still unresolved, and your next actionable step."
-        });
-        continue;
-      }
-
-      if (hadToolResults && !latestText && !finalAnswerNudgeSent) {
-        finalAnswerNudgeSent = true;
-        activeHistory.push({ role: "assistant", content: rawText });
-        activeHistory.push({ role: "user", content: toolNudges.finalAnswerNudge });
-        continue;
-      }
-
-      if (hadToolResults && protocol.looksLikeGenericAcknowledgement(latestText) && finalAnswerNudgeSent) {
-        return {
-          ok: true,
-          exitCode: 0,
-          sessionId,
-          text: protocol.buildFallbackCompletionFromResults(prompt, extractToolResultSummaries(rawEvents)),
-          error: "",
-          rawEvents,
-          remoteConversationId: "",
-          remoteTitle: "",
-          usedModel,
-          actualChannel: rawEvents.some((event) => Array.isArray(event.toolCalls) && event.toolCalls.length)
-            ? "real-remote-agent"
-            : "real-remote",
-          actualContextWindow: contextWindow,
-          usageInputTokens: usage.inputTokens,
-          usageOutputTokens: usage.outputTokens,
-          usageTotalTokens: usage.totalTokens
-        };
-      }
-
-      if (shouldContinueAutonomously(latestText, rawEvents, prompt, workspace)) {
-        if (autoContinueNudgeCount >= 4) {
-          return {
-            ok: true,
-            exitCode: 0,
-            sessionId,
-            text:
-              latestText ||
-              protocol.buildFallbackCompletionFromResults(
-                prompt,
-                extractToolResultSummaries(rawEvents)
-              ),
-            error: "",
-            rawEvents,
-            remoteConversationId: "",
-            remoteTitle: "",
-            usedModel,
-            actualChannel: rawEvents.some((event) => Array.isArray(event.toolCalls) && event.toolCalls.length)
-              ? "real-remote-agent"
-              : "real-remote",
-            actualContextWindow: contextWindow,
-            usageInputTokens: usage.inputTokens,
-            usageOutputTokens: usage.outputTokens,
-            usageTotalTokens: usage.totalTokens
-          };
-        }
-        autoContinueNudgeCount += 1;
-        const unfinishedReadPaths = getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace);
-        const nextRequiredPath = unfinishedReadPaths[0] || "";
-        logRuntime("model:auto_continue", {
-          step,
-          textPreview: latestText.slice(0, 200),
-          unfinishedRequiredReads: unfinishedReadPaths.length > 0,
-          autoContinueNudgeCount,
-          nextRequiredPath
-        });
-
-        activeHistory.push({ role: "assistant", content: rawText });
-        activeHistory.push({
-          role: "user",
-          content:
-            unfinishedReadPaths.length > 0
-              ? [
-                  "Continue autonomously.",
-                  "Do not stop at a partial progress summary.",
-                  "The task is not complete yet because these required files have not been inspected:",
-                  ...unfinishedReadPaths.map((filePath, index) => `${index + 1}. ${filePath}`),
-                  `Call the next required tool now for ${nextRequiredPath}.`,
-                  "Use the exact absolute file paths listed above.",
-                  "Do not switch to a different workspace and do not use relative paths by themselves.",
-                  "Respond with tool calls first. Do not only describe the next action.",
-                  "Only give the final answer after every required file above has been inspected or a concrete blocker prevents completion."
-                ].join("\n")
-              : [
-                  "Continue autonomously.",
-                  "Do not stop at a partial progress summary.",
-                  "If there are unfinished requested files, checks, or steps, keep calling tools until they are done.",
-                  "Respond with tool calls first when more execution is needed.",
-                  "Only give the final answer when the full requested task has actually been completed or a concrete blocker prevents completion."
-                ].join("\n")
-        });
-        continue;
-      }
-
-      if (isRepairTask && unverifiedMutatedPaths.length > 0) {
-        activeHistory.push({ role: "assistant", content: rawText });
-        activeHistory.push({
-          role: "user",
-          content: [
-            "The repair task is still not complete.",
-            "You already modified files, but these modified files still have not been explicitly re-read after the final write step:",
-            ...unverifiedMutatedPaths.map((filePath, index) => `${index + 1}. ${filePath}`),
-            "Read them now before giving the final answer."
-          ].join("\n")
-        });
-        continue;
-      }
-
-      if (
-        isRepairTask &&
-        hadMutatingToolResults &&
-        hadVerificationAfterMutation &&
-        unverifiedMutatedPaths.length === 0
-      ) {
-        const detail =
-          changedPackageManifest && hadDependencyVerification
-            ? "修复后的文件与依赖状态已完成复检。"
-            : changedPackageManifest
-              ? "修复后的文件已复检；依赖文件也已参与校验。"
-              : "修复后的文件已完成至少一步复检。";
-        emitVerificationEvent(onEvent, rawEvents, "passed", detail);
-      }
-
-      return {
-        ok: true,
-        exitCode: 0,
-        sessionId,
-        text:
-          latestText ||
-          protocol.buildFallbackCompletionFromResults(
-            prompt,
-            extractToolResultSummaries(rawEvents)
-          ),
-        error: "",
-        rawEvents,
-        remoteConversationId: "",
-        remoteTitle: "",
-        usedModel,
-        actualChannel: rawEvents.some((event) => Array.isArray(event.toolCalls) && event.toolCalls.length)
-          ? "real-remote-agent"
-          : "real-remote",
-        actualContextWindow: contextWindow,
-        usageInputTokens: usage.inputTokens,
-        usageOutputTokens: usage.outputTokens,
-        usageTotalTokens: usage.totalTokens
-      };
-    }
-
-    const results = [];
-
-    // Detect infinite loop: same tool calls with same args repeated consecutively
-    if (toolCalls.length > 0) {
-      const fingerprint = toolCalls.map(c =>
-        `${c.name}:${JSON.stringify(c.arguments || {})}`
-      ).join("|");
-      if (fingerprint === lastToolCallFingerprint) {
-        consecutiveIdenticalToolSteps += 1;
-      } else {
-        consecutiveIdenticalToolSteps = 0;
-        lastToolCallFingerprint = fingerprint;
-      }
-      if (consecutiveIdenticalToolSteps >= 2) {
-        // Model is stuck in a loop — break it with a nudge
-        activeHistory.push({
-          role: "user",
-          content: `你已经连续 ${consecutiveIdenticalToolSteps + 1} 次调用了完全相同的工具（${toolCalls.map(c => c.name).join(", ")}），但结果没有变化。请停止重复调用，基于已有结果直接给出结论或尝试不同的工具/路径。`
-        });
-        consecutiveIdenticalToolSteps = 0;
-        lastToolCallFingerprint = "";
-        continue;
-      }
-    } else {
-      consecutiveIdenticalToolSteps = 0;
-      lastToolCallFingerprint = "";
-    }
-
-    for (const call of toolCalls) {
-      if (signal?.aborted) {
-        return {
-          ok: false,
-          exitCode: 130,
-          sessionId,
-          text: "本轮任务已手动停止。",
-          error: "aborted_by_user",
-          rawEvents,
-          remoteConversationId: "",
-          remoteTitle: "",
-          usedModel,
-          actualChannel: "real-remote-agent",
-          actualContextWindow: contextWindow,
-          usageInputTokens: usage.inputTokens,
-          usageOutputTokens: usage.outputTokens,
-          usageTotalTokens: usage.totalTokens
-        };
-      }
-
-      if (call.name === "write_file") {
-        didCallWriteTool = true;
-      }
-
-      const protectedInspectionViolation =
-        isRepairTask ? getProtectedInspectionViolation(call, prompt, workspace) : "";
-      if (protectedInspectionViolation) {
-        const blockedResult = {
-          ok: false,
-          name: call.name,
-          summary: `Protected runtime inspection blocked: ${protectedInspectionViolation}`,
-          output:
-            "Self-heal mode should diagnose user-facing project files first. Core Agent runtime files are excluded unless the user explicitly asked to inspect that file."
-        };
-        results.push(blockedResult);
-        emitEvent(onEvent, rawEvents, {
-          type: "tool_result",
-          step: step + 1,
-          tool: call.name,
-          ok: false,
-          summary: blockedResult.summary,
-          output: blockedResult.output
-        });
-        continue;
-      }
-
-      const protectedPathViolation =
-        isRepairTask ? getProtectedPathViolation(call, prompt, workspace) : "";
-      if (protectedPathViolation) {
-        const blockedResult = {
-          ok: false,
-          name: call.name,
-          summary: `Protected core runtime file blocked: ${protectedPathViolation}`,
-          output:
-            "Self-heal mode may not modify protected Agent runtime files unless the user explicitly asked to repair that file."
-        };
-        results.push(blockedResult);
-        emitEvent(onEvent, rawEvents, {
-          type: "tool_result",
-          step: step + 1,
-          tool: call.name,
-          ok: false,
-          summary: blockedResult.summary,
-          output: blockedResult.output
-        });
-        continue;
-      }
-
-      emitEvent(onEvent, rawEvents, {
-        type: "task_status",
-        status: "tool_running",
-        message: `正在执行工具：${call.name}`
-      });
-
-      const execution = await executeToolCallWithResilience({
-        workspace,
-        call,
-        executeToolCall,
-        executeOptions: {
-          accessScope: settings?.access?.scope || "workspace-and-desktop",
-          confirm: (toolCall) =>
-            requestToolPermission(toolCall, (permissionEvent) => {
-              emitEvent(onEvent, rawEvents, {
-                ...permissionEvent,
-                step: step + 1
-              });
-            })
-        },
-        emitStatus: (event) =>
-          emitEvent(onEvent, rawEvents, {
-            ...event,
-            step: step + 1
-          })
-      });
-      const result = execution.result;
-
-      results.push(result);
-      logRuntime("tool:executed", {
-        tool: call.name,
-        ok: result.ok,
-        summary: result.summary,
-        args: JSON.stringify(call.arguments || call.args || {}).slice(0, 500),
-        outputPreview: String(result.output || "").slice(0, 300)
-      });
-      // 只在成功、或已恢复、或最终失败（非可重试类）时才向前端发 tool_result
-      // 中间的兜底重试过程静默处理，避免向用户暴露中间失败状态
-      const isRetryableFailure = !result.ok && !result.recovered && (
-        /Command exited with code|ENOENT|timed out|timeout/i.test(String(result.summary || ""))
-      );
-      if (result.ok || result.recovered || !isRetryableFailure) {
-        emitEvent(onEvent, rawEvents, {
-          type: "tool_result",
-          step: step + 1,
-          tool: call.name,
-          ok: result.ok,
-          recovered: Boolean(result?.recovered),
-          summary: result.summary,
-          output: result.output
-        });
-      } else {
-        // 可重试类失败只发 task_status，不发 tool_result 错误卡片
-        emitEvent(onEvent, rawEvents, {
-          type: "task_status",
-          status: "retrying",
-          step: step + 1,
-          message: `工具执行遇到问题，正在处理中...`
-        });
-        // 仍然需要把 tool_result 加入 rawEvents 供内部逻辑使用，但不通知前端
-        rawEvents.push({
-          type: "tool_result",
-          step: step + 1,
-          tool: call.name,
-          ok: result.ok,
-          recovered: Boolean(result?.recovered),
-          summary: result.summary,
-          output: result.output
-        });
-      }
-    }
-
-    const hasWriteArgumentFailure = results.some(
-      (result) =>
-        result.name === "write_file" &&
-        !result.ok &&
-        /Missing required argument: (path|content)/i.test(String(result.summary || ""))
-    );
-    const hasGenericMissingArgumentFailure = results.some(
-      (result) => !result.ok && /Missing required argument:/i.test(String(result.summary || ""))
-    );
-    if (hasGenericMissingArgumentFailure) {
-      consecutiveMissingArgumentSteps += 1;
-      totalMissingArgumentFailures += results.filter(
-        (result) => !result.ok && /Missing required argument:/i.test(String(result.summary || ""))
-      ).length;
-    } else {
-      consecutiveMissingArgumentSteps = 0;
-    }
-
-    activeHistory.push({
-      role: "assistant",
-      content: clampText(rawText, 4000)
-    });
-    activeHistory.push({
-      role: "user",
-      content: clampText(protocol.buildToolResultMessage(results), 5000)
-    });
-
-    if (protocol.promptRequiresWrite(prompt) && hasWriteArgumentFailure && !writeArgumentRetrySent) {
-      writeArgumentRetrySent = true;
-      activeHistory.push({
-        role: "user",
-        content:
-          "你刚才调用了 write_file，但 content 参数为空或缺失。原因可能是文件内容太长导致输出被截断。请按以下方式重试：\n1. 将文件内容拆分为多个 write_file + append_file 调用，每次不超过 150 行。\n2. 第一次用 write_file 写入前 150 行，后续用 append_file 追加。\n3. 必须包含完整的 path 和 content 参数。\n不要解释，直接输出工具调用。"
-      });
-    }
-
-    if (hasGenericMissingArgumentFailure && !missingArgumentRetrySent) {
-      missingArgumentRetrySent = true;
-      activeHistory.push({
-        role: "user",
-        content:
-          "你刚才的工具调用缺少必填参数。请下一条只输出一个完整工具调用，必须补全该工具的必填字段（例如 run_command 需要 command，read_file/list_dir/open_path 需要 path，write_file 需要 path 和 content）。不要输出解释。"
-      });
-    }
-
-    if (
-      hasGenericMissingArgumentFailure &&
-      missingArgumentRetrySent &&
-      (consecutiveMissingArgumentSteps >= 3 || totalMissingArgumentFailures >= 5)
-    ) {
-      const exhaustedMessage =
-        "工具调用连续缺少必填参数，已停止自动重试以避免死循环。请改用明确完整的工具调用（例如 run_command 必须包含 command）后再继续。";
-      emitEvent(onEvent, rawEvents, {
-        type: "task_status",
-        status: "failed",
-        message: exhaustedMessage
-      });
-      return {
-        ok: false,
-        exitCode: 1,
-        sessionId,
-        text: exhaustedMessage,
-        error: "tool_argument_retry_exhausted",
-        rawEvents,
-        remoteConversationId: "",
-        remoteTitle: "",
-        usedModel,
-        actualChannel: "real-remote-agent",
-        actualContextWindow: contextWindow,
-        usageInputTokens: usage.inputTokens,
-        usageOutputTokens: usage.outputTokens,
-        usageTotalTokens: usage.totalTokens
-      };
-    }
+  } catch (err) {
+    emitRealEvent({ type: "task_status", status: "failed", message: "Agent 循环异常: " + err.message });
+    return { ok: false, exitCode: 1, sessionId, text: "Agent 循环异常: " + err.message, error: "agent_loop_error: " + err.message, rawEvents: [], usedModel: currentModel, actualChannel: "real-remote-agent", actualContextWindow: contextWindow, usageInputTokens: usage.inputTokens, usageOutputTokens: usage.outputTokens, usageTotalTokens: usage.totalTokens };
   }
 
   return {
-    ok: false,
-    exitCode: 1,
+    ok: loopResult.ok,
+    exitCode: loopResult.exitCode,
     sessionId,
-    text: latestText || `Agent reached the maximum tool-call steps (${maxAgentSteps}) without producing a final answer.`,
-    error: "agent_step_limit_reached",
-    rawEvents,
-    remoteConversationId: "",
-    remoteTitle: "",
-    usedModel,
-    actualChannel: "real-remote-agent",
+    text: loopResult.text,
+    error: loopResult.error || "",
+    rawEvents: loopResult.rawEvents,
+    usedModel: currentModel,
+    actualChannel: loopResult.actualChannel,
     actualContextWindow: contextWindow,
     usageInputTokens: usage.inputTokens,
     usageOutputTokens: usage.outputTokens,

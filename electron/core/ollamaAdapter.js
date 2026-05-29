@@ -1,12 +1,8 @@
-﻿const fs = require("node:fs");
-const path = require("node:path");
-const { executeToolCall } = require("./toolRuntime");
+﻿const path = require("node:path");
+const { runAgentLoop } = require("./agentLoop");
 const protocol = require("./agentProtocol");
 const modelAdapters = require("./modelAdapterRegistry");
 const skillRegistry = require("./skillRegistry");
-const {
-  executeToolCallWithResilience
-} = require("./toolResilience");
 const { appendEngineLog } = require("./engineLog");
 const {
   detectWorkflow,
@@ -21,6 +17,25 @@ const {
   buildSkillAppendix
 } = require("./localSkillDiscovery");
 
+async function autoDiscoverAndInstallSkills({ queries, reason, workflowLabel, workflowId, requestToolPermission, emitEvent, settings }) {
+  if (settings?.agent?.suggestSkillAugmentation === false || settings?.agent?.autoSearchSkillsOnApproval === false || typeof requestToolPermission !== "function") return [];
+  const approved = await requestToolPermission({ name: "skill_discovery", arguments: { workflow: workflowLabel, query: queries.join(", "), reason } });
+  if (!approved) return [];
+  let discovered = discoverRelevantSkills({ queries, settings });
+  emitEvent({ type: "skill_suggestions", workflowId, detail: discovered.length ? `已发现 ${discovered.length} 个相关技能。` : "", skills: discovered });
+  if (discovered.length) return discovered;
+  const installable = discoverInstallableSkills({ queries });
+  const candidate = installable[0];
+  if (!candidate) return discovered;
+  const installApproved = await requestToolPermission({ name: "skill_install", arguments: { name: candidate.name, sourcePath: candidate.path, reason: reason.replace("搜索", "安装") } });
+  if (!installApproved) return discovered;
+  const installResult = installSkillFromSource(candidate.path, candidate.name);
+  emitEvent({ type: "skill_installed", workflowId, detail: installResult.summary, skill: installResult.skill || null, ok: installResult.ok !== false });
+  discovered = discoverRelevantSkills({ queries, settings });
+  emitEvent({ type: "skill_suggestions", workflowId, detail: discovered.length ? `技能 ${candidate.name} 安装后，已识别 ${discovered.length} 个相关技能。` : "", skills: discovered });
+  return discovered;
+}
+
 const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "agent.log");
 
@@ -31,9 +46,9 @@ const DEFAULT_MAX_TOOL_STEPS = 120;
 const MIN_TOOL_STEPS = 20;
 const MAX_TOOL_STEPS = 300;
 const DEFAULT_NUM_PREDICT = 16384;
-const OLLAMA_MAX_HISTORY_MESSAGES = 24;
-const OLLAMA_MAX_MESSAGE_CHARS = 5000;
-const OLLAMA_MAX_TOTAL_CHARS = 60000;
+const OLLAMA_MAX_HISTORY_MESSAGES = 60;
+const OLLAMA_MAX_MESSAGE_CHARS = 20000;
+const OLLAMA_MAX_TOTAL_CHARS = 500000;
 const MAX_OLLAMA_RATE_LIMIT_RETRIES = 2;
 
 function isRateLimitErrorText(text = "") {
@@ -1200,322 +1215,7 @@ function extractMessageText(message) {
   return String(message.content || "");
 }
 
-function collectToolResults(rawEvents = []) {
-  return rawEvents
-    .filter((event) => event && event.type === "tool_result")
-    .map((event) => ({
-      name: event.tool,
-      ok: event.ok,
-      summary: event.summary,
-      output: event.output
-    }));
-}
 
-function extractRequestedFilePaths(prompt = "", workspace = "") {
-  const source = String(prompt || "");
-  const absolutePattern = /[A-Za-z]:\\[A-Za-z0-9._-]+(?:\\[A-Za-z0-9._-]+)*/g;
-  const absoluteMatches = [...source.matchAll(absolutePattern)];
-  const absolutePathMatches = absoluteMatches.map((match) => match[0]);
-  const absoluteMatchRanges = absoluteMatches.map((match) => {
-    const start = match.index ?? 0;
-    return [start, start + String(match[0] || "").length];
-  });
-  const relativePattern = /(?:src|electron|ui)[\\/][A-Za-z0-9._/\\-]+|package\.json/gi;
-  const relativePathMatches = [];
-
-  for (const match of source.matchAll(relativePattern)) {
-    const relativePath = String(match[0] || "");
-    const start = match.index ?? 0;
-    const end = start + relativePath.length;
-    const isInsideAbsolutePath = absoluteMatchRanges.some(
-      ([absoluteStart, absoluteEnd]) => start >= absoluteStart && end <= absoluteEnd
-    );
-    if (!isInsideAbsolutePath) {
-      relativePathMatches.push(relativePath);
-    }
-  }
-
-  const matches =
-    absolutePathMatches.length > 0
-      ? [...absolutePathMatches, ...relativePathMatches]
-      : [...absolutePathMatches, ...relativePathMatches];
-  const paths = new Set();
-  const normalizedWorkspace = workspace ? path.resolve(workspace).toLowerCase() : "";
-  const inferredProjectRoot = (() => {
-    for (const absolutePath of absolutePathMatches) {
-      const normalizedAbsolute = path.resolve(absolutePath);
-      const markerMatch = normalizedAbsolute.match(/^(.*?)(?:\\(?:src|electron|ui)\\|\\package\.json$)/i);
-      if (markerMatch?.[1]) {
-        return path.resolve(markerMatch[1]);
-      }
-      if (/\\package\.json$/i.test(normalizedAbsolute)) {
-        return path.dirname(normalizedAbsolute);
-      }
-    }
-    return "";
-  })();
-
-  for (const rawMatch of matches) {
-    const cleaned = String(rawMatch || "")
-      .trim()
-      .replace(/[闁挎稑琚埀顒€鍊堕埀顑块檷閳ь剙顭堥埀顒€顑戠槐?:闁挎稒鐔槐鐢告晬?!\]\s]+$/g, "");
-    if (!cleaned) {
-      continue;
-    }
-
-    const resolved = path.isAbsolute(cleaned)
-      ? path.resolve(cleaned)
-      : inferredProjectRoot
-        ? path.resolve(inferredProjectRoot, cleaned.replace(/\//g, path.sep))
-        : workspace
-          ? path.resolve(workspace, cleaned.replace(/\//g, path.sep))
-          : cleaned.replace(/\//g, path.sep);
-    const normalizedResolved = resolved.toLowerCase();
-    const basename = path.basename(normalizedResolved);
-    const likelyFile =
-      basename === "package.json" ||
-      /\.(tsx|ts|js|jsx|json|css|md|html)$/i.test(normalizedResolved);
-
-    if (normalizedResolved === normalizedWorkspace || !likelyFile) {
-      continue;
-    }
-
-    paths.add(normalizedResolved);
-  }
-
-  return [...paths];
-}
-
-function collectCompletedReadPaths(rawEvents = []) {
-  const completed = new Set();
-
-  for (const event of rawEvents) {
-    if (event?.type !== "tool_result" || event.tool !== "read_file" || !event.ok) {
-      continue;
-    }
-
-    const summary = String(event.summary || "");
-    const match = summary.match(/^Read\s+(.+?)\s+lines\s+\d+-\d+\./i);
-    if (match?.[1]) {
-      completed.add(path.resolve(match[1]).toLowerCase());
-    }
-  }
-
-  return completed;
-}
-
-function getUnfinishedRequiredReadPaths(prompt = "", rawEvents = [], workspace = "") {
-  const requestedPaths = extractRequestedFilePaths(prompt, workspace);
-  if (!requestedPaths.length) {
-    return [];
-  }
-
-  const completedReadPaths = collectCompletedReadPaths(rawEvents);
-  const failedReadPaths = collectFailedReadPaths(rawEvents);
-  return requestedPaths.filter(
-    (requestedPath) =>
-      !completedReadPaths.has(requestedPath) &&
-      !failedReadPaths.has(requestedPath)
-  );
-}
-
-function collectFailedReadPaths(rawEvents = []) {
-  const failed = new Set();
-  for (const event of rawEvents) {
-    if (event?.type === "tool_result" && event?.tool === "read_file" && !event?.ok) {
-      if (/ENOENT|no such file|not exist/i.test(String(event?.summary || ""))) {
-        const match = String(event?.summary || "").match(/^Read\s+(.+?)\s+/i);
-        if (match?.[1]) {
-          failed.add(path.resolve(match[1]));
-        }
-      }
-    }
-  }
-  return failed;
-}
-
-function hasUnfinishedRequiredReads(prompt = "", rawEvents = [], workspace = "") {
-  return getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace).length > 0;
-}
-
-function promptAllowsAutonomousContinuation(prompt = "") {
-  const normalized = String(prompt || "").trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  const autonomyPatterns = [
-    /\u7ee7\u7eed/,
-    /\u81ea\u52a8\u7ee7\u7eed/,
-    /\u4e0d\u8981\u505c/,
-    /\u8dd1\u5b8c/,
-    /\u4e00\u6b21\u6027\u5b8c\u6210/,
-    /\u5b8c\u6574\u6267\u884c/,
-    /\u7ee7\u7eed\u5b8c\u6210/,
-    /continue/,
-    /keep going/,
-    /autonom/i,
-    /end[- ]to[- ]end/
-  ];
-  return autonomyPatterns.some((pattern) => pattern.test(normalized));
-}
-
-function shouldContinueAutonomously(text = "", rawEvents = [], prompt = "", workspace = "") {
-  const normalized = String(text || "").trim();
-  if (!normalized) {
-    return false;
-  }
-
-  const hasToolResults = rawEvents.some((event) => event && event.type === "tool_result");
-  const unfinishedRequiredReads = hasUnfinishedRequiredReads(prompt, rawEvents, workspace);
-  const successfulWrite = rawEvents.some(
-    (event) => event?.type === "tool_result" && event?.tool === "write_file" && event?.ok
-  );
-  const allReadsFailed = rawEvents.some(
-    (event) => event?.type === "tool_result" && event?.tool === "read_file" && !event?.ok
-  );
-
-  if (successfulWrite && allReadsFailed) {
-    return false;
-  }
-
-  const continuationPatterns = [
-    /继续思考/i,
-    /继续处理/i,
-    /继续执行/i,
-    /正在思考/i,
-    /thinking/i,
-    /continue/i,
-    /keep going/i,
-    /next step/i,
-    /step\s*\d+\s*\/\s*\d+/i
-  ];
-
-  const pendingActionPatterns = [
-    /正在执行工具/i,
-    /正在调用工具/i,
-    /准备执行/i,
-    /即将执行/i,
-    /running tool/i,
-    /executing/i
-  ];
-
-  const finalPatterns = [
-    /agent\s*已完成本轮任务/i,
-    /任务完成/i,
-    /处理完成/i,
-    /结论[:：]/i,
-    /final answer/i,
-    /done/i,
-    /completed/i
-  ];
-
-  if (finalPatterns.some((pattern) => pattern.test(normalized))) {
-    if (unfinishedRequiredReads && !allReadsFailed) {
-      return true;
-    }
-    return false;
-  }
-
-  if (unfinishedRequiredReads && !allReadsFailed) {
-    return true;
-  }
-
-  if (allReadsFailed && successfulWrite) {
-    return false;
-  }
-
-  if (continuationPatterns.some((pattern) => pattern.test(normalized))) {
-    return unfinishedRequiredReads || promptAllowsAutonomousContinuation(prompt);
-  }
-
-  if (!hasToolResults && pendingActionPatterns.some((pattern) => pattern.test(normalized))) {
-    return unfinishedRequiredReads || promptAllowsAutonomousContinuation(prompt);
-  }
-
-  return false;
-}
-
-function needsForcedFinalAnswer(text = "", rawEvents = [], prompt = "", workspace = "") {
-  const normalized = String(text || "").trim();
-  if (!rawEvents.some((event) => event && event.type === "tool_result" && event.ok)) {
-    return false;
-  }
-
-  if (hasUnfinishedRequiredReads(prompt, rawEvents, workspace)) {
-    return false;
-  }
-
-  if (!normalized) {
-    return true;
-  }
-
-  if (protocol.looksLikeGenericAcknowledgement(normalized)) {
-    return true;
-  }
-
-  const lower = normalized.toLowerCase();
-  if (
-    lower.includes("please provide") ||
-    lower.includes("specific task") ||
-    lower.includes("what task") ||
-    lower.includes("what would you like me to do")
-  ) {
-    return true;
-  }
-
-  const promptRequiresStructuredSections =
-    /1\./.test(String(prompt || "")) &&
-    /2\./.test(String(prompt || "")) &&
-    /3\./.test(String(prompt || ""));
-  if (promptRequiresStructuredSections) {
-    const hasStructuredAnswer = /(^|\n)\s*1\./.test(normalized);
-    if (!hasStructuredAnswer) {
-      return true;
-    }
-  }
-
-  return normalized.length < 80;
-}
-
-function collectSuccessfulReadResults(rawEvents = []) {
-  return rawEvents.filter(
-    (event) => event && event.type === "tool_result" && event.tool === "read_file" && event.ok
-  );
-}
-
-function extractReadPathFromSummary(summary = "") {
-  const match = String(summary || "").match(/^Read\s+(.+?)\s+lines\s+\d+-\d+\./i);
-  return match?.[1] ? path.resolve(match[1]) : "";
-}
-
-function buildProjectReadFallback(prompt = "", rawEvents = []) {
-  const readResults = collectSuccessfulReadResults(rawEvents);
-  const inspectedPaths = readResults
-    .map((result) => extractReadPathFromSummary(result.summary))
-    .filter(Boolean);
-
-  const lowerPaths = inspectedPaths.map((item) => item.toLowerCase());
-  const inspectedApp = lowerPaths.some((item) => item.endsWith("\\src\\app.tsx"));
-  const inspectedMessageList = lowerPaths.some((item) => item.endsWith("\\src\\components\\messagelist.tsx"));
-  const inspectedMainPanel = lowerPaths.some((item) => item.endsWith("\\src\\components\\mainpanel.tsx"));
-  const inspectedComposer = lowerPaths.some((item) => item.endsWith("\\src\\components\\composer.tsx"));
-
-  if (inspectedApp && inspectedMessageList && inspectedMainPanel && inspectedComposer) {
-    return [
-      "已完成关键前端文件检查：",
-      `- ${inspectedPaths.join("\n- ")}`,
-      "",
-      "建议下一步：",
-      "1. 在 App.tsx 对接状态流，让推理面板和消息流联动。",
-      "2. 在 MainPanel/MessageList 增加一致的渲染与错误兜底。",
-      "3. 在 Composer 中补齐任务提交与重试入口。",
-      "",
-      "可继续执行：按模块提交补丁并逐项验证。"
-    ].join("\n");
-  }
-
-  return protocol.buildFallbackCompletionFromResults(prompt, collectToolResults(rawEvents));
-}
 async function runOllamaPrompt({
   sessionId,
   settings,
@@ -1600,179 +1300,31 @@ async function runOllamaPrompt({
         detail: buildCapabilityGapSummary(workflow, workflowProbe)
       });
 
-      if (
-        settings?.agent?.suggestSkillAugmentation !== false &&
-        settings?.agent?.autoSearchSkillsOnApproval !== false &&
-        typeof requestToolPermission === "function"
-      ) {
-        const approved = await requestToolPermission({
-          name: "skill_discovery",
-          arguments: {
-            workflow: workflow.label,
-            query: workflow.skillQueries.join(", "),
-            reason: "检测到能力缺口，申请搜索并推荐可安装技能以补齐执行链路。"
-          }
-        });
-
-        if (approved) {
-          discoveredSkills = discoverRelevantSkills({
-            queries: [
-              workflow.label,
-              ...workflow.skillQueries,
-              ...workflowProbe.blockingIssues
-            ],
-            settings
-          });
-
-          emitEvent({
-            type: "skill_suggestions",
-            workflowId: workflow.id,
-            detail: discoveredSkills.length ? `已发现 ${discoveredSkills.length} 个相关技能。` : "",
-            skills: discoveredSkills
-          });
-
-          if (!discoveredSkills.length) {
-            const installableSkills = discoverInstallableSkills({
-              queries: [
-                workflow.label,
-                ...workflow.skillQueries,
-                ...workflowProbe.blockingIssues
-              ]
-            });
-
-            if (installableSkills.length) {
-              const candidate = installableSkills[0];
-              const installApproved = await requestToolPermission({
-                name: "skill_install",
-                arguments: {
-                  name: candidate.name,
-                  sourcePath: candidate.path,
-                  reason: "当前任务缺少关键技能，申请安装候选技能以继续执行。"
-                }
-              });
-
-              if (installApproved) {
-                const installResult = installSkillFromSource(candidate.path, candidate.name);
-                emitEvent({
-                  type: "skill_installed",
-                  workflowId: workflow.id,
-                  detail: installResult.summary,
-                  skill: installResult.skill || null,
-                  ok: installResult.ok !== false
-                });
-
-                discoveredSkills = discoverRelevantSkills({
-                  queries: [
-                    workflow.label,
-                    ...workflow.skillQueries,
-                    ...workflowProbe.blockingIssues
-                  ],
-                  settings
-                });
-
-                emitEvent({
-                  type: "skill_suggestions",
-                  workflowId: workflow.id,
-                  detail: discoveredSkills.length
-                    ? `技能 ${candidate.name} 安装后，已识别 ${discoveredSkills.length} 个相关技能。`
-                    : "",
-                  skills: discoveredSkills
-                });
-              }
-            }
-          }
-        }
-      }
+      discoveredSkills = await autoDiscoverAndInstallSkills({
+        queries: [workflow.label, ...workflow.skillQueries, ...workflowProbe.blockingIssues],
+        reason: "检测到能力缺口，申请搜索并推荐可安装技能以补齐执行链路。",
+        workflowLabel: workflow.label,
+        workflowId: workflow.id,
+        requestToolPermission,
+        emitEvent,
+        settings
+      });
     }
   }
 
   const supplementalSkillQueries = imageTask || audioVideoTask
     ? []
     : detectSupplementalSkillQueries(prompt, workflow, workflowProbe);
-  if (
-    supplementalSkillQueries.length &&
-    settings?.agent?.suggestSkillAugmentation !== false &&
-    settings?.agent?.autoSearchSkillsOnApproval !== false &&
-    typeof requestToolPermission === "function"
-  ) {
-    const approved = await requestToolPermission({
-      name: "skill_discovery",
-      arguments: {
-        workflow: workflow.label,
-        query: supplementalSkillQueries.join(", "),
-        reason:
-          workflowProbe?.blockingIssues?.length
-            ? "检测到任务存在能力缺口，申请搜索补充技能。"
-            : "申请搜索可提升当前任务完成率的补充技能。"
-      }
+  if (supplementalSkillQueries.length) {
+    discoveredSkills = await autoDiscoverAndInstallSkills({
+      queries: supplementalSkillQueries,
+      reason: workflowProbe?.blockingIssues?.length ? "检测到任务存在能力缺口，申请搜索补充技能。" : "申请搜索可提升当前任务完成率的补充技能。",
+      workflowLabel: workflow.label,
+      workflowId: workflow.id,
+      requestToolPermission,
+      emitEvent,
+      settings
     });
-
-    if (approved) {
-      discoveredSkills = discoverRelevantSkills({
-        queries: supplementalSkillQueries,
-        settings
-      });
-
-      emitEvent({
-        type: "skill_suggestions",
-        workflowId: workflow.id,
-        detail: discoveredSkills.length
-          ? `已发现 ${discoveredSkills.length} 个候选技能。`
-          : "",
-        skills: discoveredSkills
-      });
-
-      const codexSkillNames = new Set(
-        discoveredSkills
-          .filter((skill) => skill.source === "codex")
-          .map((skill) => String(skill.name || "").trim().toLowerCase())
-      );
-      let candidate =
-        discoveredSkills.find(
-          (skill) =>
-            skill.source !== "codex" &&
-            !codexSkillNames.has(String(skill.name || "").trim().toLowerCase())
-        ) ||
-        discoverInstallableSkills({
-          queries: supplementalSkillQueries
-        })[0];
-
-      if (candidate) {
-        const installApproved = await requestToolPermission({
-          name: "skill_install",
-          arguments: {
-            name: candidate.name,
-            sourcePath: candidate.path,
-            reason: "申请安装候选技能，以提升当前任务执行成功率。"
-          }
-        });
-
-        if (installApproved) {
-          const installResult = installSkillFromSource(candidate.path, candidate.name);
-          emitEvent({
-            type: "skill_installed",
-            workflowId: workflow.id,
-            detail: installResult.summary,
-            skill: installResult.skill || null,
-            ok: installResult.ok !== false
-          });
-
-          discoveredSkills = discoverRelevantSkills({
-            queries: supplementalSkillQueries,
-            settings
-          });
-
-          emitEvent({
-            type: "skill_suggestions",
-            workflowId: workflow.id,
-            detail: discoveredSkills.length
-              ? `已安装技能 ${candidate.name}，当前可用相关技能数：${discoveredSkills.length}。`
-              : installResult.summary,
-            skills: discoveredSkills
-          });
-        }
-      }
-    }
   }
 
   const systemPrompt = [
@@ -1812,468 +1364,93 @@ async function runOllamaPrompt({
     };
   }
 
-  const maxToolSteps = getMaxToolSteps(settings);
-  const numPredict = getNumPredict(settings);
+  const finalPrompt = [normalizedPrompt, skillPreflightNudge].filter(Boolean).join("\n\n");
 
-  let messages = buildMessageHistory(
-    history,
-    systemPrompt,
-    [normalizedPrompt, skillPreflightNudge].filter(Boolean).join("\n\n"),
-    attachments
-  );
+  const buildMessages = (hist, sysPr, pr) => buildMessageHistory(hist, sysPr, pr, attachments);
 
-  let writeArgumentRetrySent = false;
-  let missingArgumentRetrySent = false;
-  let consecutiveMissingArgumentSteps = 0;
-  let totalMissingArgumentFailures = 0;
   let rateLimitRetryUsed = 0;
-  // Repetition detection
-  let lastToolCallFingerprint = "";
-  let consecutiveIdenticalToolSteps = 0;
-  let autoContinueNudgeCount = 0;
-
-  for (let step = 0; step < maxToolSteps; step += 1) {
-    if (signal?.aborted) {
-      return {
-        ok: false,
-        exitCode: 130,
-        sessionId,
-        text: "任务已被用户中断。",
-        error: "aborted_by_user",
-        rawEvents,
-        usedModel: model,
-        actualChannel: "ollama-agent"
-      };
-    }
-
-    emitEvent({
-      type: "task_status",
-      status: step === 0 ? "thinking" : "continuing",
-      message: "正在思考并规划下一步执行..."
-    });
-
-    if (step === 0) {
-      try {
-        const workspacePath = workspace || process.cwd();
-        const entries = fs.readdirSync(workspacePath).filter(f => !f.startsWith('.') && f !== 'node_modules');
-        const projectConfigFiles = ['package.json', 'tsconfig.json', 'tsconfig.node.json', 'electron', 'src', 'Cargo.toml', 'go.mod', 'pom.xml', 'build.gradle'];
-        const hasProjectConfig = projectConfigFiles.some(config => {
-          try {
-            const configPath = path.join(workspacePath, config);
-            const stat = fs.statSync(configPath);
-            return stat.isFile() || stat.isDirectory();
-          } catch {
-            return false;
-          }
+  const sendRequest = async (messages) => {
+    for (let attempt = 0; attempt <= MAX_OLLAMA_RATE_LIMIT_RETRIES; attempt++) {
+      if (attempt > 0) {
+        emitEvent({
+          type: "task_status",
+          status: "retrying",
+          message: `请求触发限流，正在自动重试 (${attempt}/${MAX_OLLAMA_RATE_LIMIT_RETRIES})...`
         });
-        if (!hasProjectConfig) {
-          messages.push({
-            role: "user",
-            content:
-              "当前目录看起来不是标准项目目录。请优先定位并读取 package.json、tsconfig.json、src/ 或 electron/ 等关键文件，再执行 write_file。"
-          });
-        }
-      } catch (e) {
-        // ignore directory check errors
+        await new Promise((resolve) => setTimeout(resolve, 900 * attempt));
       }
-    }
 
-    try {
       const response = await sendOllamaRequest({
-        baseUrl,
-        model,
-        messages,
-        signal,
-        timeout: maxToolSteps * 60000,
+        baseUrl, model, messages, signal,
+        timeout: 300000,
         numPredict,
         onChunk: ({ content, done }) => {
-          const streamedText = modelAdapters.stripCustomerServiceBoilerplate(
+          const clean = modelAdapters.stripCustomerServiceBoilerplate(
             protocol.sanitizeAssistantText(protocol.tryRecoverMojibake(content || "")),
             prompt
           );
-
-          if (!streamedText) {
-            return;
+          if (clean) {
+            emitEvent({ type: "model_stream_delta", model, text: clean, done: Boolean(done) });
           }
-
-          emitEvent({
-            type: "model_stream_delta",
-            step: step + 1,
-            model,
-            text: streamedText,
-            done: Boolean(done)
-          });
         }
       });
 
-      if (response.error) {
-        if (isRateLimitErrorText(response.error) && rateLimitRetryUsed < MAX_OLLAMA_RATE_LIMIT_RETRIES) {
-          rateLimitRetryUsed += 1;
-          emitEvent({
-            type: "task_status",
-            status: "retrying",
-            message:
-              "请求触发限流，正在自动重试 (" +
-              rateLimitRetryUsed +
-              "/" +
-              MAX_OLLAMA_RATE_LIMIT_RETRIES +
-              ")..."
-          });
-          await new Promise((resolve) => setTimeout(resolve, 900 * rateLimitRetryUsed));
-          step -= 1;
-          continue;
-        }
-        logRuntime("request:error", { error: response.error });
-        return {
-          ok: false,
-          exitCode: 1,
-          sessionId,
-          text: "Ollama 请求失败: " + response.error,
-          error: response.error,
-          rawEvents,
-          usedModel: model,
-          actualChannel: "ollama"
-        };
-      }
-
-      const assistantMessage = response.message;
-      const messageText = protocol.tryRecoverMojibake(extractMessageText(assistantMessage));
-      const toolCalls = extractToolCalls(assistantMessage);
-
-      logRuntime("model:response", {
-        step,
-        hasToolCalls: toolCalls.length > 0,
-        textPreview: messageText.slice(0, 200)
-      });
-
-      latestText = modelAdapters.stripCustomerServiceBoilerplate(
-        protocol.sanitizeAssistantText(messageText),
-        prompt
-      );
-
-      emitEvent({
-        type: "model_response",
-        step: step + 1,
-        model,
-        text: latestText,
-        toolCalls
-      });
-
-      if (!toolCalls.length) {
-        if (needsForcedFinalAnswer(latestText, rawEvents, prompt, workspace)) {
-          if (forcedFinalAnswerAttempts >= 1) {
-            return {
-              ok: true,
-              exitCode: 0,
-              sessionId,
-              text: buildProjectReadFallback(prompt, rawEvents),
-              error: "",
-              rawEvents,
-              usedModel: model,
-              actualChannel: "ollama-agent"
-            };
-          }
-
-          forcedFinalAnswerAttempts += 1;
-          messages.push({ role: "assistant", content: messageText });
-          messages.push({
-            role: "user",
-            content: [
-              "You have already completed the required tool execution for this task.",
-              "Do not ask the user for another task.",
-              "Based only on the files and tool results already inspected in this round, provide the final answer now.",
-              "Your final answer must directly address the user's requested output sections.",
-              "Use a numbered structure such as 1. 2. 3. 4. when the user requested numbered output."
-            ].join("\n")
-          });
-          continue;
-        }
-
-        if (shouldContinueAutonomously(latestText, rawEvents, prompt, workspace)) {
-          if (autoContinueNudgeCount >= 4) {
-            const finalText =
-              latestText ||
-              protocol.buildFallbackCompletionFromResults(prompt, collectToolResults(rawEvents));
-            return {
-              ok: true,
-              exitCode: 0,
-              sessionId,
-              text: finalText,
-              error: "",
-              rawEvents,
-              usedModel: model,
-              actualChannel: rawEvents.some(e => e.type === "tool_result") ? "ollama-agent" : "ollama"
-            };
-          }
-          autoContinueNudgeCount += 1;
-          const unfinishedReadPaths = getUnfinishedRequiredReadPaths(prompt, rawEvents, workspace);
-          const nextRequiredPath = unfinishedReadPaths[0] || "";
-          logRuntime("model:auto_continue", {
-            step,
-            textPreview: latestText.slice(0, 200),
-            unfinishedRequiredReads: unfinishedReadPaths.length > 0,
-            autoContinueNudgeCount,
-            nextRequiredPath
-          });
-
-          messages.push({ role: "assistant", content: messageText });
-          messages.push({
-            role: "user",
-            content:
-              unfinishedReadPaths.length > 0
-                ? [
-                    "Continue autonomously.",
-                    "Do not stop at a partial progress summary.",
-                    "The task is not complete yet because these required files have not been inspected:",
-                    ...unfinishedReadPaths.map((filePath, index) => String(index + 1) + ". " + filePath),
-                    "Call the next required tool now for " + nextRequiredPath + ".",
-                    "Use the exact absolute file paths listed above.",
-                    "Do not switch to a different workspace and do not use relative paths by themselves.",
-                    "Respond with tool calls first. Do not only describe the next action.",
-                    "Only give the final answer after every required file above has been inspected or a concrete blocker prevents completion."
-                  ].join("\n")
-                : [
-                    "Continue autonomously.",
-                    "Do not stop at a partial progress summary.",
-                    "If there are unfinished requested files, checks, or steps, keep calling tools until they are done.",
-                    "Respond with tool calls first when more execution is needed.",
-                    "Only give the final answer when the full requested task has actually been completed or a concrete blocker prevents completion."
-                  ].join("\n")
-          });
-          continue;
-        }
-
-        const hadToolResults = rawEvents.some((event) => event.type === "tool_result");
-        let finalText =
-          latestText ||
-          (hadToolResults
-            ? protocol.buildFallbackCompletionFromResults(prompt, collectToolResults(rawEvents))
-            : latestText);
-        const structuredPromptRequested =
-          /1\./.test(String(prompt || "")) &&
-          /2\./.test(String(prompt || "")) &&
-          /3\./.test(String(prompt || ""));
-        const structuredAnswerPresent =
-          /(^|\n)\s*1\./.test(String(finalText || ""));
-        const stillDeflectingTask =
-          String(finalText || "").includes("\u8bf7\u63d0\u4f9b") &&
-          (String(finalText || "").includes("\u5177\u4f53\u4efb\u52a1") ||
-            String(finalText || "").includes("\u4fee\u6539\u8981\u6c42") ||
-            String(finalText || "").includes("\u4fee\u590d\u7684Bug"));
-        if (
-          hadToolResults &&
-          !hasUnfinishedRequiredReads(prompt, rawEvents, workspace) &&
-          structuredPromptRequested &&
-          (!structuredAnswerPresent || stillDeflectingTask)
-        ) {
-          finalText = buildProjectReadFallback(prompt, rawEvents);
-        }
-        return {
-          ok: true,
-          exitCode: 0,
-          sessionId,
-          text: finalText,
-          error: "",
-          rawEvents,
-          usedModel: model,
-          actualChannel: rawEvents.some(e => e.type === "tool_result") ? "ollama-agent" : "ollama"
-        };
-      }
-
-      messages.push({ role: "assistant", content: messageText });
-
-      const toolResults = [];
-
-      // Detect infinite loop: same tool calls repeated consecutively
-      if (toolCalls.length > 0) {
-        const fingerprint = toolCalls.map(c =>
-          `${c.name}:${JSON.stringify(c.arguments || {})}`
-        ).join("|");
-        if (fingerprint === lastToolCallFingerprint) {
-          consecutiveIdenticalToolSteps += 1;
-        } else {
-          consecutiveIdenticalToolSteps = 0;
-          lastToolCallFingerprint = fingerprint;
-        }
-        if (consecutiveIdenticalToolSteps >= 2) {
-          messages.push({
-            role: "user",
-            content: `你已经连续 ${consecutiveIdenticalToolSteps + 1} 次调用了完全相同的工具（${toolCalls.map(c => c.name).join(", ")}），但结果没有变化。请停止重复调用，基于已有结果直接给出结论或尝试不同的工具/路径。`
-          });
-          consecutiveIdenticalToolSteps = 0;
-          lastToolCallFingerprint = "";
-          continue;
-        }
-      } else {
-        consecutiveIdenticalToolSteps = 0;
-        lastToolCallFingerprint = "";
-      }
-
-      for (const call of toolCalls) {
-        if (signal?.aborted) {
-          return {
-            ok: false,
-            exitCode: 130,
-            sessionId,
-            text: "任务已被用户中断。",
-            error: "aborted_by_user",
-            rawEvents,
-            usedModel: model,
-            actualChannel: "ollama-agent"
-          };
-        }
-
-        emitEvent({
-          type: "task_status",
-          status: "tool_running",
-          message: "正在执行工具: " + call.name
-        });
-
-        const execution = await executeToolCallWithResilience({
-          workspace,
-          call,
-          executeToolCall,
-          executeOptions: {
-            accessScope: settings?.access?.scope || "workspace-and-desktop",
-            confirm: (toolCall) =>
-              requestToolPermission(toolCall, (permissionEvent) => {
-                emitEvent({ ...permissionEvent, step: step + 1 });
-              })
-          },
-          emitStatus: (event) => emitEvent({ ...event, step: step + 1 })
-        });
-        const result = execution.result;
-
-        toolResults.push(result);
-        logRuntime("tool:executed", { tool: call.name, ok: result.ok, summary: result.summary });
-
-        // Retryable failures (exit code, ENOENT, timeout) are silenced from UI —
-        // only emit task_status so the user doesn't see a raw error card
-        const isRetryableFailure = !result.ok && !result.recovered && (
-          /Command exited with code|ENOENT|timed out|timeout/i.test(String(result.summary || ""))
+      if (!response.error) {
+        const assistantMessage = response.message;
+        const msgText = protocol.tryRecoverMojibake(extractMessageText(assistantMessage));
+        const toolCalls = extractToolCalls(assistantMessage);
+        const cleanText = modelAdapters.stripCustomerServiceBoilerplate(
+          protocol.sanitizeAssistantText(msgText), prompt
         );
-        if (result.ok || result.recovered || !isRetryableFailure) {
-          emitEvent({
-            type: "tool_result",
-            step: step + 1,
-            tool: call.name,
-            ok: result.ok,
-            recovered: Boolean(result?.recovered),
-            summary: result.summary,
-            output: result.output
-          });
-        } else {
-          emitEvent({
-            type: "task_status",
-            status: "retrying",
-            step: step + 1,
-            message: `工具执行遇到问题，正在处理中...`
-          });
-        }
-      }
-
-      const toolResultMessage = protocol.buildToolResultMessage(toolResults);
-      messages.push({ role: "user", content: toolResultMessage });
-
-      const dirEmpty = toolResults.some(r => r.name === "list_dir" && r.ok && /Listed 0 entries/i.test(r.summary || ""));
-      const readNotExistCount = toolResults.filter(r => r.name === "read_file" && !r.ok && /ENOENT|no such file/i.test(r.summary || "")).length;
-      if (dirEmpty && readNotExistCount >= 2 && !writeArgumentRetrySent) {
-        writeArgumentRetrySent = true;
-        messages.push({
-          role: "user",
-          content:
-            "检测到目录为空且多次读取失败。请先创建最小可运行文件，再使用 write_file，并确保包含 path 与 content 参数。"
-        });
-      }
-
-      const hasWriteArgumentFailure = toolResults.some(
-        (result) =>
-          result.name === "write_file" &&
-          !result.ok &&
-          /Missing required argument: (path|content)/i.test(String(result.summary || ""))
-      );
-      const hasGenericMissingArgumentFailure = toolResults.some(
-        (result) => !result.ok && /Missing required argument:/i.test(String(result.summary || ""))
-      );
-      if (hasGenericMissingArgumentFailure) {
-        consecutiveMissingArgumentSteps += 1;
-        totalMissingArgumentFailures += toolResults.filter(
-          (result) => !result.ok && /Missing required argument:/i.test(String(result.summary || ""))
-        ).length;
-      } else {
-        consecutiveMissingArgumentSteps = 0;
-      }
-
-      if (protocol.promptRequiresWrite(prompt) && hasWriteArgumentFailure && !writeArgumentRetrySent) {
-        writeArgumentRetrySent = true;
-        messages.push({
-          role: "user",
-          content:
-            "write_file 失败：content 参数为空，可能是内容太长被截断。请将文件拆分为多段：第一段用 write_file（不超过 150 行），后续用 append_file 追加。每次调用必须包含完整的 path 和 content。"
-        });
-      }
-
-      if (hasGenericMissingArgumentFailure && !missingArgumentRetrySent) {
-        missingArgumentRetrySent = true;
-        messages.push({
-          role: "user",
-          content:
-            "工具参数缺失：请在调用前补齐必填字段（如 run_command.command、read_file.path、write_file.path 与 write_file.content）。"
-        });
-      }
-
-      if (
-        hasGenericMissingArgumentFailure &&
-        missingArgumentRetrySent &&
-        (consecutiveMissingArgumentSteps >= 3 || totalMissingArgumentFailures >= 5)
-      ) {
-        const exhaustedMessage =
-          "多次重试后仍缺少必填参数，已停止本轮自动执行。请先补全参数后再继续。";
-        emitEvent({
-          type: "task_status",
-          status: "failed",
-          message: exhaustedMessage
-        });
         return {
-          ok: false,
-          exitCode: 1,
-          sessionId,
-          text: exhaustedMessage,
-          error: "tool_argument_retry_exhausted",
-          rawEvents,
-          usedModel: model,
-          actualChannel: "ollama-agent"
+          text: cleanText,
+          intentText: msgText,
+          rawForHistory: msgText,
+          toolCalls,
+          raw: response
         };
       }
 
-    } catch (error) {
-      logRuntime("request:exception", { error: error.message });
-      return {
-        ok: false,
-        exitCode: 1,
-        sessionId,
-        text: "Ollama 请求异常: " + error.message,
-        error: error.message,
-        rawEvents,
-        usedModel: model,
-        actualChannel: "ollama"
-      };
+      if (isRateLimitErrorText(response.error) && attempt < MAX_OLLAMA_RATE_LIMIT_RETRIES) {
+        continue;
+      }
+
+      logRuntime("request:error", { error: response.error });
+      throw new Error("Ollama 请求失败: " + response.error);
     }
+  };
+
+  let loopResult;
+  try {
+    loopResult = await runAgentLoop({
+      sendRequest,
+      prompt: finalPrompt,
+      sessionId,
+      workspace,
+      history,
+      settings,
+      signal,
+      emitEvent,
+      logRuntime,
+      buildMessages,
+      systemPrompt,
+      usedModel: model,
+      channelId: "ollama-agent",
+      requestToolPermission
+    });
+  } catch (err) {
+    return { ok: false, exitCode: 1, sessionId, text: "Agent 循环异常: " + err.message, error: "agent_loop_error: " + err.message, rawEvents: [], usedModel: model, actualChannel: "ollama-agent" };
   }
 
   return {
-    ok: false,
-    exitCode: 1,
+    ok: loopResult.ok,
+    exitCode: loopResult.exitCode,
     sessionId,
-    text:
-      latestText ||
-      (rawEvents.some((event) => event.type === "tool_result")
-        ? protocol.buildFallbackCompletionFromResults(prompt, collectToolResults(rawEvents))
-        : "Ollama reached the maximum tool-call steps (" + maxToolSteps + ")."),
-    error: "ollama_step_limit_reached",
-    rawEvents,
+    text: loopResult.text,
+    error: loopResult.error || "",
+    rawEvents: loopResult.rawEvents,
     usedModel: model,
-    actualChannel: "ollama-agent"
+    actualChannel: loopResult.actualChannel
   };
 }
 
