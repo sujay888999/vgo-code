@@ -685,7 +685,7 @@ export function RuntimeTab() {
               <div className="profile-info">
                 <span className="profile-name">{profile.name}</span>
                 <span className="profile-model">
-                  <span className={`endpoint-badge ${protocol || ''}`}>{endpointBadgeLabel(protocol)}</span> · {profile.model}
+                  <span className={`endpoint-badge ${protocol || ''}`}>{endpointBadgeLabel(protocol, t)}</span> · {profile.model}
                 </span>
               </div>
               {switchingKey === profile.id ? (
