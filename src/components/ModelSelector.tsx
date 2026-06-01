@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { useI18n } from '../i18n'
 import {
@@ -21,6 +21,8 @@ type CloudModelEntry = {
   modelLabel: string
   family: string
 }
+
+type ProtocolType = 'ollama' | 'openai' | 'legacy' | 'cloud'
 
 const MODEL_PREFS_STORAGE_KEY = 'vgo.code.model.prefs.v1'
 
@@ -62,6 +64,19 @@ function detectModelFamily(modelId: string, modelLabel: string) {
   if (text.includes('mistral')) return 'Mistral'
   const prefix = String(modelId || '').split(/[-_:/.]/).filter(Boolean)[0]
   return prefix ? prefix.toUpperCase() : 'Other'
+}
+
+function detectEndpointType(baseUrl: string): ProtocolType {
+  const lower = String(baseUrl || '').trim().toLowerCase()
+  if (/localhost:11434|127\.0\.0\.1:11434/.test(lower)) return 'ollama'
+  if (/\/chat\/completions$/.test(lower) || /\/v1$/.test(lower) || /\/openai\/v1$/.test(lower) || /\/api\/paas\/v4$/.test(lower)) return 'openai'
+  return 'legacy'
+}
+
+function endpointBadgeLabel(type: ProtocolType, t: (k: string) => string) {
+  if (type === 'ollama') return t('runtime.endpointBadge.ollama')
+  if (type === 'openai') return t('runtime.endpointBadge.openai')
+  return t('runtime.endpointBadge.legacy')
 }
 
 export function ModelSelector() {
@@ -139,7 +154,8 @@ export function ModelSelector() {
       const profile = remoteProfiles.find((p) => p.id === profileId)
       if (!profile) return
       setSwitchingKey(`profile-${profileId}`)
-      await window.vgoDesktop?.setEngine?.(profile.provider === 'Ollama' ? 'ollama' : 'vgo-remote')
+      const endpointType = detectEndpointType(profile.baseUrl)
+      await window.vgoDesktop?.setEngine?.(endpointType === 'ollama' ? 'ollama' : 'vgo-remote')
       await window.vgoDesktop?.selectRemoteProfile?.(profileId)
       await refreshState()
     } catch (e) {
@@ -165,19 +181,17 @@ export function ModelSelector() {
   }, [refreshState, markModelUsed])
 
   const activeProfile = remoteProfiles.find((p) => p.id === activeRemoteProfileId) || null
-  const localProfiles = remoteProfiles.filter((p) => p.provider === 'Ollama')
-  const manualCloudProfiles = remoteProfiles.filter((p) => p.provider !== 'Ollama' && p.id !== 'default')
-  const defaultCloudProfile = remoteProfiles.find((p) => p.id === 'default') || remoteProfiles.find((p) => p.provider !== 'Ollama') || null
-  const cloudEngineSelected = runtimeEngineId === 'vgo-remote' && (!activeProfile || activeProfile.id === 'default' || activeProfile.provider === 'VGO Remote')
+  const localCustomProfiles = remoteProfiles.filter((p) => p.id !== 'default')
+  const defaultCloudProfile = remoteProfiles.find((p) => p.id === 'default') || null
+  const isNonDefaultActive = activeProfile && activeProfile.id !== 'default'
+  const cloudEngineSelected = runtimeEngineId === 'vgo-remote' && (!activeProfile || activeProfile.id === 'default' || detectEndpointType(activeProfile.baseUrl) !== 'ollama')
   const cloudSelectedModelId = modelCatalog.some((model) => model.id === vgoAIPreferredModel) ? vgoAIPreferredModel : defaultCloudProfile?.model || vgoAIPreferredModel
-  const activeCustomCloudProfile = activeProfile && activeProfile.provider !== 'Ollama' && activeProfile.id !== 'default' ? activeProfile : null
+  const activeCustomCloudProfile = isNonDefaultActive && detectEndpointType(activeProfile.baseUrl) !== 'ollama' ? activeProfile : null
 
   const currentModelDisplay = useMemo(() => {
     const activeProfile = remoteProfiles.find((p) => p.id === activeRemoteProfileId)
-    const isLocalProfile = activeProfile?.provider === 'Ollama'
-    const isManualCloudProfile = Boolean(activeProfile && activeProfile.id !== 'default' && !isLocalProfile)
-    if (activeProfile && (isLocalProfile || isManualCloudProfile)) {
-      return { name: activeProfile.name, model: activeProfile.model, isLocal: isLocalProfile }
+    if (activeProfile && activeProfile.id !== 'default') {
+      return { name: activeProfile.name, model: activeProfile.model, isLocal: detectEndpointType(activeProfile.baseUrl) === 'ollama' }
     }
     const cloudModel = modelCatalog.find((m) => m.id === vgoAIPreferredModel)
     return {
@@ -192,7 +206,7 @@ export function ModelSelector() {
       key: `default:${model.id}`,
       source: 'default-cloud' as const,
       profileId: 'default',
-      profileName: defaultCloudProfile?.name || '默认云端',
+      profileName: defaultCloudProfile?.name || t('modelSelector.defaultCloud'),
       modelId: model.id,
       modelLabel: model.label || model.id,
       family: detectModelFamily(model.id, model.label || model.id),
@@ -215,8 +229,8 @@ export function ModelSelector() {
         family: detectModelFamily(model.id, model.label || model.id),
       }))
     })
-    return fromDefault
-  }, [activeCustomCloudProfile, modelCatalog, manualCloudProfiles, defaultCloudProfile?.name])
+    return [...fromDefault, ...fromCustom]
+  }, [activeCustomCloudProfile, modelCatalog, defaultCloudProfile?.name, t])
 
   const filteredCloudEntries = useMemo(() => {
     const keyword = modelSearch.trim().toLowerCase()
@@ -254,8 +268,10 @@ export function ModelSelector() {
       .sort((a, b) => a.family.localeCompare(b.family))
   }, [filteredCloudEntries, favoriteCloudEntries, recentCloudEntries])
 
+  const initRef = useRef(false)
   useEffect(() => {
-    if (modelPrefs.collapsedFamiliesInitialized || familyGroups.length === 0) return
+    if (initRef.current || modelPrefs.collapsedFamiliesInitialized || familyGroups.length === 0) return
+    initRef.current = true
     updateModelPrefs((prev) => ({
       ...prev,
       collapsedFamilies: familyGroups.map((g) => g.family),
@@ -263,10 +279,11 @@ export function ModelSelector() {
     }))
   }, [familyGroups, modelPrefs.collapsedFamiliesInitialized, updateModelPrefs])
 
+  const activeProfileModel = activeProfile?.model ?? null
   const isCloudEntryActive = useCallback((entry: CloudModelEntry) => {
     if (entry.source === 'default-cloud') return cloudEngineSelected && cloudSelectedModelId === entry.modelId
-    return activeRemoteProfileId === entry.profileId && activeProfile?.model === entry.modelId && runtimeEngineId === 'vgo-remote'
-  }, [activeRemoteProfileId, activeProfile?.model, cloudEngineSelected, cloudSelectedModelId, runtimeEngineId])
+    return activeRemoteProfileId === entry.profileId && activeProfileModel === entry.modelId && runtimeEngineId === 'vgo-remote'
+  }, [activeRemoteProfileId, activeProfileModel, cloudEngineSelected, cloudSelectedModelId, runtimeEngineId])
 
   const renderCloudEntry = (entry: CloudModelEntry) => {
     const isActive = isCloudEntryActive(entry)
@@ -292,7 +309,7 @@ export function ModelSelector() {
         <button
           className={`model-favorite-toggle ${isFavorite ? 'active' : ''}`}
           onClick={(event) => { event.stopPropagation(); toggleFavoriteModel(entry.key) }}
-          title={isFavorite ? '取消常用' : '加入常用'}
+          title={isFavorite ? t('modelSelector.removeFavorite') : t('modelSelector.addFavorite')}
         >
           <Star size={12} />
         </button>
@@ -317,12 +334,12 @@ export function ModelSelector() {
           <button className="model-selector-header" onClick={() => setModelsExpanded(!modelsExpanded)}>
             <div className="model-selector-label">
               <Bot size={14} />
-              <span>当前模型</span>
+              <span>{t('sidebar.currentModel')}</span>
             </div>
             <div className="model-selector-current">
               <span className="current-model-name">
                 {currentModelDisplay.name}
-                {currentModelDisplay.isLocal && <span className="local-badge">本地</span>}
+                {currentModelDisplay.isLocal && <span className="local-badge">{t('modelSelector.localBadge')}</span>}
               </span>
               {modelsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </div>
@@ -330,44 +347,25 @@ export function ModelSelector() {
 
           {modelsExpanded && (
             <div className="model-list model-list-expanded" onClick={(e) => e.stopPropagation()}>
-              {localProfiles.length > 0 && (
+              {localCustomProfiles.length > 0 && (
                 <>
                   <div className="model-list-section-title">
-                    <span>本地模型</span>
-                    {localProfiles.some((p) => p.id === activeRemoteProfileId) && <span className="active-indicator">使用中</span>}
+                    <span>{t('modelSelector.localCustomTitle')}</span>
+                    {isNonDefaultActive && <span className="active-indicator">{t('modelSelector.inUse')}</span>}
                   </div>
-                  {localProfiles.map((profile) => {
+                  {localCustomProfiles.map((profile) => {
                     const isActive = activeRemoteProfileId === profile.id
                     const isSwitching = switchingKey === `profile-${profile.id}`
+                    const endpointType = detectEndpointType(profile.baseUrl)
                     return (
                       <button key={profile.id} className={`model-option ${isActive ? 'active' : ''}`}
                         onClick={() => void handleProfileSelect(profile.id)} disabled={Boolean(switchingKey)}>
                         <div className="model-option-info">
                           <span className="model-option-name">{profile.name}</span>
-                          <span className="model-option-meta">{profile.model}</span>
-                        </div>
-                        {isSwitching ? <Loader2 size={14} className="spin" /> : isActive ? <div className="model-option-check">✓</div> : null}
-                      </button>
-                    )
-                  })}
-                </>
-              )}
-
-              {manualCloudProfiles.length > 0 && (
-                <>
-                  <div className="model-list-section-title">
-                    <span>自定义模型</span>
-                    {activeProfile && activeProfile.id !== 'default' && activeProfile.provider !== 'Ollama' && <span className="active-indicator">使用中</span>}
-                  </div>
-                  {manualCloudProfiles.map((profile) => {
-                    const isActive = activeRemoteProfileId === profile.id
-                    const isSwitching = switchingKey === `profile-${profile.id}`
-                    return (
-                      <button key={profile.id} className={`model-option ${isActive ? 'active' : ''}`}
-                        onClick={() => void handleProfileSelect(profile.id)} disabled={Boolean(switchingKey)}>
-                        <div className="model-option-info">
-                          <span className="model-option-name">{profile.name}</span>
-                          <span className="model-option-meta">{profile.model}</span>
+                          <span className="model-option-meta">
+                            <span className={`endpoint-badge ${endpointType}`}>{endpointBadgeLabel(endpointType, t)}</span>
+                            {profile.model}
+                          </span>
                         </div>
                         {isSwitching ? <Loader2 size={14} className="spin" /> : isActive ? <div className="model-option-check">✓</div> : null}
                       </button>
@@ -379,21 +377,21 @@ export function ModelSelector() {
               {cloudModelEntries.length > 0 && (
                 <>
                   <div className="model-list-section-title">
-                    <span>云端模型</span>
+                    <span>{t('modelSelector.cloudModels')}</span>
                     <span className="active-indicator">{filteredCloudEntries.length}</span>
                   </div>
                   <div className="model-search-row">
                     <Search size={13} className="model-search-icon" />
-                    <input type="text" className="model-search-input" placeholder="搜索模型 / 家族"
+                    <input type="text" className="model-search-input" placeholder={t('modelSelector.searchPlaceholder')}
                       value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} />
                   </div>
 
                   {favoriteCloudEntries.length > 0 && (
-                    <><div className="model-list-section-title"><span>常用置顶</span><span className="active-indicator">{favoriteCloudEntries.length}</span></div>
+                    <><div className="model-list-section-title"><span>{t('modelSelector.favorites')}</span><span className="active-indicator">{favoriteCloudEntries.length}</span></div>
                       {favoriteCloudEntries.map((entry) => renderCloudEntry(entry))}</>
                   )}
                   {recentCloudEntries.length > 0 && (
-                    <><div className="model-list-section-title"><span>最近使用</span><span className="active-indicator">{recentCloudEntries.length}</span></div>
+                    <><div className="model-list-section-title"><span>{t('modelSelector.recent')}</span><span className="active-indicator">{recentCloudEntries.length}</span></div>
                       {recentCloudEntries.map((entry) => renderCloudEntry(entry))}</>
                   )}
                   {familyGroups.map((group) => {

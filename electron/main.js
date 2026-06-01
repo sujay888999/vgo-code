@@ -1,9 +1,8 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const http = require("node:http");
-const https = require("node:https");
 const crypto = require("node:crypto");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const { BrowserWindow, app, dialog, ipcMain, shell, session, Tray, Menu, nativeImage } = require("electron");
 const { createStore } = require("./core/state");
 const {
@@ -13,7 +12,7 @@ const {
   resolveModelContextWindow
 } = require("./core/contextCompression");
 const { getEngine, listEngines } = require("./core/engineRegistry");
-const { loadSettings, saveSettings, DEFAULT_PROFILE_ID, buildGuestModelCatalog } = require("./core/settings");
+const { isVgoManagedCloudProfile, loadSettings, saveSettings, syncRemoteProfileState, DEFAULT_PROFILE_ID, buildGuestModelCatalog } = require("./core/settings");
 const { startMockServer } = require("./core/vgoMockServer");
 const { normalizeEngineLogFile } = require("./core/engineLog");
 const { listInstalledSkills } = require("./core/localSkillDiscovery");
@@ -298,17 +297,6 @@ function serializeSettings() {
   };
 }
 
-function mergeSettingsSection(key, payload = {}) {
-  saveAllSettings({
-    ...settings,
-    [key]: {
-      ...(settings[key] || {}),
-      ...payload
-    }
-  });
-  return serializeState();
-}
-
 function serializeState() {
   const state = store.serialize();
   state.engines = listEngines();
@@ -337,34 +325,6 @@ function serializeState() {
     lastCompressionAt: activeSession?.lastCompressionAt || ""
   };
   return state;
-}
-
-function installWhisperRuntime() {
-  const result = spawnSync("python", ["-m", "pip", "install", "-U", "openai-whisper"], {
-    encoding: "utf8",
-    shell: false,
-    timeout: 3_600_000,
-    maxBuffer: 20 * 1024 * 1024,
-    env: {
-      ...process.env,
-      PYTHONUTF8: "1",
-      PYTHONIOENCODING: "utf-8"
-    }
-  });
-
-  const output = [String(result.stdout || "").trim(), String(result.stderr || "").trim()]
-    .filter(Boolean)
-    .join("\n");
-
-  return {
-    ok: result.status === 0,
-    exitCode: result.status,
-    summary:
-      result.status === 0
-        ? "Whisper runtime installed successfully."
-        : `Whisper install exited with code ${result.status}.`,
-    output
-  };
 }
 
 function maybeCompressActiveSession() {
@@ -415,28 +375,13 @@ function maybeCompressActiveSession() {
   return result;
 }
 
-function resolveActualModelLabel(modelId) {
-  const catalog = Array.isArray(settings.vgoAI?.modelCatalog) ? settings.vgoAI.modelCatalog : [];
-  const match = catalog.find((item) => item.id === modelId);
-  return match?.label || modelId || "未识别";
-}
-
-function getSelectedModelId() {
-  return settings.vgoAI?.preferredModel || settings.remote?.model || "";
-}
-
 function resolveEngineIdForProfile(profile = {}) {
-  const provider = String(profile.provider || "").toLowerCase();
   const baseUrl = String(profile.baseUrl || "").toLowerCase();
-  const ollamaUrl = String(profile.ollamaUrl || "").toLowerCase();
 
-  if (provider) {
-    return provider.includes("ollama") ? "ollama" : "vgo-remote";
-  }
+  if (/localhost:11434|127\.0\.0\.1:11434/.test(baseUrl)) return "ollama";
 
-  if (ollamaUrl.includes("11434") || baseUrl.includes("11434")) {
-    return "ollama";
-  }
+  const provider = String(profile.provider || "").toLowerCase();
+  if (provider.includes("ollama")) return "ollama";
 
   return "vgo-remote";
 }
@@ -582,14 +527,6 @@ function sendStateRefresh() {
       win.webContents.send("app:stateRefresh", serializeState());
     }
   }
-}
-
-function resolveTaskRuntimeLimitMs(targetSettings = settings) {
-  const configuredMinutes = Number(targetSettings?.agent?.maxTaskRuntimeMinutes);
-  const runtimeMinutes = Number.isFinite(configuredMinutes)
-    ? Math.max(MIN_TASK_RUNTIME_MINUTES, Math.min(MAX_TASK_RUNTIME_MINUTES, configuredMinutes))
-    : DEFAULT_MAX_TASK_RUNTIME_MINUTES;
-  return runtimeMinutes * 60000;
 }
 
 function touchActivePromptController(sessionId) {
@@ -1245,14 +1182,7 @@ function applyRealVgoAiSession({
   };
 
   if (activeIsRemote) {
-    nextSettings = syncRemoteProfileState(
-      {
-        ...nextSettings.remote,
-        model: preferredModel
-      },
-      {},
-      nextSettings.vgoAI
-    );
+    nextSettings = syncRemoteProfileState(nextSettings, { ...nextSettings.remote, model: preferredModel }, {}, nextSettings.vgoAI);
   }
 
   saveAllSettings(nextSettings);
@@ -1277,37 +1207,9 @@ function savePreferredModelIfChanged(modelId) {
     return;
   }
 
-  let nextSettings = {
-    ...settings,
-    vgoAI: {
-      ...settings.vgoAI,
-      preferredModel: modelId
-    }
-  };
-
   if (activeIsRemote) {
-    nextSettings = syncRemoteProfileState(
-      {
-        ...nextSettings.remote,
-        model: modelId
-      },
-      {}
-    );
+    saveAllSettings(syncRemoteProfileState(settings, { ...settings.remote, model: modelId }));
   }
-
-  saveAllSettings(nextSettings);
-}
-
-function isVgoManagedCloudProfile(profile = {}) {
-  const provider = String(profile.provider || "").toLowerCase();
-  if (provider.includes("ollama")) return false;
-  const profileId = String(profile.id || "");
-  const baseUrl = String(profile.baseUrl || "");
-  return (
-    profileId === DEFAULT_PROFILE_ID ||
-    /127\.0\.0\.1:3210/i.test(baseUrl) ||
-    /(^|\.)vgoai\.cn/i.test(baseUrl)
-  );
 }
 
 function clearRealVgoAiSession() {
@@ -1799,36 +1701,6 @@ async function exportHistory() {
 
   fs.writeFileSync(result.filePath, body, "utf8");
   return { ok: true, filePath: result.filePath };
-}
-
-function readAttachmentPreview(filePath) {
-  const stat = fs.statSync(filePath);
-  const ext = path.extname(filePath).toLowerCase();
-  const isText = TEXT_EXTENSIONS.has(ext) && stat.size <= 256 * 1024;
-  const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"]);
-  const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".flac", ".ogg"]);
-  const videoExtensions = new Set([".mp4", ".mov", ".mkv", ".avi", ".webm"]);
-  const imageBase64 =
-    imageExtensions.has(ext) && stat.size <= 10 * 1024 * 1024
-      ? fs.readFileSync(filePath).toString("base64")
-      : "";
-  const mediaType = imageExtensions.has(ext)
-    ? "image"
-    : audioExtensions.has(ext)
-      ? "audio"
-      : videoExtensions.has(ext)
-        ? "video"
-        : "file";
-
-  return {
-    name: path.basename(filePath),
-    path: filePath,
-    size: stat.size,
-    isText,
-    mediaType,
-    imageBase64,
-    content: isText ? fs.readFileSync(filePath, "utf8") : ""
-  };
 }
 
 app.whenReady().then(async () => {

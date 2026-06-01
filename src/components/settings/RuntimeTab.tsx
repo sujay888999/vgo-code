@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import {
   Loader2,
   Plus,
@@ -9,7 +9,6 @@ import {
 import { useAppStore } from '../../store/appStore'
 import { useI18n } from '../../i18n'
 
-type ManualProvider = 'Ollama' | 'Custom HTTP Provider'
 type UpdateInfo = {
   currentVersion?: string
   latestVersion?: string
@@ -25,8 +24,32 @@ type UpdateProgress = {
   progressPercent: number
 }
 
+type ProtocolType = 'ollama' | 'openai' | 'legacy'
+
+function detectEndpointType(baseUrl: string): ProtocolType | null {
+  const lower = String(baseUrl || '').trim().toLowerCase()
+  if (!lower) return null
+  if (/localhost:11434|127\.0\.0\.1:11434/.test(lower)) return 'ollama'
+  if (/\/chat\/completions$/.test(lower) || /\/v1$/.test(lower) || /\/openai\/v1$/.test(lower) || /\/api\/paas\/v4$/.test(lower)) return 'openai'
+  return 'legacy'
+}
+
+function protocolDisplay(type: ProtocolType | null, t: (k: string) => string) {
+  if (type === 'ollama') return t('runtime.endpoint.ollama')
+  if (type === 'openai') return t('runtime.endpoint.openai')
+  if (type === 'legacy') return t('runtime.endpoint.legacy')
+  return t('runtime.endpoint.undetected')
+}
+
+function endpointBadgeLabel(type: ProtocolType | null, t: (k: string) => string) {
+  if (type === 'ollama') return t('runtime.endpointBadge.ollama')
+  if (type === 'openai') return t('runtime.endpointBadge.openai')
+  if (type === 'legacy') return t('runtime.endpointBadge.legacy')
+  return ''
+}
+
 export function RuntimeTab() {
-  const { t, locale: i18nLocale } = useI18n()
+  const { t } = useI18n()
   const {
     vgoAILoggedIn,
     vgoAIEmail,
@@ -36,18 +59,14 @@ export function RuntimeTab() {
     runtimeEngineId,
     remoteProfiles,
     activeRemoteProfileId,
-    skills,
     hydrate,
   } = useAppStore()
 
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
   const [draftDirty, setDraftDirty] = useState(false)
-  const [hydratedProfileId, setHydratedProfileId] = useState<string | null>(null)
   const [configName, setConfigName] = useState('')
-  const [provider, setProvider] = useState<ManualProvider>('Ollama')
-  const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:11434')
-  const [modelListUrl, setModelListUrl] = useState('')
+  const [baseUrl, setBaseUrl] = useState('http://localhost:11434')
   const [model, setModel] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
@@ -74,54 +93,34 @@ export function RuntimeTab() {
     () => (activeProfile?.id === 'default' ? null : activeProfile),
     [activeProfile],
   )
-  const visibleEngines = useMemo(
-    () => engines.filter((engine) => engine.id === 'ollama' || engine.id === 'vgo-remote'),
-    [engines],
-  )
-  const engineDescriptions = useMemo(
-    () => ({
-      ollama: t('settings.ollamaDesc'),
-      'vgo-remote': t('settings.vgoRemoteDesc'),
-    }),
-    [t, i18nLocale],
-  )
+
+  const detectedProtocol = useMemo(() => detectEndpointType(baseUrl), [baseUrl])
 
   const refreshState = async () => {
     const nextState = await window.vgoDesktop?.getState?.()
     if (nextState) hydrate(nextState)
   }
 
-  const fillDraftFromProfile = (profile: (typeof remoteProfiles)[number] | null) => {
-    if (!profile) {
-      setConfigName('')
-      setProvider('Ollama')
-      setBaseUrl('http://127.0.0.1:11434')
-      setModelListUrl('')
-      setModel('')
-      setApiKey('')
-      setSystemPrompt('')
-      return
-    }
-    const nextProvider: ManualProvider =
-      profile.provider === 'Ollama' ? 'Ollama' : 'Custom HTTP Provider'
-    setConfigName(profile.name || '')
-    setProvider(nextProvider)
-    setBaseUrl(
-      profile.baseUrl ||
-        (nextProvider === 'Ollama' ? 'http://127.0.0.1:11434' : 'http://127.0.0.1:3210'),
-    )
-    setModelListUrl(profile.modelListUrl || '')
-    setModel(profile.model || '')
-    setApiKey(profile.apiKey || '')
-    setSystemPrompt(profile.systemPrompt || '')
-  }
-
+  const previousProfileRef = useRef(activeRemoteProfileId)
   useEffect(() => {
-    if (draftDirty && hydratedProfileId === activeRemoteProfileId) return
-    fillDraftFromProfile(editableActiveProfile)
-    setHydratedProfileId(activeRemoteProfileId)
-    setDraftDirty(false)
-  }, [editableActiveProfile, activeRemoteProfileId, draftDirty, hydratedProfileId])
+    if (draftDirty && previousProfileRef.current === activeRemoteProfileId) return
+    previousProfileRef.current = activeRemoteProfileId
+    requestAnimationFrame(() => {
+      if (!editableActiveProfile) {
+        setConfigName('')
+        setBaseUrl('http://localhost:11434')
+        setModel('')
+        setApiKey('')
+        setSystemPrompt('')
+      } else {
+        setConfigName(editableActiveProfile.name || '')
+        setBaseUrl(editableActiveProfile.baseUrl || 'http://localhost:11434')
+        setModel(editableActiveProfile.model || '')
+        setApiKey(editableActiveProfile.apiKey || '')
+        setSystemPrompt(editableActiveProfile.systemPrompt || '')
+      }
+    })
+  }, [editableActiveProfile, activeRemoteProfileId, draftDirty])
 
   const formatBytes = useCallback((bytes: number) => {
     const value = Number(bytes) || 0
@@ -145,22 +144,21 @@ export function RuntimeTab() {
     }
   }, [t])
 
-  const loadUpdateSettings = useCallback(async () => {
-    try {
-      const settings = await window.vgoDesktop?.getUpdateSettings?.()
-      if (!settings) return
-      setUpdateAutoCheck(Boolean(settings.autoCheck))
-      setUpdateIntervalHours(Number(settings.checkIntervalHours) || 6)
-      setUpdateLastCheckTime(Number(settings.lastCheckTime) || 0)
-      setUpdateSkipVersion(String(settings.skipVersion || ''))
-    } catch (error: any) {
-      setUpdateStatus(error?.message || t('settings.operationFailed'))
-    }
-  }, [t])
-
   useEffect(() => {
-    void loadUpdateSettings()
-  }, [loadUpdateSettings])
+    const loadUpdateSettings = async () => {
+      try {
+        const settings = await window.vgoDesktop?.getUpdateSettings?.()
+        if (!settings) return
+        setUpdateAutoCheck(Boolean(settings.autoCheck))
+        setUpdateIntervalHours(Number(settings.checkIntervalHours) || 6)
+        setUpdateLastCheckTime(Number(settings.lastCheckTime) || 0)
+        setUpdateSkipVersion(String(settings.skipVersion || ''))
+      } catch (error: unknown) {
+        setUpdateStatus(error instanceof Error ? error.message : t('settings.operationFailed'))
+      }
+    }
+    loadUpdateSettings()
+  }, [t])
 
   useEffect(() => {
     const handleUpdateAvailable = (event: Event) => {
@@ -185,10 +183,10 @@ export function RuntimeTab() {
         })
         if (totalBytes > 0) {
           setUpdateStatus(
-            `正在下载更新包：${progressPercent.toFixed(1)}%（${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}）`,
+            t('runtime.status.downloadingPkg', { percent: progressPercent.toFixed(1), downloaded: formatBytes(downloadedBytes), total: formatBytes(totalBytes) }),
           )
         } else {
-          setUpdateStatus(`正在下载更新包：${formatBytes(downloadedBytes)}`)
+          setUpdateStatus(t('runtime.status.downloading', { downloaded: formatBytes(downloadedBytes) }))
         }
       } else if (payload?.status === 'downloaded') {
         setUpdateProgress((prev) => ({
@@ -198,7 +196,7 @@ export function RuntimeTab() {
           speedBytesPerSec: prev?.speedBytesPerSec || 0,
           progressPercent: 100,
         }))
-        setUpdateStatus('更新包下载完成，正在准备安装...')
+        setUpdateStatus(t('runtime.status.downloadCompleted'))
       } else if (payload?.status === 'installing') {
         setUpdateProgress((prev) => ({
           status: 'installing',
@@ -216,7 +214,7 @@ export function RuntimeTab() {
           speedBytesPerSec: prev?.speedBytesPerSec || 0,
           progressPercent: 100,
         }))
-        setUpdateStatus('安装程序已启动，应用即将重启完成升级...')
+        setUpdateStatus(t('runtime.status.installStarted'))
       } else if (payload?.status === 'failed') {
         setUpdateProgress((prev) => (prev ? { ...prev, status: 'failed' } : null))
         setUpdateStatus(payload?.error || t('settings.operationFailed'))
@@ -236,8 +234,8 @@ export function RuntimeTab() {
     setUpdateBusy(true)
     try {
       await fn()
-    } catch (error: any) {
-      setUpdateStatus(error?.message || t('settings.operationFailed'))
+    } catch (error: unknown) {
+      setUpdateStatus(error instanceof Error ? error.message : t('settings.operationFailed'))
     } finally {
       setUpdateBusy(false)
     }
@@ -249,8 +247,8 @@ export function RuntimeTab() {
     try {
       await fn()
       window.setTimeout(() => setStatus(''), 1400)
-    } catch (error: any) {
-      setStatus(error?.message || t('settings.operationFailed'))
+    } catch (error: unknown) {
+      setStatus(error instanceof Error ? error.message : t('settings.operationFailed'))
     } finally {
       setBusy(false)
     }
@@ -328,49 +326,38 @@ export function RuntimeTab() {
     })
   }
 
+  const buildProfilePayload = () => ({
+    name: configName.trim() || t('settings.unnamedConfig'),
+    baseUrl: baseUrl.trim(),
+    model: model.trim(),
+    apiKey: apiKey.trim(),
+    systemPrompt,
+    activate: true,
+  })
+
   const handleSaveCurrentProfile = async () => {
-    const payload = {
-      name: configName.trim() || t('settings.unnamedConfig'),
-      provider,
-      baseUrl: baseUrl.trim(),
-      modelListUrl: provider === 'Ollama' ? '' : modelListUrl.trim(),
-      ollamaUrl: provider === 'Ollama' ? baseUrl.trim() : undefined,
-      model: model.trim(),
-      apiKey: apiKey.trim(),
-      systemPrompt,
-      activate: true,
-    }
+    const payload = buildProfilePayload()
 
     await withStatus(t('settings.savingConfig'), async () => {
       if (editableActiveProfile) {
         const result = await window.vgoDesktop?.updateRemoteProfile?.(editableActiveProfile.id, payload)
-        await window.vgoDesktop?.setEngine?.(provider === 'Ollama' ? 'ollama' : 'vgo-remote')
+        await window.vgoDesktop?.setEngine?.(detectedProtocol === 'ollama' ? 'ollama' : 'vgo-remote')
         await window.vgoDesktop?.selectRemoteProfile?.(editableActiveProfile.id)
         if (result) hydrate(result)
       } else {
         const result = await window.vgoDesktop?.createRemoteProfile?.(payload)
-        await window.vgoDesktop?.setEngine?.(provider === 'Ollama' ? 'ollama' : 'vgo-remote')
+        await window.vgoDesktop?.setEngine?.(detectedProtocol === 'ollama' ? 'ollama' : 'vgo-remote')
         if (result) hydrate(result)
       }
     })
   }
 
   const handleCreateNewProfile = async () => {
-    const payload = {
-      name: configName.trim() || t('settings.newConfig'),
-      provider,
-      baseUrl: baseUrl.trim(),
-      modelListUrl: provider === 'Ollama' ? '' : modelListUrl.trim(),
-      ollamaUrl: provider === 'Ollama' ? baseUrl.trim() : undefined,
-      model: model.trim(),
-      apiKey: apiKey.trim(),
-      systemPrompt,
-      activate: true,
-    }
+    const payload = buildProfilePayload()
 
     await withStatus(t('settings.creatingConfig'), async () => {
       const result = await window.vgoDesktop?.createRemoteProfile?.(payload)
-      await window.vgoDesktop?.setEngine?.(provider === 'Ollama' ? 'ollama' : 'vgo-remote')
+      await window.vgoDesktop?.setEngine?.(detectedProtocol === 'ollama' ? 'ollama' : 'vgo-remote')
       if (result) hydrate(result)
     })
   }
@@ -384,7 +371,7 @@ export function RuntimeTab() {
   }
 
   const handleRefreshProfileModels = async () => {
-    if (provider === 'Ollama' || !editableActiveProfile) return
+    if (!editableActiveProfile) return
     setModelCatalogBusy(true)
     try {
       const result = await window.vgoDesktop?.refreshRemoteProfileModels?.(editableActiveProfile.id)
@@ -393,18 +380,21 @@ export function RuntimeTab() {
       } else {
         await refreshState()
       }
-      setStatus('云模型列表已刷新')
-    } catch (error: any) {
-      setStatus(error?.message || '刷新云模型列表失败')
+      setStatus(t('runtime.status.modelsRefreshed'))
+    } catch (error: unknown) {
+      setStatus(error instanceof Error ? error.message : t('runtime.status.modelsRefreshFailed'))
     } finally {
       setModelCatalogBusy(false)
     }
   }
 
-  const handleActivateProfile = async (profileId: string, profileProvider: string) => {
+  const handleActivateProfile = async (profileId: string) => {
+    const profile = remoteProfiles.find((p) => p.id === profileId)
+    if (!profile) return
     setSwitchingKey(profileId)
     try {
-      await window.vgoDesktop?.setEngine?.(profileProvider === 'Ollama' ? 'ollama' : 'vgo-remote')
+      const protocol = detectEndpointType(profile.baseUrl)
+      await window.vgoDesktop?.setEngine?.(protocol === 'ollama' ? 'ollama' : 'vgo-remote')
       await window.vgoDesktop?.selectRemoteProfile?.(profileId)
       await refreshState()
     } finally {
@@ -454,7 +444,7 @@ export function RuntimeTab() {
 
       <h3>{t('settings.runtimeEngine')}</h3>
       <div className="engine-list">
-        {visibleEngines.map((engine) => (
+        {engines.filter((e) => e.id === 'ollama' || e.id === 'vgo-remote').map((engine) => (
           <button
             key={engine.id}
             type="button"
@@ -466,7 +456,7 @@ export function RuntimeTab() {
               <span className="engine-label">{engine.label}</span>
               <span className="engine-provider">{engine.provider}</span>
               <span className="engine-provider">
-                {engineDescriptions[engine.id as 'ollama' | 'vgo-remote']}
+                {engine.id === 'ollama' ? t('settings.ollamaDesc') : t('settings.vgoRemoteDesc')}
               </span>
             </div>
             {switchingKey === engine.id ? (
@@ -553,39 +543,19 @@ export function RuntimeTab() {
         )}
 
         <div className="button-row manual-config-actions">
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => void handleCheckForUpdatesNow()}
-            disabled={updateBusy}
-          >
+          <button type="button" className="primary-button" onClick={() => void handleCheckForUpdatesNow()} disabled={updateBusy}>
             {updateBusy ? <Loader2 size={14} className="spin" /> : <Wrench size={14} />}
             {t('settings.update.checkNow')}
           </button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => void handleInstallUpdateNow()}
-            disabled={updateBusy || !updateCandidate?.latestVersion}
-          >
+          <button type="button" className="primary-button" onClick={() => void handleInstallUpdateNow()} disabled={updateBusy || !updateCandidate?.latestVersion}>
             <Save size={14} />
             {t('settings.update.installNow')}
           </button>
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={() => void handleApplyUpdateSettings()}
-            disabled={updateBusy}
-          >
+          <button type="button" className="ghost-button" onClick={() => void handleApplyUpdateSettings()} disabled={updateBusy}>
             <Save size={14} />
             {t('settings.update.saveConfig')}
           </button>
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={() => void handleResetSkippedVersion()}
-            disabled={updateBusy}
-          >
+          <button type="button" className="ghost-button" onClick={() => void handleResetSkippedVersion()} disabled={updateBusy}>
             <Wrench size={14} />
             {t('settings.update.resetSkip')}
           </button>
@@ -594,14 +564,11 @@ export function RuntimeTab() {
         {updateProgress && (
           <div className="update-progress-card">
             <div className="update-progress-head">
-              <span>更新进度</span>
+              <span>{t('runtime.updateProgress')}</span>
               <span>{Math.max(0, Math.min(100, updateProgress.progressPercent)).toFixed(1)}%</span>
             </div>
             <div className="update-progress-track">
-              <div
-                className="update-progress-fill"
-                style={{ width: `${Math.max(0, Math.min(100, updateProgress.progressPercent))}%` }}
-              />
+              <div className="update-progress-fill" style={{ width: `${Math.max(0, Math.min(100, updateProgress.progressPercent))}%` }} />
             </div>
             <div className="update-progress-meta">
               <span>
@@ -628,115 +595,55 @@ export function RuntimeTab() {
             className="text-input"
             placeholder={t('settings.configNamePlaceholder')}
             value={configName}
-            onChange={(event) => {
-              setConfigName(event.target.value)
-              setDraftDirty(true)
-            }}
+            onChange={(event) => { setConfigName(event.target.value); setDraftDirty(true) }}
           />
 
-          <select
-            className="text-input"
-            value={provider}
-            onChange={(event) => {
-              const nextProvider = event.target.value as ManualProvider
-              setDraftDirty(true)
-              setProvider(nextProvider)
-              setBaseUrl(
-                nextProvider === 'Ollama'
-                  ? 'http://127.0.0.1:11434'
-                  : 'http://127.0.0.1:3210',
-              )
-              setModelListUrl(nextProvider === 'Ollama' ? '' : 'http://127.0.0.1:3210/v1/models')
-            }}
-          >
-            <option value="Ollama">{t('settings.localOllama')}</option>
-            <option value="Custom HTTP Provider">{t('settings.cloudHttpProvider')}</option>
-          </select>
-
-          <input
-            className="text-input"
-            placeholder={
-              provider === 'Ollama'
-                ? 'http://127.0.0.1:11434'
-                : 'https://api.example.com'
-            }
-            value={baseUrl}
-            onChange={(event) => {
-              setBaseUrl(event.target.value)
-              setDraftDirty(true)
-            }}
-          />
-
-          {provider !== 'Ollama' && (
+          <div className="protocol-detect-row">
             <input
               className="text-input"
-              placeholder="Model list URL (optional), e.g. https://api.example.com/v1/models"
-              value={modelListUrl}
-              onChange={(event) => {
-                setModelListUrl(event.target.value)
-                setDraftDirty(true)
-              }}
+              placeholder={t('runtime.baseUrlPlaceholder')}
+              value={baseUrl}
+              onChange={(event) => { setBaseUrl(event.target.value); setDraftDirty(true) }}
             />
-          )}
+            <span className={`protocol-badge ${detectedProtocol || ''}`}>{protocolDisplay(detectedProtocol, t)}</span>
+          </div>
 
           <input
             className="text-input"
-            placeholder={provider === 'Ollama' ? t('settings.modelPlaceholderOllama') : t('settings.modelPlaceholderHttp')}
+            placeholder={t('settings.modelPlaceholderHttp')}
             value={model}
-            onChange={(event) => {
-              setModel(event.target.value)
-              setDraftDirty(true)
-            }}
+            onChange={(event) => { setModel(event.target.value); setDraftDirty(true) }}
           />
 
-          {provider !== 'Ollama' && (
-            <input
-              className="text-input"
-              placeholder={t('settings.apiKeyPlaceholder')}
-              value={apiKey}
-              onChange={(event) => {
-                setApiKey(event.target.value)
-                setDraftDirty(true)
-              }}
-            />
-          )}
+          <input
+            className="text-input"
+            placeholder={t('settings.apiKeyPlaceholder')}
+            value={apiKey}
+            onChange={(event) => { setApiKey(event.target.value); setDraftDirty(true) }}
+          />
 
           <textarea
             className="text-input config-textarea"
             placeholder={t('settings.systemPromptPlaceholder')}
             value={systemPrompt}
-            onChange={(event) => {
-              setSystemPrompt(event.target.value)
-              setDraftDirty(true)
-            }}
+            onChange={(event) => { setSystemPrompt(event.target.value); setDraftDirty(true) }}
           />
         </div>
 
-        {provider !== 'Ollama' && editableActiveProfile && (
+        {editableActiveProfile && (
           <div className="manual-config-card" style={{ marginTop: 12 }}>
             <div className="button-row manual-config-actions">
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={() => void handleRefreshProfileModels()}
-                disabled={modelCatalogBusy || busy}
-              >
+              <button type="button" className="ghost-button" onClick={() => void handleRefreshProfileModels()} disabled={modelCatalogBusy || busy}>
                 {modelCatalogBusy ? <Loader2 size={14} className="spin" /> : <Wrench size={14} />}
-                刷新云模型列表
+                {t('runtime.refreshModels')}
               </button>
             </div>
             {Array.isArray(editableActiveProfile.modelCatalog) && editableActiveProfile.modelCatalog.length > 0 && (
               <div className="remote-profiles" style={{ marginTop: 8 }}>
                 {editableActiveProfile.modelCatalog.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
+                  <button key={item.id} type="button"
                     className={`profile-item ${model === item.id ? 'active' : ''}`}
-                    onClick={() => {
-                      setModel(item.id)
-                      setDraftDirty(true)
-                    }}
-                  >
+                    onClick={() => { setModel(item.id); setDraftDirty(true) }}>
                     <div className="profile-info">
                       <span className="profile-name">{item.label || item.id}</span>
                       <span className="profile-model">{item.id}</span>
@@ -757,12 +664,8 @@ export function RuntimeTab() {
             <Plus size={14} />
             {t('settings.saveAsNew')}
           </button>
-          <button
-            type="button"
-            className="ghost-button danger-outline"
-            onClick={() => void handleDeleteProfile()}
-            disabled={busy || !editableActiveProfile}
-          >
+          <button type="button" className="ghost-button danger-outline"
+            onClick={() => void handleDeleteProfile()} disabled={busy || !editableActiveProfile}>
             <Trash2 size={14} />
             {t('settings.deleteCurrentConfig')}
           </button>
@@ -772,27 +675,27 @@ export function RuntimeTab() {
 
       <h3>{t('settings.existingConfigs')}</h3>
       <div className="remote-profiles">
-        {editableProfiles.map((profile) => (
-          <button
-            key={profile.id}
-            type="button"
-            className={`profile-item ${activeRemoteProfileId === profile.id ? 'active' : ''}`}
-            onClick={() => void handleActivateProfile(profile.id, profile.provider)}
-            disabled={Boolean(switchingKey)}
-          >
-            <div className="profile-info">
-              <span className="profile-name">{profile.name}</span>
-              <span className="profile-model">
-                {profile.provider} · {profile.model}
-              </span>
-            </div>
-            {switchingKey === profile.id ? (
-              <Loader2 size={14} className="spin" />
-            ) : activeRemoteProfileId === profile.id ? (
-              <span className="profile-badge">{t('settings.enabled')}</span>
-            ) : null}
-          </button>
-        ))}
+        {editableProfiles.map((profile) => {
+          const protocol = detectEndpointType(profile.baseUrl)
+          return (
+            <button key={profile.id} type="button"
+              className={`profile-item ${activeRemoteProfileId === profile.id ? 'active' : ''}`}
+              onClick={() => void handleActivateProfile(profile.id)}
+              disabled={Boolean(switchingKey)}>
+              <div className="profile-info">
+                <span className="profile-name">{profile.name}</span>
+                <span className="profile-model">
+                  <span className={`endpoint-badge ${protocol || ''}`}>{endpointBadgeLabel(protocol)}</span> · {profile.model}
+                </span>
+              </div>
+              {switchingKey === profile.id ? (
+                <Loader2 size={14} className="spin" />
+              ) : activeRemoteProfileId === profile.id ? (
+                <span className="profile-badge">{t('settings.enabled')}</span>
+              ) : null}
+            </button>
+          )
+        })}
         {editableProfiles.length === 0 && (
           <p className="manual-config-status">{t('settings.noManualConfigs')}</p>
         )}

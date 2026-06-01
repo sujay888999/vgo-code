@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
+const { isVgoManagedCloudProfile, syncRemoteProfileState } = require("../core/settings");
 
 function toBase64Url(input) {
   return Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
@@ -131,10 +132,23 @@ function mapGenericModelCatalog(payload = {}) {
 }
 
 async function fetchRemoteProfileModelCatalog(profile = {}) {
-  if (!profile || profile.provider === "Ollama") return [];
+  if (!profile) return [];
   const baseUrl = String(profile.baseUrl || "").trim().replace(/\/+$/, "");
   const modelListUrl = String(profile.modelListUrl || "").trim();
   const apiKey = String(profile.apiKey || "").trim();
+
+  // Ollama: use /api/tags
+  const lower = baseUrl.toLowerCase();
+  if (/localhost:11434|127\.0\.0\.1:11434/.test(lower) || String(profile.provider || "").toLowerCase().includes("ollama")) {
+    try {
+      const ollamaUrl = /\/api\/tags$/.test(lower) ? baseUrl : `${baseUrl}/api/tags`;
+      const payload = await fetchJson(ollamaUrl, {});
+      const models = Array.isArray(payload?.models) ? payload.models.map((m) => ({ id: String(m?.name || "").trim(), label: String(m?.name || "").trim() })).filter((m) => m.id) : [];
+      if (models.length) return models;
+    } catch { return []; }
+    return [];
+  }
+
   if (!baseUrl && !modelListUrl) return [];
   const candidates = normalizeModelCatalogCandidates(baseUrl, modelListUrl);
   let lastError = null;
@@ -150,18 +164,6 @@ async function fetchRemoteProfileModelCatalog(profile = {}) {
   }
   if (lastError) throw lastError;
   return [];
-}
-
-function syncRemoteProfileState(settings, nextRemote, extraProfileFields = {}, currentVgoAi = null) {
-  const activeProfileId = settings.activeRemoteProfileId;
-  const profiles = (settings.remoteProfiles || []).map((profile) => profile.id === activeProfileId ? { ...profile, ...extraProfileFields, provider: extraProfileFields.provider || nextRemote.provider || profile.provider || "VGO Remote", baseUrl: nextRemote.baseUrl, modelListUrl: typeof nextRemote.modelListUrl === "string" ? nextRemote.modelListUrl : profile.modelListUrl || "", modelCatalog: Array.isArray(extraProfileFields.modelCatalog) ? extraProfileFields.modelCatalog : profile.modelCatalog || [], ollamaUrl: nextRemote.ollamaUrl || profile.ollamaUrl || "", model: nextRemote.model, apiKey: nextRemote.apiKey, systemPrompt: nextRemote.systemPrompt } : profile);
-  return { ...settings, vgoAI: currentVgoAi !== null ? currentVgoAi : settings.vgoAI, remote: { ...nextRemote, provider: extraProfileFields.provider || nextRemote.provider || profiles.find((p) => p.id === activeProfileId)?.provider || "VGO Remote", modelListUrl: typeof nextRemote.modelListUrl === "string" ? nextRemote.modelListUrl : profiles.find((p) => p.id === activeProfileId)?.modelListUrl || "", ollamaUrl: nextRemote.ollamaUrl || profiles.find((p) => p.id === activeProfileId)?.ollamaUrl || "" }, remoteProfiles: profiles };
-}
-
-function isVgoManagedCloudProfile(profile = {}) {
-  const provider = String(profile.provider || "").toLowerCase();
-  if (provider.includes("ollama")) return false;
-  return String(profile.id || "") === "default" || /127\.0\.0\.1:3210/i.test(String(profile.baseUrl || "")) || /(^|\.)vgoai\.cn/i.test(String(profile.baseUrl || ""));
 }
 
 function createAuthWindow(authWindow, loginUrl, setBrowserAuthState, AUTH_PARTITION, BrowserWindow) {
@@ -218,7 +220,7 @@ function registerHandlers(ipcMain, ctx) {
     const clearedProfiles = (ctx.getSettings().remoteProfiles || []).map((profile) => isVgoManagedCloudProfile(profile) ? { ...profile, modelCatalog: [], model: profile.id === DEFAULT_PROFILE_ID ? "vgo-coder-pro" : profile.model } : profile);
     const activeProfile = clearedProfiles.find((item) => item.id === ctx.getSettings().activeRemoteProfileId) || clearedProfiles[0] || null;
     const activeProfileIsRemote = activeProfile && ctx.resolveEngineIdForProfile(activeProfile) !== "ollama";
-    saveAllSettings({ ...ctx.getSettings(), remoteProfiles: clearedProfiles, remote: activeProfileIsRemote ? { ...ctx.getSettings().remote, provider: activeProfile.provider || ctx.getSettings().remote.provider, baseUrl: activeProfile.baseUrl || ctx.getSettings().remote.baseUrl, modelListUrl: activeProfile.modelListUrl || ctx.getSettings().remote.modelListUrl || "", ollamaUrl: activeProfile.ollamaUrl || ctx.getSettings().remote.ollamaUrl || "", model: activeProfile.model || "vgo-coder-pro", apiKey: activeProfile.apiKey, systemPrompt: activeProfile.systemPrompt } : ctx.getSettings().remote, vgoAI: { ...ctx.getSettings().vgoAI, loggedIn: false, email: "", displayName: "Guest", accessToken: "", preferredModel: "vgo-coder-pro", linkedAt: "", profile: null, modelCatalog: guestCatalog } });
+    saveAllSettings({ ...ctx.getSettings(), remoteProfiles: clearedProfiles, remote: activeProfileIsRemote ? { ...ctx.getSettings().remote, provider: activeProfile.provider || ctx.getSettings().remote.provider, baseUrl: activeProfile.baseUrl || ctx.getSettings().remote.baseUrl, modelListUrl: activeProfile.modelListUrl || ctx.getSettings().remote.modelListUrl || "", model: activeProfile.model || "vgo-coder-pro", apiKey: activeProfile.apiKey, systemPrompt: activeProfile.systemPrompt } : ctx.getSettings().remote, vgoAI: { ...ctx.getSettings().vgoAI, loggedIn: false, email: "", displayName: "Guest", accessToken: "", preferredModel: "vgo-coder-pro", linkedAt: "", profile: null, modelCatalog: guestCatalog } });
   }
 
   async function validateStoredRealLogin() {
@@ -318,12 +320,11 @@ function registerHandlers(ipcMain, ctx) {
   ipcMain.handle("settings:createRemoteProfile", async (_event, payload = {}) => {
     const profileId = `profile-${Date.now()}`;
     const normalizedProvider = (payload.provider || "").trim() || "VGO Remote";
-    const isOllamaProvider = normalizedProvider.toLowerCase().includes("ollama");
     const incomingApiKey = typeof payload.apiKey === "string" ? payload.apiKey.trim() : "";
     const currentApiKey = String(ctx.getSettings().remote.apiKey || "").trim();
     const resolvedApiKey = incomingApiKey === "********" ? (currentApiKey === "********" ? "" : currentApiKey) : incomingApiKey;
-    const profile = { id: profileId, name: (payload.name || "").trim() || `远程配置 ${(ctx.getSettings().remoteProfiles || []).length + 1}`, provider: normalizedProvider, baseUrl: payload.baseUrl || ctx.getSettings().remote.baseUrl, modelListUrl: payload.modelListUrl || "", modelCatalog: Array.isArray(payload.modelCatalog) ? payload.modelCatalog : [], ollamaUrl: isOllamaProvider ? payload.ollamaUrl || ctx.getSettings().remote.ollamaUrl || "" : "", model: normalizeExternalModelId(payload.model || ctx.getSettings().remote.model), apiKey: resolvedApiKey, systemPrompt: payload.systemPrompt || ctx.getSettings().remote.systemPrompt };
-    saveAllSettings({ ...ctx.getSettings(), remote: { provider: profile.provider || "VGO Remote", baseUrl: profile.baseUrl, modelListUrl: profile.modelListUrl || "", ollamaUrl: profile.ollamaUrl || "", model: profile.model, apiKey: profile.apiKey, systemPrompt: profile.systemPrompt }, remoteProfiles: [...(ctx.getSettings().remoteProfiles || []), profile], activeRemoteProfileId: profileId });
+    const profile = { id: profileId, name: (payload.name || "").trim() || `远程配置 ${(ctx.getSettings().remoteProfiles || []).length + 1}`, provider: normalizedProvider, baseUrl: payload.baseUrl || ctx.getSettings().remote.baseUrl, modelListUrl: payload.modelListUrl || "", modelCatalog: Array.isArray(payload.modelCatalog) ? payload.modelCatalog : [], model: normalizeExternalModelId(payload.model || ctx.getSettings().remote.model), apiKey: resolvedApiKey, systemPrompt: payload.systemPrompt || ctx.getSettings().remote.systemPrompt };
+    saveAllSettings({ ...ctx.getSettings(), remote: { provider: profile.provider || "VGO Remote", baseUrl: profile.baseUrl, modelListUrl: profile.modelListUrl || "", model: profile.model, apiKey: profile.apiKey, systemPrompt: profile.systemPrompt }, remoteProfiles: [...(ctx.getSettings().remoteProfiles || []), profile], activeRemoteProfileId: profileId });
     ctx.applyRuntimeForProfile(profile);
     return serializeState();
   });
@@ -335,15 +336,13 @@ function registerHandlers(ipcMain, ctx) {
     const incomingApiKey = typeof payload.apiKey === "string" ? payload.apiKey : null;
     const nextApiKey = incomingApiKey === null ? profile.apiKey : incomingApiKey.trim() === "********" ? profile.apiKey : incomingApiKey;
     const nextProvider = (payload.provider || "").trim() || profile.provider || "VGO Remote";
-    const nextIsOllamaProvider = String(nextProvider).toLowerCase().includes("ollama");
     const baseUrlFromPayload = payload.baseUrl || profile.baseUrl;
     const modelListUrlFromPayload = typeof payload.modelListUrl === "string" ? payload.modelListUrl : profile.modelListUrl || "";
-    const ollamaUrlFromPayload = nextIsOllamaProvider ? payload.ollamaUrl || profile.ollamaUrl || "" : "";
-    const endpointChanged = String(profile.provider || "") !== String(nextProvider || "") || normalizeUrlForCompare(profile.baseUrl) !== normalizeUrlForCompare(baseUrlFromPayload) || normalizeUrlForCompare(profile.modelListUrl) !== normalizeUrlForCompare(modelListUrlFromPayload) || normalizeUrlForCompare(profile.ollamaUrl) !== normalizeUrlForCompare(ollamaUrlFromPayload);
-    const nextProfile = { ...profile, name: (payload.name || "").trim() || profile.name, provider: nextProvider, baseUrl: baseUrlFromPayload, modelListUrl: modelListUrlFromPayload, modelCatalog: Array.isArray(payload.modelCatalog) ? payload.modelCatalog : endpointChanged ? [] : profile.modelCatalog || [], ollamaUrl: ollamaUrlFromPayload, model: normalizeExternalModelId(payload.model || profile.model), apiKey: nextApiKey, systemPrompt: typeof payload.systemPrompt === "string" ? payload.systemPrompt : profile.systemPrompt };
+    const endpointChanged = String(profile.provider || "") !== String(nextProvider || "") || normalizeUrlForCompare(profile.baseUrl) !== normalizeUrlForCompare(baseUrlFromPayload) || normalizeUrlForCompare(profile.modelListUrl) !== normalizeUrlForCompare(modelListUrlFromPayload);
+    const nextProfile = { ...profile, name: (payload.name || "").trim() || profile.name, provider: nextProvider, baseUrl: baseUrlFromPayload, modelListUrl: modelListUrlFromPayload, modelCatalog: Array.isArray(payload.modelCatalog) ? payload.modelCatalog : endpointChanged ? [] : profile.modelCatalog || [], model: normalizeExternalModelId(payload.model || profile.model), apiKey: nextApiKey, systemPrompt: typeof payload.systemPrompt === "string" ? payload.systemPrompt : profile.systemPrompt };
     const nextProfiles = (ctx.getSettings().remoteProfiles || []).map((item) => item.id === profileId ? nextProfile : item);
     const shouldActivate = payload.activate === true || ctx.getSettings().activeRemoteProfileId === profileId;
-    saveAllSettings({ ...ctx.getSettings(), remoteProfiles: nextProfiles, remote: shouldActivate ? { provider: nextProfile.provider || "VGO Remote", baseUrl: nextProfile.baseUrl, modelListUrl: nextProfile.modelListUrl || "", ollamaUrl: nextProfile.ollamaUrl || "", model: nextProfile.model, apiKey: nextProfile.apiKey, systemPrompt: nextProfile.systemPrompt } : ctx.getSettings().remote });
+    saveAllSettings({ ...ctx.getSettings(), remoteProfiles: nextProfiles, remote: shouldActivate ? { provider: nextProfile.provider || "VGO Remote", baseUrl: nextProfile.baseUrl, modelListUrl: nextProfile.modelListUrl || "", model: nextProfile.model, apiKey: nextProfile.apiKey, systemPrompt: nextProfile.systemPrompt } : ctx.getSettings().remote });
     if (shouldActivate) ctx.applyRuntimeForProfile(nextProfile);
     return serializeState();
   });
@@ -351,29 +350,28 @@ function registerHandlers(ipcMain, ctx) {
   ipcMain.handle("settings:selectRemoteProfile", async (_event, profileId) => {
     const profile = (ctx.getSettings().remoteProfiles || []).find((item) => item.id === profileId);
     if (!profile) return serializeState();
-    const isOllamaProvider = String(profile.provider || "").toLowerCase().includes("ollama");
-    saveAllSettings({ ...ctx.getSettings(), activeRemoteProfileId: profileId, remote: { provider: profile.provider || "VGO Remote", baseUrl: profile.baseUrl, modelListUrl: profile.modelListUrl || "", ollamaUrl: isOllamaProvider ? profile.ollamaUrl || "" : "", model: profile.model, apiKey: profile.apiKey, systemPrompt: profile.systemPrompt } });
+    saveAllSettings({ ...ctx.getSettings(), activeRemoteProfileId: profileId, remote: { provider: profile.provider || "VGO Remote", baseUrl: profile.baseUrl, modelListUrl: profile.modelListUrl || "", model: profile.model, apiKey: profile.apiKey, systemPrompt: profile.systemPrompt } });
     ctx.applyRuntimeForProfile(profile);
     return serializeState();
   });
 
   ipcMain.handle("settings:refreshRemoteProfileModels", async (_event, profileId) => {
     const profile = (ctx.getSettings().remoteProfiles || []).find((item) => item.id === profileId);
-    if (!profile || profile.provider === "Ollama") return serializeState();
+    if (!profile) return serializeState();
     const models = await fetchRemoteProfileModelCatalog(profile).catch(() => []);
     const resolvedModel = profile.model && models.some((item) => item.id === profile.model) ? profile.model : models.length ? models[0].id : profile.model;
     const nextProfiles = (ctx.getSettings().remoteProfiles || []).map((item) => item.id === profileId ? { ...item, modelCatalog: models, model: resolvedModel } : item);
     const isActive = ctx.getSettings().activeRemoteProfileId === profileId;
     const activeProfile = nextProfiles.find((item) => item.id === ctx.getSettings().activeRemoteProfileId) || nextProfiles[0];
-    saveAllSettings({ ...ctx.getSettings(), remoteProfiles: nextProfiles, remote: isActive ? { ...ctx.getSettings().remote, provider: activeProfile.provider || ctx.getSettings().remote.provider, baseUrl: activeProfile.baseUrl || ctx.getSettings().remote.baseUrl, modelListUrl: activeProfile.modelListUrl || ctx.getSettings().remote.modelListUrl || "", ollamaUrl: activeProfile.ollamaUrl || ctx.getSettings().remote.ollamaUrl || "", model: activeProfile.model || ctx.getSettings().remote.model, apiKey: activeProfile.apiKey, systemPrompt: activeProfile.systemPrompt } : ctx.getSettings().remote });
+    saveAllSettings({ ...ctx.getSettings(), remoteProfiles: nextProfiles, remote: isActive ? { ...ctx.getSettings().remote, provider: activeProfile.provider || ctx.getSettings().remote.provider, baseUrl: activeProfile.baseUrl || ctx.getSettings().remote.baseUrl, modelListUrl: activeProfile.modelListUrl || ctx.getSettings().remote.modelListUrl || "", model: activeProfile.model || ctx.getSettings().remote.model, apiKey: activeProfile.apiKey, systemPrompt: activeProfile.systemPrompt } : ctx.getSettings().remote });
     return serializeState();
   });
 
   ipcMain.handle("settings:deleteRemoteProfile", (_event, profileId) => {
     const profiles = (ctx.getSettings().remoteProfiles || []).filter((item) => item.id !== profileId);
-    const nextProfiles = profiles.length ? profiles : [{ id: "default", name: "默认 VGO AI", provider: "VGO Remote", baseUrl: ctx.getSettings().remote.baseUrl, modelListUrl: ctx.getSettings().remote.modelListUrl || "", modelCatalog: [], ollamaUrl: ctx.getSettings().remote.ollamaUrl || "", model: ctx.getSettings().remote.model, apiKey: ctx.getSettings().remote.apiKey, systemPrompt: ctx.getSettings().remote.systemPrompt }];
+    const nextProfiles = profiles.length ? profiles : [{ id: "default", name: "默认 VGO AI", provider: "VGO Remote", baseUrl: ctx.getSettings().remote.baseUrl, modelListUrl: ctx.getSettings().remote.modelListUrl || "", modelCatalog: [], model: ctx.getSettings().remote.model, apiKey: ctx.getSettings().remote.apiKey, systemPrompt: ctx.getSettings().remote.systemPrompt }];
     const activeProfile = nextProfiles.find((item) => item.id === ctx.getSettings().activeRemoteProfileId) || nextProfiles[0];
-    saveAllSettings({ ...ctx.getSettings(), remoteProfiles: nextProfiles, activeRemoteProfileId: activeProfile.id, remote: { provider: activeProfile.provider || "VGO Remote", baseUrl: activeProfile.baseUrl, modelListUrl: activeProfile.modelListUrl || "", ollamaUrl: activeProfile.ollamaUrl || "", model: activeProfile.model, apiKey: activeProfile.apiKey, systemPrompt: activeProfile.systemPrompt } });
+    saveAllSettings({ ...ctx.getSettings(), remoteProfiles: nextProfiles, activeRemoteProfileId: activeProfile.id, remote: { provider: activeProfile.provider || "VGO Remote", baseUrl: activeProfile.baseUrl, modelListUrl: activeProfile.modelListUrl || "", model: activeProfile.model, apiKey: activeProfile.apiKey, systemPrompt: activeProfile.systemPrompt } });
     ctx.applyRuntimeForProfile(activeProfile);
     return serializeState();
   });
@@ -534,7 +532,7 @@ function registerHandlers(ipcMain, ctx) {
     const activeProfileId = ctx.getSettings().activeRemoteProfileId;
     if (engineId === "vgo-remote" && !activeProfileId) {
       const profile = (ctx.getSettings().remoteProfiles || []).find((item) => item.id === "default") || (ctx.getSettings().remoteProfiles || []).find((item) => ctx.resolveEngineIdForProfile(item) === "vgo-remote") || null;
-      if (profile) { saveAllSettings({ ...ctx.getSettings(), activeRemoteProfileId: profile.id, remote: { provider: profile.provider || "VGO Remote", baseUrl: profile.baseUrl, ollamaUrl: profile.ollamaUrl || "", model: profile.model, apiKey: profile.apiKey, systemPrompt: profile.systemPrompt } }); }
+      if (profile) { saveAllSettings({ ...ctx.getSettings(), activeRemoteProfileId: profile.id, remote: { provider: profile.provider || "VGO Remote", baseUrl: profile.baseUrl, model: profile.model, apiKey: profile.apiKey, systemPrompt: profile.systemPrompt } }); }
     }
     ctx.setRuntimeEngine(engineId);
     return serializeState();

@@ -1,0 +1,38 @@
+/* Panels */
+.panel {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+body.mode-pro .panel {
+  padding: 0.875rem 0.95rem;
+}
+
+body.mode-ux-pro-max .panel {
+  padding: 1rem 1.1rem;
+  border-bottom-color: rgba(148, 163, 184, 0.08);
+}
+
+.panel-accent {
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+
+.panel-kicker {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--primary);
+  margin-bottom: 0.25rem;
+}
+
+.panel-head h3 {
+  font-size: 0.875rem;
+  font-weight: 500;
+}

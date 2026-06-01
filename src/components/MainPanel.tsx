@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react'
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { useAppStore } from '../store/appStore'
 import { useI18n } from '../i18n'
 import { MessageList } from './MessageList'
@@ -48,7 +48,7 @@ export function MainPanel() {
     const cloudModel = modelCatalog.find((model) => model.id === vgoAIPreferredModel)
     return {
       name: cloudModel?.label || vgoAIPreferredModel || t('mainPanel.noModelSelected'),
-      provider: runtimeProviderLabel || 'VGO AI Cloud',
+      provider: runtimeProviderLabel || t('mainPanel.cloudBadge'),
     }
   }, [
     remoteProfiles,
@@ -81,7 +81,6 @@ export function MainPanel() {
 
     if (shouldStick) {
       scrollToBottom()
-      if (!followOutput) setFollowOutput(true)
     }
   }, [messages, taskSteps, promptRunning, autoScroll, followOutput, scrollToBottom])
 
@@ -109,8 +108,11 @@ export function MainPanel() {
     return () => observer.disconnect()
   }, [autoScroll, followOutput])
 
+  const sessionChangeRef = useRef(activeSessionId)
   useEffect(() => {
-    if (autoScroll) {
+    if (!autoScroll) return
+    if (sessionChangeRef.current !== activeSessionId) {
+      sessionChangeRef.current = activeSessionId
       setFollowOutput(true)
       scrollToBottom()
     }
@@ -184,7 +186,7 @@ export function MainPanel() {
       <header className="main-header">
         <div className="header-left">
           <div className="session-info">
-            <span className="session-label">会话</span>
+            <span className="session-label">{t('mainPanel.sessionTab')}</span>
             {workspace && (
               <span className="workspace-indicator" title={workspace}>
                 {workspace.split(/[/\\]/).pop()}
@@ -237,17 +239,17 @@ export function MainPanel() {
           {messages.length === 0 && (
             <div className="welcome-messages">
               <div className="welcome-card welcome-card-conversation">
-                <p className="welcome-kicker">VGO CODE</p>
-                <h3>今天我们一起先做哪件事？</h3>
+                <p className="welcome-kicker">{t('app.title')}</p>
+                <h3>{t('welcome.cardTitle')}</h3>
                 <p className="welcome-lead">
-                  直接用自然语言描述目标就行，我会拆解步骤并持续推进。
+                  {t('welcome.cardLead')}
                 </p>
                 <div className="welcome-chips" aria-hidden="true">
-                  <span className="welcome-chip">阅读并解释当前项目结构</span>
-                  <span className="welcome-chip">定位一个顽固报错并修复</span>
-                  <span className="welcome-chip">重构一段核心模块并补测试</span>
+                  <span className="welcome-chip">{t('welcome.chip1')}</span>
+                  <span className="welcome-chip">{t('welcome.chip2')}</span>
+                  <span className="welcome-chip">{t('welcome.chip3')}</span>
                 </div>
-                <p className="tip">在下方输入框直接开工，不需要按模板提问。</p>
+                <p className="tip">{t('welcome.tip')}</p>
               </div>
             </div>
           )}

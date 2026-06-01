@@ -1,0 +1,50 @@
+/* Compact Mode */
+body.compact .panel {
+  padding: 0.5rem;
+}
+
+body.compact .panel-head {
+  margin-bottom: 0.5rem;
+}
+
+body.compact .message {
+  padding: 0.5rem 1rem;
+}
+
+body.compact .message-content {
+  font-size: 0.875rem;
+}
+
+body.compact .session-list {
+  max-height: 200px;
+}
+
+body.compact .sidebar {
+  width: 240px;
+}
+
+body.compact .composer {
+  padding: 0.5rem;
+}
+
+body.compact .brand-hero {
+  padding: 1rem;
+}
+
+body.compact .model-selector {
+  margin-top: 0.5rem;
+}
+
+body.compact .permission-bar {
+  padding: 0.5rem;
+  gap: 0.5rem;
+}
+
+body.compact .permission-button {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+body.compact .permission-label {
+  font-size: 0.75rem;
+}

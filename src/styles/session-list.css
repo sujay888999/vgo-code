@@ -1,0 +1,109 @@
+/* Session List */
+.session-list {
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 0.75rem 0;
+}
+
+.session-group {
+  margin-bottom: 1rem;
+}
+
+.session-group-title {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.session-group-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0.2rem 0;
+  cursor: pointer;
+  justify-content: space-between;
+}
+
+.session-item {
+  padding: 0.625rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-bottom: 0.25rem;
+}
+
+body.mode-pro .session-item {
+  padding: 0.55rem 0.65rem;
+  border-radius: 12px;
+}
+
+body.mode-ux-pro-max .session-item {
+  padding: 0.75rem;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.08);
+  background: rgba(255,255,255,0.02);
+}
+
+.session-item:hover {
+  background: var(--bg-hover);
+}
+
+.session-item.active {
+  background: var(--primary);
+  color: white;
+}
+
+.session-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 0.25rem;
+  opacity: 0.7;
+  font-size: 0.6875rem;
+}
+
+.session-title {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-preview {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 0.125rem;
+}
+
+.session-time {
+  margin-left: auto;
+}
+
+.pin-button, .delete-button {
+  opacity: 0;
+  padding: 0.125rem;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.session-item:hover .pin-button,
+.session-item:hover .delete-button {
+  opacity: 0.7;
+}
+
+.pin-button.active {
+  opacity: 1 !important;
+  color: var(--warning);
+}

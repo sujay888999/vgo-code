@@ -1,8 +1,8 @@
-import React, { useCallback, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { useI18n } from '../i18n'
 import {
-  LogIn, LogOut, User, Globe,
+  LogIn, LogOut, User,
 } from 'lucide-react'
 
 export function AuthPanel() {
@@ -29,8 +29,8 @@ export function AuthPanel() {
     try {
       await window.vgoDesktop?.login?.()
       setLoginStatus(t('status.loginPageOpened'))
-    } catch (e: any) {
-      setLoginStatus(e?.message || t('status.loginFailed'))
+    } catch (e: unknown) {
+      setLoginStatus(e instanceof Error ? e.message : t('status.loginFailed'))
     } finally {
       setIsLoggingIn(false)
     }
@@ -54,8 +54,8 @@ export function AuthPanel() {
       setLoginPassword('')
       setLoginStatus(t('status.loginSuccess'))
       setShowPasswordForm(false)
-    } catch (e: any) {
-      setLoginStatus(e?.message || t('status.loginError'))
+    } catch (e: unknown) {
+      setLoginStatus(e instanceof Error ? e.message : t('status.loginError'))
     } finally {
       setIsLoggingIn(false)
     }
@@ -66,8 +66,8 @@ export function AuthPanel() {
       await window.vgoDesktop?.logout?.()
       await refreshState()
       setLoginStatus(t('status.loggedOut'))
-    } catch (e: any) {
-      setLoginStatus(e?.message || t('status.logoutError'))
+    } catch (e: unknown) {
+      setLoginStatus(e instanceof Error ? e.message : t('status.logoutError'))
     }
   }, [t, refreshState])
 

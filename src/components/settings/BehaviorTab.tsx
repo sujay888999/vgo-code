@@ -21,8 +21,8 @@ export function BehaviorTab() {
       const result = await window.vgoDesktop?.updateBehavior?.(payload)
       if (result) hydrate(result)
       window.setTimeout(() => setStatus(''), 1400)
-    } catch (error: any) {
-      setStatus(error?.message || t('settings.operationFailed'))
+    } catch (error: unknown) {
+      setStatus(error instanceof Error ? error.message : t('settings.operationFailed'))
     }
   }
 
@@ -32,8 +32,8 @@ export function BehaviorTab() {
       const result = await window.vgoDesktop?.updateAccess?.(payload)
       if (result) hydrate(result)
       window.setTimeout(() => setStatus(''), 1400)
-    } catch (error: any) {
-      setStatus(error?.message || t('settings.operationFailed'))
+    } catch (error: unknown) {
+      setStatus(error instanceof Error ? error.message : t('settings.operationFailed'))
     }
   }
 

@@ -1,4 +1,4 @@
-import React from 'react'
+
 import type { TaskStep } from '../store/appStore'
 import { useI18n } from '../i18n'
 import {
@@ -102,7 +102,7 @@ export function TaskPanel({ steps }: TaskPanelProps) {
 
           {warningSteps.length > 0 && (
             <div className="task-section">
-              <div className="task-section-title warning">需要关注（{warningSteps.length}）</div>
+              <div className="task-section-title warning">{t('task.warning', { count: warningSteps.length })}</div>
               {warningSteps.map((step) => (
                 <div key={step.id} className={`task-item ${step.state}`}>
                   <div className="task-icon">{getIcon(step.state)}</div>

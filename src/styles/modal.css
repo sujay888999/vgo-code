@@ -1,0 +1,122 @@
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-modal {
+  width: min(1080px, 94vw);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 92%, transparent) 0%, var(--bg-elevated) 100%);
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  backdrop-filter: blur(20px) saturate(120%);
+  max-height: min(88vh, 900px);
+}
+
+body.mode-pro .settings-modal {
+  width: min(1140px, 95vw);
+}
+
+body.mode-ux-pro-max .settings-modal {
+  width: min(1220px, 96vw);
+}
+
+.settings-modal .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings-content {
+  min-height: 0;
+  max-height: calc(min(88vh, 900px) - 96px);
+  overflow-y: auto;
+  padding-right: 0.35rem;
+}
+
+.settings-header {
+  padding: 1.15rem 1.2rem 1rem;
+}
+
+.settings-header h2 {
+  font-size: 1.08rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 1.15rem;
+  padding: 1rem 1rem 1.1rem;
+  min-height: 0;
+  max-height: calc(min(88vh, 900px) - 88px);
+  overflow: hidden;
+}
+
+.settings-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.settings-sidebar-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.6rem;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent-bg) 42%, transparent) 0%, color-mix(in srgb, var(--bg-elevated) 96%, transparent) 100%);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: calc(var(--radius) + 6px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  overflow-y: auto;
+}
+
+.rename-modal {
+  width: 400px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-header h2 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-top: 1px solid var(--border);
+}

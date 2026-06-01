@@ -31,6 +31,34 @@
 - 创建 `electron/core/toolAliases.js`: 统一 `TOOL_ALIASES` / `normalizeToolName` 单一数据源, `toolRuntime.js` 和 `toolResilience.js` 均导入共享模块
 - 提取 `autoDiscoverAndInstallSkills` 辅助函数: ollamaAdapter.js 消除 ~190 行重复技能发现逻辑
 - 修复 auth 轮询 interval 泄漏: 用 `clearInterval` 代替自定义清除函数, 确保 180s 超时也清理 interval
+- 统一本地模型与自定义模型为一个地址配置: 废弃 `ollamaUrl` 字段, 全部使用 `baseUrl`;
+  URL 自动检测协议 (Ollama / OpenAI 兼容 / Legacy),
+  Profile 间切换改用 `resolveEngineIdForProfile` + URL 规则,
+  `ollamaAdapter.js` / `vgoRemoteAdapter.js` / `settings.js` / `main.js` 全部移除 `ollamaUrl` 逻辑,
+  IPC 的 `createRemoteProfile` / `updateRemoteProfile` / `selectRemoteProfile` / `deleteRemoteProfile` / `refreshRemoteProfileModels` 简化,
+  `RuntimeTab.tsx` 重写为统一表单 (无 Ollama/Custom HTTP 切换),
+  `ModelSelector.tsx` 合并本地模型与自定义模型为同一个 "本地/自定义模型" 区块,
+  CSS 新增 `.endpoint-badge` / `.protocol-badge` / `.protocol-detect-row` 样式
+- 拆分 `src/styles/global.css` (3816→27 行, import hub): 按组件/功能拆分为 26 个 CSS 文件 (`variables.css`, `sidebar.css`, `message-list.css`, `settings.css` 等), 零组件代码变更
+- 统一 `any` 类型 (50→0 处):
+  - `electron.d.ts`: `Promise<any>` → `Promise<DesktopResult | UpdateInfo | DesktopState>`, `payload: any` → `Record<string, unknown>`, `args: any[]` → `unknown[]`
+  - `App.tsx`: `payload: any` → `Record<string, unknown>`, `skill: any` → `Record<string, unknown>`
+  - `appStore.ts`: `state: any` → `Record<string, unknown>`, `entry: any` → `Record<string, unknown>`
+  - 9 处 `catch (error: any)` → `catch (error: unknown)` + `error instanceof Error` 窄化
+  - 3 处 `as any` 类型断言 → 具体联合类型断言
+- 迁移硬编码品牌文本到 i18n: 新增 ~70 个 i18n 键 (zh-CN/en-US), 更新 Sidebar/ModelSelector/MainPanel/RuntimeTab/MessageList/AgentTracePanel/TaskPanel/App 中所有硬编码字符串
+- 添加 ESLint + Prettier 配置:
+  - 创建 `src/eslint.config.js` (flat config v9) + `src/.prettierrc`
+  - 修复 31 个 lint 问题: 移除无用 React imports (11 处)、删除死代码函数 (5 个)、移除未使用变量 (6 个)、修复 set-state-in-effect (4 处)、补齐缺失依赖
+  - `npx eslint . --max-warnings 0` ✅ | `npx tsc --noEmit` ✅ | `npx vite build` ✅
+- 清理 main.js 中 6 个死函数: 移除 `mergeSettingsSection`, `installWhisperRuntime`, `resolveActualModelLabel`, `getSelectedModelId`, `resolveTaskRuntimeLimitMs`, `readAttachmentPreview`
+- 移除 unused import: 删除 `https` 模块导入, 简化 `spawnSync` → `spawn`
+- 统一 `syncRemoteProfileState` + `isVgoManagedCloudProfile` (3→1 共享):
+  - 移至 `electron/core/settings.js` 并导出
+  - main.js + ipc/settings.js 均从 `./core/settings` 导入
+  - 修复 main.js 中 `syncRemoteProfileState` 调用参数顺序错误 (第 1 个参数应为完整 settings, 而非 remote 子对象)
+  - 简化 `savePreferredModelIfChanged` (消除不必要的 `let`)
+- main.js 从 1930→1788 行 (移除 ~142 行死代码)
 
 ### In Progress
 - (none)
@@ -47,13 +75,14 @@
 - 序列化写队列: settings 写操作通过 Promise chain 串行化, 避免并发 IPC handler 相互覆盖
 - 工具别名统一: 提取 `toolAliases.js` 作为 `TOOL_ALIASES` / `normalizeToolName` 单一数据源, `toolRuntime.js` 和 `toolResilience.js` 均导入共享模块
 - 技能发现去重: 提取 `autoDiscoverAndInstallSkills` 辅助函数, 消除 ollamaAdapter.js 中 190 行重复逻辑
+- 模型配置统一: 废弃 `ollamaUrl`/provider 双重路由, URL 自动检测协议
+- 共享函数集中化: 将跨模块共享的 `syncRemoteProfileState` / `isVgoManagedCloudProfile` 移至 `electron/core/settings.js` 作为单一数据源
 
 ## Next Steps
-- P1: 将 `src/styles/global.css` (3774 行) 按组件拆分 (CSS Modules 或改用 Tailwind)
-- P1: 统一 `any` 类型为具体接口定义
-- P2: 迁移硬编码品牌文本到 i18n
-- P2: 添加 ESLint/Prettier 配置
-- P2: 清理 main.js 中残余的死代码函数 (~30 个函数重复于 ipc 模块)
+- P2: `toolRuntime.js` 中 ~20 处同步 FS 调用 (`readFileSync`/`existsSync` 等) 迁移到 `fs.promises`
+- P2: App.tsx:586-593 每 3 秒状态轮询 → IPC 事件推送
+- 待办: vgoRemoteAdapter.js 中 `extractRequestedFilePaths`/`collectCompletedReadPaths` 等重复函数清理
+- 待办: `electron/preload.js` 中确认 `looksLikeMojibake` 导入路径存在 (verify 导入来自 `src/utils/mojibake.ts`)
 
 ## Critical Context
 - 项目版本号: 根目录 `package.json` v1.3.0, `src/package.json` v1.2.1, 版本不一致待修复
@@ -63,21 +92,26 @@
 - 三模型渠道统一执行链路后, VGO Remote Cloud 特有的工具协议/修复任务/受保护路径等 nudge 暂未迁移到 agentLoop
 - `vgoRemoteAdapter.js` 中仍有部分重复函数 (extractRequestedFilePaths, collectCompletedReadPaths, 等), 待后续清理
 - `toolRuntime.js` 中仍有 `fs.existsSync` / `readFileSync` 等同步 FS 调用 (~20 处), 非关键路径但长期建议迁移到 `fs.promises`
+- `syncRemoteProfileState` 和 `isVgoManagedCloudProfile` 已统一到 `electron/core/settings.js`, main.js 调用参数顺序已修复
 
 ## Relevant Files
 - `src/utils/mojibake.ts`: 共享乱码检测/恢复工具函数, 合并 3 份重复实现
+- `src/types/electron.d.ts`: IPC API 类型定义, 已移除 `any`, 使用 `DesktopResult | UpdateInfo | DesktopState` + `Record<string, unknown>`
 - `src/components/ModelSelector.tsx`: 模型选择组件 (从 Sidebar 提取)
 - `src/components/AuthPanel.tsx`: 登录/认证面板组件 (从 Sidebar 提取)
 - `src/components/Sidebar.tsx`: 从 960→~340 行
 - `src/components/SettingsModal.tsx`: 从 1186→70 行
-- `src/components/settings/`: 新建目录, 含 `AppearanceTab.tsx` (68L), `LanguageTab.tsx` (46L), `BehaviorTab.tsx` (107L), `AgentTab.tsx` (130L), `RuntimeTab.tsx` (801L), `ToggleRow.tsx` (25L)
+- `src/components/settings/`: 新建目录, 含 `AppearanceTab.tsx` (68L), `LanguageTab.tsx` (46L), `BehaviorTab.tsx` (107L), `AgentTab.tsx` (130L), `RuntimeTab.tsx` (710L), `ToggleRow.tsx` (25L)
+- `src/styles/`: 26 个 CSS 文件, 从 global.css 拆分 (`variables.css`, `sidebar.css`, `message-list.css`, `settings.css` 等)
+- `src/store/appStore.ts`: zustand store, hydrate/entry 已替换 `any` 为 `Record<string, unknown>`
 - `electron/core/contextCompression.js`: `MAX_SUMMARY_CHARS=30000`, `MAX_CONTEXT_TOKENS=128000`, `KEEP_RECENT_MESSAGES=40`, 每条摘要 2000 chars
 - `electron/core/vgoRemoteAdapter.js`: `REMOTE_MAX_HISTORY_MESSAGES=60`, `REMOTE_MAX_TOTAL_CHARS=500000`; 改用 `agentLoop.js` 执行链路
 - `electron/core/ollamaAdapter.js`: 1928→1623 行, 移除 ~300 行重复函数; `OLLAMA_MAX_HISTORY_MESSAGES=60`, `OLLAMA_MAX_TOTAL_CHARS=500000`; 改用 `agentLoop.js` 执行链路
 - `electron/core/state.js`: 会话历史 cap `slice(-200)`
 - `electron/core/agentLoop.js`: 统一执行入口 — Ollama / VGO Remote Cloud / Custom HTTP 三渠道均通过 `runAgentLoop` 执行
 - `electron/core/toolAliases.js`: 共享工具别名映射, `toolRuntime.js` 和 `toolResilience.js` 共同导入
-- `electron/main.js`: 3274→1933 行 — IPC 处理器已拆至 `electron/ipc/`
+- `electron/core/settings.js`: 共享函数中心 — 含 `isVgoManagedCloudProfile`、`syncRemoteProfileState`、`DEFAULT_SETTINGS`、`loadSettings`、`saveSettings` 等
+- `electron/main.js`: 3274→1788 行 — IPC 处理器已拆至 `electron/ipc/`, 移除 6 个死函数, 清理 unused imports
 - `electron/ipc/`: IPC 模块目录
   - `chat.js`: 聊天 IPC 处理器 (chat:send/abort/resetSession 等 10 个 handler) + 会话总结/权限请求/事件格式等辅助函数
   - `settings.js`: 设置/认证/Profile 管理 IPC 处理器 (settings:* runtime:* 共 20+ handler) + VGO AI 登录/浏览器认证/Profile CRUD 等辅助函数

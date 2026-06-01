@@ -6,19 +6,14 @@ import { ToggleRow } from './ToggleRow'
 export function AppearanceTab() {
   const { t } = useI18n()
   const { theme, setTheme, compactMode, toggleCompactMode, hydrate } = useAppStore()
-  const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
 
   const withStatus = async (message: string, fn: () => Promise<void>) => {
     setStatus(message)
-    setBusy(true)
     try {
       await fn()
-      window.setTimeout(() => setStatus(''), 1400)
-    } catch (error: any) {
-      setStatus(error?.message || t('settings.operationFailed'))
     } finally {
-      setBusy(false)
+      setStatus('')
     }
   }
 
@@ -44,7 +39,7 @@ export function AppearanceTab() {
             type="button"
             className={`theme-card ${theme === id ? 'active' : ''}`}
             onClick={async () => {
-              setTheme(id as any)
+              setTheme(id as 'aurora' | 'paper-light' | 'graphite' | 'solar')
               await applyAppearance({ theme: id })
             }}
           >

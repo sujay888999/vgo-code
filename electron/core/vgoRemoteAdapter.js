@@ -843,12 +843,11 @@ function isNetworkFetchFailure(error) {
   );
 }
 
-function resolveLocalProviderEndpoint(baseUrl = "", provider = "") {
+function resolveLocalProviderEndpoint(baseUrl = "") {
   const normalized = String(baseUrl || "").trim().replace(/\/+$/, "");
   const lower = normalized.toLowerCase();
-  const providerLower = String(provider || "").toLowerCase();
 
-  if (providerLower.includes("ollama") || /localhost:11434|127\.0\.0\.1:11434/.test(lower)) {
+  if (/localhost:11434|127\.0\.0\.1:11434/.test(lower)) {
     return {
       mode: "ollama",
       requestUrl: /\/api\/chat$/.test(lower) ? normalized : `${normalized}/api/chat`
@@ -1657,7 +1656,7 @@ async function runLocalPrompt({
   const remote = settings?.remote || {};
   const normalizedModelId = normalizeRemoteModelId(remote.model);
   const baseUrl = (remote.baseUrl || "").trim().replace(/\/+$/, "");
-  const endpointPlan = resolveLocalProviderEndpoint(baseUrl, remote.provider);
+  const endpointPlan = resolveLocalProviderEndpoint(baseUrl);
   const detectedSkills = skillRegistry.detectRelevantSkills(prompt);
   const activeSkills = resolveSkillRequiredInspectionPaths(detectedSkills, workspace);
   const skillPreflightNudge = buildSkillPreflightNudge(activeSkills);
@@ -1869,7 +1868,7 @@ async function runHealthCheck(_workspace, settings) {
 
   const remote = settings?.remote || {};
   const baseUrl = (remote.baseUrl || "").trim().replace(/\/+$/, "");
-  const endpointPlan = resolveLocalProviderEndpoint(baseUrl, remote.provider);
+  const endpointPlan = resolveLocalProviderEndpoint(baseUrl);
   if (!baseUrl) {
     return {
       ok: false,

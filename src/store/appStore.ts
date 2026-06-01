@@ -511,7 +511,7 @@ export const useAppStore = create<AppState>((set) => ({
   },
   
   // Hydrate from desktop
-  hydrate: (state: any) => set((current) => {
+  hydrate: (state: Record<string, unknown>) => set((current) => {
     // Extract nested settings from Electron state structure
     const settings = state.settings || state
     const vgoAI = settings.vgoAI || {}
@@ -524,7 +524,7 @@ export const useAppStore = create<AppState>((set) => ({
     // Convert history entries to messages format
     // Backend sends history as array of {id, role, text, status, createdAt}
     const history = state.history || []
-    const historyMessages = history.map((entry: any, index: number) => ({
+    const historyMessages = history.map((entry: Record<string, unknown>, index: number) => ({
       id: entry.id || `msg-${index}`,
       role: entry.role || 'assistant',
       text: tryRecoverMojibake(entry.text || ''),

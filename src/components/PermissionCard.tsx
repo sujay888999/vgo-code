@@ -1,4 +1,4 @@
-import React from 'react'
+
 import type { TaskStep } from '../store/appStore'
 import { ShieldAlert, Check, X } from 'lucide-react'
 import { useI18n } from '../i18n'

@@ -1,0 +1,247 @@
+/* Main Header */
+.main-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+body.mode-pro .main-header {
+  padding: 0.7rem 0.95rem;
+  background: rgba(255,255,255,0.02);
+}
+
+body.mode-ux-pro-max .main-header {
+  padding: 0.9rem 1.2rem;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.04), transparent),
+    rgba(255,255,255,0.01);
+  backdrop-filter: blur(14px);
+}
+
+.header-left, .header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.session-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.session-label {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.workspace-indicator {
+  font-size: 0.75rem;
+  padding: 0.125rem 0.5rem;
+  background: var(--bg-hover);
+  border-radius: 4px;
+}
+
+.model-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  background: rgba(99, 102, 241, 0.2);
+  border-radius: 9999px;
+}
+
+body.mode-pro .model-badge {
+  padding: 0.3rem 0.8rem;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+}
+
+body.mode-ux-pro-max .model-badge {
+  padding: 0.45rem 0.95rem;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(34, 211, 238, 0.14));
+  border: 1px solid rgba(129, 140, 248, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+.model-name {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--primary);
+}
+
+.provider-name {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.context-meter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.context-bar {
+  width: 60px;
+  height: 4px;
+  background: var(--bg-hover);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.context-fill {
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s;
+}
+
+.context-label {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.context-usage-card {
+  margin: 0 auto 1rem;
+  max-width: 800px;
+  padding: 1rem 1rem 0.9rem;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.02), transparent),
+    var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+}
+
+body.mode-pro .context-usage-card {
+  max-width: 860px;
+  padding: 0.9rem 0.95rem 0.8rem;
+}
+
+body.mode-ux-pro-max .context-usage-card {
+  max-width: 920px;
+  padding: 1.05rem 1.1rem 0.95rem;
+  border-radius: 22px;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.12);
+}
+
+.context-usage-card.healthy {
+  box-shadow: inset 0 1px 0 rgba(16, 185, 129, 0.06);
+}
+
+.context-usage-card.warning {
+  border-color: rgba(245, 158, 11, 0.35);
+  box-shadow: inset 0 1px 0 rgba(245, 158, 11, 0.06);
+}
+
+.context-usage-card.critical {
+  border-color: rgba(239, 68, 68, 0.35);
+  box-shadow: inset 0 1px 0 rgba(239, 68, 68, 0.06);
+}
+
+.context-usage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.context-usage-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 0.2rem;
+}
+
+.context-usage-header h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.context-usage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.context-usage-meta span {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding: 0.26rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.context-usage-progress {
+  width: 100%;
+  height: 10px;
+  background: var(--bg);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 0.9rem;
+}
+
+.context-usage-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), rgba(34, 211, 238, 0.9));
+  transition: width 0.25s ease;
+}
+
+.context-usage-card.warning .context-usage-progress-fill {
+  background: linear-gradient(90deg, var(--warning), #fbbf24);
+}
+
+.context-usage-card.critical .context-usage-progress-fill {
+  background: linear-gradient(90deg, var(--danger), #fb7185);
+}
+
+.context-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.context-usage-stat {
+  padding: 0.75rem 0.85rem;
+  background: rgba(148, 163, 184, 0.06);
+  border: 1px solid rgba(148, 163, 184, 0.08);
+  border-radius: 14px;
+}
+
+.context-usage-stat span {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.context-usage-stat strong {
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.context-usage-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.85rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+@media (max-width: 900px) {
+  .context-usage-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .context-usage-header,
+  .context-usage-footer {
+    flex-direction: column;
+  }
+
+  .context-usage-meta {
+    justify-content: flex-start;
+  }
+}

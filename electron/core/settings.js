@@ -124,7 +124,6 @@ const DEFAULT_SETTINGS = {
   remote: {
     baseUrl: "http://127.0.0.1:3210",
     modelListUrl: "",
-    ollamaUrl: "",
     provider: "VGO Remote",
     model: "vgo-coder-pro",
     apiKey: "",
@@ -137,7 +136,6 @@ const DEFAULT_SETTINGS = {
       provider: "VGO Remote",
       baseUrl: "http://127.0.0.1:3210",
       modelListUrl: "",
-      ollamaUrl: "",
       modelCatalog: [],
       model: "vgo-coder-pro",
       apiKey: "",
@@ -149,7 +147,6 @@ const DEFAULT_SETTINGS = {
       provider: "Ollama",
       baseUrl: "http://localhost:11434",
       modelListUrl: "",
-      ollamaUrl: "http://localhost:11434",
       modelCatalog: [],
       model: "gemma4:latest",
       apiKey: "",
@@ -161,7 +158,6 @@ const DEFAULT_SETTINGS = {
       provider: "Ollama",
       baseUrl: "http://localhost:11434",
       modelListUrl: "",
-      ollamaUrl: "http://localhost:11434",
       modelCatalog: [],
       model: "gemma4:e4b",
       apiKey: "",
@@ -206,7 +202,6 @@ function normalizeProfiles(parsed) {
           provider: profile.provider || "VGO Remote",
           baseUrl: profile.baseUrl || DEFAULT_SETTINGS.remote.baseUrl,
           modelListUrl: profile.modelListUrl || "",
-          ollamaUrl: profile.ollamaUrl || "",
           modelCatalog: Array.isArray(profile.modelCatalog) ? profile.modelCatalog : [],
           model: profile.model || DEFAULT_SETTINGS.remote.model,
           apiKey: profile.apiKey || "",
@@ -246,7 +241,6 @@ function normalizeProfiles(parsed) {
       provider: activeProfile.provider,
       baseUrl: activeProfile.baseUrl,
       modelListUrl: activeProfile.modelListUrl || "",
-      ollamaUrl: activeProfile.ollamaUrl || "",
       model: activeProfile.model,
       apiKey: activeProfile.apiKey,
       systemPrompt: activeProfile.systemPrompt
@@ -336,10 +330,41 @@ function saveSettings(settings) {
   fs.writeFileSync(file, JSON.stringify(settings, null, 2), "utf8");
 }
 
+function syncRemoteProfileState(settings, nextRemote, extraProfileFields = {}, currentVgoAi = null) {
+  const activeProfileId = settings.activeRemoteProfileId;
+  const profiles = (settings.remoteProfiles || []).map((profile) =>
+    profile.id === activeProfileId
+      ? {
+          ...profile,
+          ...extraProfileFields,
+          provider: extraProfileFields.provider || nextRemote.provider || profile.provider || "VGO Remote",
+          baseUrl: nextRemote.baseUrl,
+          modelListUrl: typeof nextRemote.modelListUrl === "string" ? nextRemote.modelListUrl : profile.modelListUrl || "",
+          modelCatalog: Array.isArray(extraProfileFields.modelCatalog) ? extraProfileFields.modelCatalog : profile.modelCatalog || [],
+          model: nextRemote.model,
+          apiKey: nextRemote.apiKey,
+          systemPrompt: nextRemote.systemPrompt,
+        }
+      : profile,
+  );
+  return {
+    ...settings,
+    vgoAI: currentVgoAi !== null ? currentVgoAi : settings.vgoAI,
+    remote: {
+      ...nextRemote,
+      provider: extraProfileFields.provider || nextRemote.provider || profiles.find((p) => p.id === activeProfileId)?.provider || "VGO Remote",
+      modelListUrl: typeof nextRemote.modelListUrl === "string" ? nextRemote.modelListUrl : profiles.find((p) => p.id === activeProfileId)?.modelListUrl || "",
+    },
+    remoteProfiles: profiles,
+  };
+}
+
 module.exports = {
   DEFAULT_SETTINGS,
   DEFAULT_PROFILE_ID,
   buildGuestModelCatalog,
+  isVgoManagedCloudProfile,
   loadSettings,
-  saveSettings
+  saveSettings,
+  syncRemoteProfileState,
 };

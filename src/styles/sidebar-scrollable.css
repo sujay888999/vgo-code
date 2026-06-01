@@ -1,0 +1,47 @@
+/* Sidebar scrollable */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: visible;
+}
+
+.sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.sidebar-footer {
+  flex-shrink: 0;
+  padding: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-auth-box {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.sidebar-auth-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sidebar-auth-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.sidebar-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}

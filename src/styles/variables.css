@@ -1,0 +1,135 @@
+:root {
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --accent: #6366f1;
+  --accent-bg: rgba(99, 102, 241, 0.16);
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --bg: #0f172a;
+  --bg-elevated: #1e293b;
+  --bg-secondary: rgba(15, 23, 42, 0.72);
+  --bg-hover: #334155;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  --border: #334155;
+  --radius: 8px;
+  --font: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+body.aurora {
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --accent: #6366f1;
+  --accent-bg: rgba(99, 102, 241, 0.18);
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --bg: #0f172a;
+  --bg-elevated: #1e293b;
+  --bg-hover: #334155;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  --border: #334155;
+}
+
+body.paper-light {
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --accent: #2563eb;
+  --accent-bg: rgba(37, 99, 235, 0.12);
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --bg: #f8fafc;
+  --bg-elevated: #ffffff;
+  --bg-secondary: rgba(241, 245, 249, 0.9);
+  --bg-hover: #f1f5f9;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --border: #e2e8f0;
+}
+
+body.graphite {
+  --primary: #6b7280;
+  --primary-hover: #4b5563;
+  --accent: #9ca3af;
+  --accent-bg: rgba(156, 163, 175, 0.16);
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --bg: #111827;
+  --bg-elevated: #1f2937;
+  --bg-hover: #374151;
+  --text: #f9fafb;
+  --text-muted: #9ca3af;
+  --border: #374151;
+}
+
+body.solar {
+  --primary: #f59e0b;
+  --primary-hover: #d97706;
+  --accent: #d97706;
+  --accent-bg: rgba(217, 119, 6, 0.14);
+  --success: #22c55e;
+  --warning: #fbbf24;
+  --danger: #ef4444;
+  --bg: #fefce8;
+  --bg-elevated: #fef9c3;
+  --bg-hover: #fef08a;
+  --text: #713f12;
+  --text-muted: #a16207;
+  --border: #ca8a04;
+}
+
+body.mode-standard {
+  --radius: 12px;
+}
+
+body.mode-pro {
+  --radius: 10px;
+}
+
+body.mode-ux-pro-max {
+  --radius: 18px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.22s ease, color 0.22s ease;
+}
+
+.layout {
+  display: flex;
+  height: 100vh;
+  overflow: visible;
+}
+
+body.mode-standard .layout {
+  gap: 0;
+}
+
+body.mode-pro .layout {
+  gap: 10px;
+  padding: 10px;
+}
+
+body.mode-ux-pro-max .layout {
+  gap: 16px;
+  padding: 16px;
+}

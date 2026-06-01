@@ -8,50 +8,99 @@ interface AttachmentItem {
   imageBase64?: string
 }
 
+interface DesktopState {
+  sessions?: Array<Record<string, unknown>>
+  activeSessionId?: string
+  workspace?: string
+  settings?: Record<string, unknown>
+  history?: Array<Record<string, unknown>>
+  runtime?: {
+    engineId: string
+    engineLabel: string
+    providerLabel: string
+  }
+  engines?: Array<Record<string, string>>
+  contextStats?: Record<string, unknown>
+  mockServer?: Record<string, string> | null
+  skills?: Array<Record<string, unknown>>
+}
+
+interface DesktopResult {
+  ok: boolean
+  runtime?: {
+    engineId: string
+    engineLabel: string
+    providerLabel: string
+  }
+  settings?: Record<string, unknown>
+}
+
+interface UpdateInfo {
+  ok?: boolean
+  error?: string
+  updateAvailable?: boolean
+  currentVersion?: string
+  latestVersion?: string
+  downloadUrl?: string
+  releaseNotes?: string
+  releaseDate?: string
+}
+
+interface UpdateSettings {
+  autoCheck: boolean
+  intervalHours?: number
+  skippedVersion?: string
+}
+
 interface VGODesktopAPI {
-  createSession?: () => void
-  resetSession?: () => void
-  switchSession?: (sessionId: string) => Promise<any>
-  deleteSession?: (sessionId: string) => Promise<any>
-  pickWorkspace?: () => void
+  createSession?: () => Promise<DesktopResult>
+  resetSession?: () => Promise<DesktopResult>
+  switchSession?: (sessionId: string) => Promise<DesktopResult>
+  deleteSession?: (sessionId: string) => Promise<DesktopResult>
+  pickWorkspace?: () => Promise<string | null>
   analyze?: () => void
   login?: () => void
+  loginWithCredentials?: (payload: { email: string; password: string }) => void
   logout?: () => void
-  renameSession?: (name: string) => void
+  renameSession?: (name: string) => Promise<DesktopResult>
   submitPrompt?: (payload: { text: string; attachments?: AttachmentItem[] } | string) => void
   stopPrompt?: () => void
   attachFile?: () => Promise<AttachmentItem[]>
   removeAttachment?: (index: number) => Promise<{ ok: boolean }>
-  respondPermission?: (payload: { requestId: string; approved: boolean }) => Promise<any>
+  respondPermission?: (payload: { requestId: string; approved: boolean }) => Promise<DesktopResult>
   
-  on?: (channel: string, callback: (...args: any[]) => void) => void
-  off?: (channel: string, callback: (...args: any[]) => void) => void
+  on?: (channel: string, callback: (...args: unknown[]) => void) => void
+  off?: (channel: string, callback: (...args: unknown[]) => void) => void
   
-  getState?: () => any
-  getSettings?: () => any
-  setState?: (state: any) => void
-  setEngine?: (engineId: string) => Promise<any>
-  updateAppearance?: (payload: any) => Promise<any>
-  updateLocalization?: (payload: any) => Promise<any>
-  updateBehavior?: (payload: any) => Promise<any>
-  updateAgentPreferences?: (payload: any) => Promise<any>
-  updateVgoAiProfile?: (payload: any) => Promise<any>
-  updatePermissions?: (payload: any) => Promise<any>
-  updateAccess?: (payload: any) => Promise<any>
-  updateRemote?: (payload: any) => Promise<any>
-  createRemoteProfile?: (payload: any) => Promise<any>
-  updateRemoteProfile?: (profileId: string, payload: any) => Promise<any>
-  deleteRemoteProfile?: (profileId: string) => Promise<any>
-  selectRemoteProfile?: (profileId: string) => Promise<any>
-  refreshRemoteProfileModels?: (profileId?: string) => Promise<any>
-  installSkill?: (payload: { sourcePath: string; name?: string }) => Promise<any>
+  getState?: () => Promise<DesktopState>
+  getSettings?: () => Promise<Record<string, unknown>>
+  setState?: (state: Record<string, unknown>) => void
+  setEngine?: (engineId: string) => Promise<DesktopResult>
+  updateAppearance?: (payload: Record<string, unknown>) => Promise<DesktopResult>
+  updateLocalization?: (payload: Record<string, unknown>) => Promise<DesktopResult>
+  updateBehavior?: (payload: Record<string, unknown>) => Promise<DesktopResult>
+  updateAgentPreferences?: (payload: Record<string, unknown>) => Promise<DesktopResult>
+  updateVgoAiProfile?: (payload: Record<string, unknown>) => Promise<DesktopResult>
+  updatePermissions?: (payload: Record<string, unknown>) => Promise<DesktopResult>
+  updateAccess?: (payload: Record<string, unknown>) => Promise<DesktopResult>
+  updateRemote?: (payload: Record<string, unknown>) => Promise<DesktopResult>
+  createRemoteProfile?: (payload: Record<string, unknown>) => Promise<DesktopResult>
+  updateRemoteProfile?: (profileId: string, payload: Record<string, unknown>) => Promise<DesktopResult>
+  deleteRemoteProfile?: (profileId: string) => Promise<DesktopResult>
+  selectRemoteProfile?: (profileId: string) => Promise<DesktopResult>
+  refreshRemoteProfileModels?: (profileId?: string) => Promise<DesktopResult>
+  installSkill?: (payload: { sourcePath: string; name?: string }) => Promise<DesktopResult>
+  installWhisper?: () => Promise<DesktopResult>
+  normalizeEngineLog?: () => Promise<void>
+  updateSkillState?: (payload: { id: string; enabled: boolean }) => Promise<DesktopResult>
+  togglePinSession?: (sessionId: string) => Promise<DesktopResult>
   reportRendererError?: (payload: { source?: string; message?: string }) => void
-  checkForUpdates?: (payload?: { force?: boolean; updateUrl?: string }) => Promise<any>
-  installUpdate?: (payload?: { downloadUrl?: string; latestVersion?: string; releaseNotes?: string; releaseDate?: string }) => Promise<any>
-  skipVersion?: (version: string) => Promise<any>
-  resetSkipVersion?: () => Promise<any>
-  setAutoCheck?: (enabled: boolean, intervalHours?: number) => Promise<any>
-  getUpdateSettings?: () => Promise<any>
+  checkForUpdates?: (payload?: { force?: boolean; updateUrl?: string }) => Promise<UpdateInfo>
+  installUpdate?: (payload?: { downloadUrl?: string; latestVersion?: string; releaseNotes?: string; releaseDate?: string }) => Promise<DesktopResult>
+  skipVersion?: (version: string) => Promise<DesktopResult>
+  resetSkipVersion?: () => Promise<DesktopResult>
+  setAutoCheck?: (enabled: boolean, intervalHours?: number) => Promise<void>
+  getUpdateSettings?: () => Promise<UpdateSettings>
 }
 
 declare global {

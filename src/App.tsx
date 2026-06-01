@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useI18n, setI18nLocale } from './i18n'
 import { useAppStore } from './store/appStore'
 import { tryRecoverMojibake } from './utils/mojibake'
@@ -8,26 +8,10 @@ import { SettingsModal } from './components/SettingsModal'
 import { RenameModal } from './components/RenameModal'
 import { UpdateNotification } from './components/UpdateNotification'
 
-const LIVE_MESSAGE_PREFIX = 'live-assistant-'
 const FINAL_MESSAGE_PREFIX = 'final-assistant-'
-
-function buildLiveMessageId(sessionId?: string) {
-  return `${LIVE_MESSAGE_PREFIX}${sessionId || 'active'}`
-}
 
 function buildFinalMessageId(sessionId?: string) {
   return `${FINAL_MESSAGE_PREFIX}${sessionId || 'active'}`
-}
-
-function appendUniqueBlock(currentText: string, nextBlock: string) {
-  const normalizedCurrent = String(currentText || '').trim()
-  const normalizedNext = String(nextBlock || '').trim()
-
-  if (!normalizedNext) return normalizedCurrent
-  if (!normalizedCurrent) return normalizedNext
-  if (normalizedCurrent.includes(normalizedNext)) return normalizedCurrent
-
-  return `${normalizedCurrent}\n\n${normalizedNext}`.trim()
 }
 
 function normalizeEventPayload<T>(value: T): T {
@@ -47,11 +31,11 @@ function normalizeEventPayload<T>(value: T): T {
   return value
 }
 
-function buildLiveProgressBlock(eventType: string, payload: any, _t: (key: string) => string) {
+function buildLiveProgressBlock(eventType: string, payload: Record<string, unknown>, _t: (key: string) => string) {
   if (eventType === 'task_status') {
     const s = payload?.status
     if (s === 'thinking' || s === 'continuing' || s === 'planning') return ''
-    if (s === 'retrying' || s === 'fallback_model') return '↻ 切换策略中...'
+    if (s === 'retrying' || s === 'fallback_model') return _t('app.liveProgress.retrying')
     const msg = String(payload?.message || payload?.detail || '').trim()
     return msg || ''
   }
@@ -77,17 +61,17 @@ function buildLiveProgressBlock(eventType: string, payload: any, _t: (key: strin
   }
 
   if (eventType === 'permission_requested') {
-    return `⏸ 等待授权: ${payload?.tool || ''}${payload?.detail ? `  ${payload.detail}` : ''}`
+    return _t('app.liveProgress.waitingAuth', { tool: payload?.tool || '', detail: payload?.detail ? `  ${payload.detail}` : '' })
   }
-  if (eventType === 'permission_granted') return `✓ 已授权: ${payload?.tool || ''}`
-  if (eventType === 'permission_denied') return `✗ 授权拒绝: ${payload?.tool || ''}`
+  if (eventType === 'permission_granted') return _t('app.liveProgress.authorized', { tool: payload?.tool || '' })
+  if (eventType === 'permission_denied') return _t('app.liveProgress.denied', { tool: payload?.tool || '' })
   if (eventType === 'capability_gap') return payload?.detail ? `⚠ ${payload.detail}` : ''
   if (eventType === 'skill_suggestions') return ''
 
   return ''
 }
 
-function getTaskCopy(status?: string, payload?: any, t: (key: string) => string = (k: string) => k) {
+function getTaskCopy(status?: string, payload?: Record<string, unknown>, t: (key: string) => string = (k: string) => k) {
   switch (status) {
     case 'planning':
       return {
@@ -129,7 +113,7 @@ function getTaskCopy(status?: string, payload?: any, t: (key: string) => string 
     case 'error':
     case 'failed':
       return {
-        title: payload?.message || '执行受阻，已尝试切换方案',
+        title: payload?.message || t('app.taskCopy.blocked'),
         detail: payload?.detail || '',
         state: 'warning' as const,
       }
@@ -210,7 +194,6 @@ export function App() {
       const status = payload.status
       const timestamp = Date.now()
       const eventSessionId = payloadSessionId || activeSessionId || 'active'
-      const liveMessageId = buildLiveMessageId(eventSessionId || undefined)
       const finalMessageId = buildFinalMessageId(eventSessionId || undefined)
       const eventSeq = Number(payload.eventSeq || 0)
       const lastSeq = lastEventSeqRef.current.get(eventSessionId) || 0
@@ -288,23 +271,6 @@ export function App() {
         const existing = getStream()
         if (!existing) return
         updateMessage(finalMessageId, { status: nextStatus, timestamp, kind: 'final' })
-      }
-
-      const finalizeLiveMessage = (finalText: string, nextStatus: 'done' | 'error') => {
-        markLastLogDone()
-        const existing = getStream()
-        // Append last log line to logLines if meaningful, mark done
-        if (finalText.trim()) {
-          const prev = existing?.logLines || []
-          const newLines = [...prev, { text: finalText, done: true }]
-          if (existing) {
-            updateMessage(finalMessageId, { logLines: newLines, status: nextStatus, timestamp, kind: 'final' })
-          } else {
-            addMessage({ id: finalMessageId, role: 'assistant', text: '', logLines: newLines, status: nextStatus, timestamp, kind: 'final' })
-          }
-        } else if (existing) {
-          updateMessage(finalMessageId, { status: nextStatus, timestamp, kind: 'final' })
-        }
       }
 
       const upsertTaskStep = (
@@ -484,12 +450,12 @@ export function App() {
       }
 
       if (eventType === 'skill_suggestions') {
-        const skills = Array.isArray(payload.skills) ? payload.skills : []
+        const skills: Array<Record<string, unknown>> = Array.isArray(payload.skills) ? payload.skills as Array<Record<string, unknown>> : []
         upsertTaskStep('task-skills', {
           title: t('agentTrace.skillSuggestion'),
           detail:
             payload.detail ||
-            skills.map((skill: any) => `${skill.name}: ${skill.path}`).join('\n') ||
+            skills.map((skill: Record<string, unknown>) => `${String(skill.name)}: ${String(skill.path)}`).join('\n') ||
             t('agentTrace.noMatchingSkill'),
           state: skills.length ? 'completed' : 'error',
         })

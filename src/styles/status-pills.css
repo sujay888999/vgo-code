@@ -1,0 +1,13 @@
+/* Status Pills */
+.status-pill {
+  font-size: 0.6875rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
+.status-pill.online {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--success);
+}

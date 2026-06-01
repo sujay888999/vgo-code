@@ -13,8 +13,8 @@ export function LanguageTab() {
       const result = await window.vgoDesktop?.updateLocalization?.(payload)
       if (result) hydrate(result)
       window.setTimeout(() => setStatus(''), 1400)
-    } catch (error: any) {
-      setStatus(error?.message || t('settings.operationFailed'))
+    } catch (error: unknown) {
+      setStatus(error instanceof Error ? error.message : t('settings.operationFailed'))
     }
   }
 
@@ -31,8 +31,8 @@ export function LanguageTab() {
             type="button"
             className={`theme-card ${locale === id ? 'active' : ''}`}
             onClick={async () => {
-              setLocale(id as any)
-              setI18nLocale(id as any)
+              setLocale(id as 'zh-CN' | 'en-US')
+              setI18nLocale(id as 'zh-CN' | 'en-US')
               await applyLocalization({ locale: id })
             }}
           >

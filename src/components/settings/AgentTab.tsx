@@ -22,8 +22,8 @@ export function AgentTab() {
     try {
       await fn()
       window.setTimeout(() => setStatus(''), 1400)
-    } catch (error: any) {
-      setStatus(error?.message || t('settings.operationFailed'))
+    } catch (error: unknown) {
+      setStatus(error instanceof Error ? error.message : t('settings.operationFailed'))
     } finally {
       setBusy(false)
     }

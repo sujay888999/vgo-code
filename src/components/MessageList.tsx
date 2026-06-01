@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Message, LogLine } from '../store/appStore'
 import { useI18n } from '../i18n'
@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 
 interface SyntaxModule {
-  default: React.ComponentType<any> & {
+  default: React.ComponentType<Record<string, unknown>> & {
     registerLanguage?: (name: string, syntax: unknown) => void
   }
 }
@@ -112,7 +112,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
           <div className="patch-summary">
             <button type="button" className="patch-toggle" onClick={() => setPatchExpanded(v => !v)}>
               {patchExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-              <span>改动了 {patches.length} 个文件</span>
+              <span>{t('message.patchCount', { count: patches.length })}</span>
             </button>
             {patchExpanded && (
               <ul className="patch-list">
@@ -128,7 +128,7 @@ function MessageItem({ message, onCopy, copiedId }: MessageItemProps) {
         )}
         {!isLoading && (
           <div className="message-actions">
-            <button className="message-action" onClick={() => onCopy(message.id, message.text)} title="复制">
+            <button className="message-action" onClick={() => onCopy(message.id, message.text)} title={t('message.copy')}>
               {copiedId === message.id ? <CheckCheck size={14} /> : <Copy size={14} />}
             </button>
           </div>

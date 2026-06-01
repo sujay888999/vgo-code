@@ -1229,7 +1229,7 @@ async function runOllamaPrompt({
   signal
 }) {
   const remote = settings?.remote || {};
-  const baseUrl = (remote.ollamaUrl || remote.baseUrl || "http://localhost:11434").replace(/\/+$/, "");
+  const baseUrl = (remote.baseUrl || "http://localhost:11434").replace(/\/+$/, "");
   const model = remote.model || "gemma4:latest";
   const imageTask = hasImageAttachments(attachments);
   const audioVideoTask = hasAudioVideoAttachments(attachments);
@@ -1456,7 +1456,7 @@ async function runOllamaPrompt({
 
 async function runHealthCheck(_workspace, settings) {
   const remote = settings?.remote || {};
-  const baseUrl = (remote.ollamaUrl || remote.baseUrl || "http://localhost:11434").replace(/\/+$/, "");
+  const baseUrl = (remote.baseUrl || "http://localhost:11434").replace(/\/+$/, "");
 
   try {
     const response = await fetch(baseUrl + "/api/tags", { method: "GET" });

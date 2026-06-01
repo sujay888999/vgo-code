@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { useI18n } from '../i18n'
 import { ModelSelector } from './ModelSelector'
@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 
 export function Sidebar() {
-  const { t, locale } = useI18n()
+  const { t } = useI18n()
   const {
     sessions,
     activeSessionId,
@@ -117,9 +117,7 @@ export function Sidebar() {
       const projectPath = String(session.directory || workspace || '').trim() || '__unassigned__'
       const projectName =
         projectPath === '__unassigned__'
-          ? locale === 'en-US'
-            ? 'Unassigned'
-            : '未绑定目录'
+          ? t('sidebar.unbound')
           : projectPath.split(/[/\\]/).pop() || projectPath
 
       const current = map.get(projectPath)
@@ -146,7 +144,7 @@ export function Sidebar() {
         const bLatest = b.sessions[0]?.updatedAt ? new Date(b.sessions[0].updatedAt).getTime() : 0
         return bLatest - aLatest
       })
-  }, [activeSessionId, filteredSessions, locale, workspace, sessions])
+  }, [activeSessionId, filteredSessions, t, workspace])
 
   const toggleProjectCollapsed = useCallback((projectPath: string) => {
     setCollapsedProjectPaths((prev) =>
@@ -160,15 +158,15 @@ export function Sidebar() {
         <section className="brand-hero">
           <div className="brand-lockup">
             <div>
-              <div className="brand-title">VGO CODE</div>
-              <div className="brand-subtitle">AI Agent 工作台</div>
+              <div className="brand-title">{t('app.title')}</div>
+              <div className="brand-subtitle">{t('sidebar.brandSubtitle')}</div>
             </div>
           </div>
-          <p className="brand-copy">把登录、模型、线程、任务面板和工作区整合到一套专业化 Agent 工作流中。</p>
+          <p className="brand-copy">{t('sidebar.brandCopy')}</p>
           <div className="brand-badges">
-            <span className="brand-badge">多线程</span>
-            <span className="brand-badge">多模型</span>
-            <span className="brand-badge">VGO AI</span>
+            <span className="brand-badge">{t('sidebar.badgeMultiThread')}</span>
+            <span className="brand-badge">{t('sidebar.badgeMultiModel')}</span>
+            <span className="brand-badge">{t('sidebar.badgeVgoAI')}</span>
           </div>
         </section>
 
@@ -223,12 +221,12 @@ export function Sidebar() {
               )
             })}
 
-            {filteredSessions.length === 0 && <div className="helper-text" style={{ padding: '1rem', textAlign: 'center' }}>暂无匹配线程</div>}
+            {filteredSessions.length === 0 && <div className="helper-text" style={{ padding: '1rem', textAlign: 'center' }}>{t('sidebar.noMatchSessions')}</div>}
           </div>
 
           <div className="session-actions">
-            <button className="ghost-button" onClick={() => setRenameOverlayOpen(true)}>重命名当前线程</button>
-            <button className="ghost-button" onClick={() => void handleResetSession()}>重置当前线程</button>
+            <button className="ghost-button" onClick={() => setRenameOverlayOpen(true)}>{t('sidebar.renameThread')}</button>
+            <button className="ghost-button" onClick={() => void handleResetSession()}>{t('sidebar.resetThread')}</button>
           </div>
         </section>
 
@@ -254,7 +252,7 @@ export function Sidebar() {
                 else await refreshState()
               }}
             >
-              <FolderOpen size={14} /> 切换目录
+              <FolderOpen size={14} /> {t('sidebar.switchDir')}
             </button>
             <button
               className="ghost-button"
@@ -267,7 +265,7 @@ export function Sidebar() {
                 }
               }}
             >
-              <Zap size={14} /> 分析目录
+              <Zap size={14} /> {t('sidebar.analyzeDir')}
             </button>
           </div>
         </section>

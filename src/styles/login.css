@@ -1,0 +1,39 @@
+/* Login status */
+.login-status {
+  font-size: 0.8125rem;
+  color: var(--primary);
+  margin: 0.5rem 0;
+  text-align: center;
+}
+
+/* Button disabled state */
+.primary-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Login form */
+.login-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.login-form .text-input {
+  width: 100%;
+}
+
+.login-form-buttons {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+}

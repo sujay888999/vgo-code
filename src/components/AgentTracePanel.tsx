@@ -1,4 +1,4 @@
-import React from 'react'
+
 import type { TaskStep } from '../store/appStore'
 import { useI18n } from '../i18n'
 import {
@@ -103,7 +103,7 @@ function getIcon(step: TaskStep, t: (key: string) => string) {
 }
 
 export function AgentTracePanel({ steps, promptRunning }: AgentTracePanelProps) {
-  const { t, locale } = useI18n()
+  const { t } = useI18n()
   const visible = steps
     .filter((step) =>
       [
@@ -123,10 +123,10 @@ export function AgentTracePanel({ steps, promptRunning }: AgentTracePanelProps) 
   if (!promptRunning && !visible.length) return null
 
   return (
-    <section className="agent-process-stream" aria-label="Codex Process">
+    <section className="agent-process-stream" aria-label={t('agentTrace.codexProcess')}>
       <div className="agent-process-head">
         <div className="agent-process-head-copy">
-          <span className="agent-process-title">Codex Process</span>
+          <span className="agent-process-title">{t('agentTrace.codexProcess')}</span>
           <span className="agent-process-caption">{t('agentTrace.processVisible')}</span>
         </div>
         <span className="agent-process-subtitle">{promptRunning ? t('agentTrace.running') : t('agentTrace.recentActivity')}</span>

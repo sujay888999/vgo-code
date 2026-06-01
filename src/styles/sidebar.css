@@ -1,0 +1,105 @@
+/* Sidebar */
+.sidebar {
+  width: 280px;
+  background: var(--bg-elevated);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+body.mode-pro .sidebar,
+body.mode-pro .main-panel,
+body.mode-pro .task-panel-wrapper {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.18);
+}
+
+body.mode-pro .sidebar {
+  width: 292px;
+  border-right: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 20px;
+}
+
+body.mode-ux-pro-max .sidebar,
+body.mode-ux-pro-max .main-panel,
+body.mode-ux-pro-max .task-panel-wrapper {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 24px;
+  box-shadow: 0 28px 56px rgba(15, 23, 42, 0.2);
+  overflow: hidden;
+}
+
+body.mode-ux-pro-max .sidebar {
+  width: 316px;
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.12), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+    var(--bg-elevated);
+}
+
+.sidebar > .sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.brand-hero {
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+body.mode-pro .brand-hero {
+  padding: 1.125rem 1.125rem 1rem;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+}
+
+body.mode-ux-pro-max .brand-hero {
+  padding: 1.35rem 1.35rem 1.1rem;
+  background:
+    linear-gradient(120deg, rgba(99, 102, 241, 0.14), rgba(34, 211, 238, 0.06)),
+    linear-gradient(180deg, rgba(255,255,255,0.04), transparent);
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
+.brand-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.brand-subtitle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.brand-copy {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.brand-badges {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.brand-badge {
+  font-size: 0.6875rem;
+  padding: 0.25rem 0.5rem;
+  background: var(--bg-hover);
+  border-radius: 4px;
+  color: var(--text-muted);
+}
