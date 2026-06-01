@@ -123,7 +123,7 @@ async function fetchVgoAiProfile(accessToken) {
 async function fetchRealVgoModels(accessToken) {
   const payload = await fetchJson("https://vgoai.cn/api/v1/chat/models", { headers: { Authorization: `Bearer ${accessToken}` } });
   const items = payload?.data || payload?.items || payload?.models || [];
-  return Array.isArray(items) ? items.map((item) => ({ id: item.id, label: item.name || item.label || item.id, description: item.description || "", contextWindow: Number(item.contextWindow || item.contextTokens || item.maxContextTokens || item.max_input_tokens || item.maxTokens || 0) })) : [];
+  return Array.isArray(items) ? items.map((item) => ({ id: item.id, label: item.name || item.label || item.id, description: item.description || "", contextWindow: Number(item.contextWindow || item.contextTokens || item.maxContextTokens || item.max_input_tokens || item.maxTokens || 0) })).filter((m) => !/^nvidia\//i.test(m.id)) : [];
 }
 
 function mapGenericModelCatalog(payload = {}) {
@@ -287,7 +287,7 @@ function registerHandlers(ipcMain, ctx) {
   });
 
   ipcMain.handle("settings:updateBehavior", (_event, payload = {}) => {
-    saveAllSettings(mergeSettingsSection(ctx.getSettings(), "behavior", { enterToSend: typeof payload.enterToSend === "boolean" ? payload.enterToSend : ctx.getSettings().behavior?.enterToSend, autoScroll: typeof payload.autoScroll === "boolean" ? payload.autoScroll : ctx.getSettings().behavior?.autoScroll, showTaskPanel: typeof payload.showTaskPanel === "boolean" ? payload.showTaskPanel : ctx.getSettings().behavior?.showTaskPanel, confirmDangerousOps: typeof payload.confirmDangerousOps === "boolean" ? payload.confirmDangerousOps : ctx.getSettings().behavior?.confirmDangerousOps }));
+    saveAllSettings(mergeSettingsSection(ctx.getSettings(), "behavior", { enterToSend: typeof payload.enterToSend === "boolean" ? payload.enterToSend : ctx.getSettings().behavior?.enterToSend, autoScroll: typeof payload.autoScroll === "boolean" ? payload.autoScroll : ctx.getSettings().behavior?.autoScroll, confirmDangerousOps: typeof payload.confirmDangerousOps === "boolean" ? payload.confirmDangerousOps : ctx.getSettings().behavior?.confirmDangerousOps }));
     return serializeState();
   });
 

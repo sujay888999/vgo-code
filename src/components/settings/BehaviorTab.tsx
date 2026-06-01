@@ -8,7 +8,7 @@ export function BehaviorTab() {
   const {
     enterToSend, toggleEnterToSend,
     autoScroll, toggleAutoScroll,
-    showTaskPanel, toggleShowTaskPanel,
+
     confirmDangerousOps, toggleConfirmDangerousOps,
     accessScope, setAccessScope,
     hydrate,
@@ -55,15 +55,6 @@ export function BehaviorTab() {
         onToggle={async () => {
           toggleAutoScroll()
           await applyBehavior({ autoScroll: !autoScroll })
-        }}
-      />
-      <ToggleRow
-        title={t('settings.taskPanel')}
-        hint={t('settings.taskPanelHint')}
-        enabled={showTaskPanel}
-        onToggle={async () => {
-          toggleShowTaskPanel()
-          await applyBehavior({ showTaskPanel: !showTaskPanel })
         }}
       />
       <ToggleRow

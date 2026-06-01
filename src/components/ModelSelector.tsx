@@ -60,6 +60,7 @@ function detectModelFamily(modelId: string, modelLabel: string) {
   if (text.includes('glm')) return 'GLM'
   if (text.includes('qwen') || text.includes('tongyi')) return 'Qwen'
   if (text.includes('deepseek')) return 'DeepSeek'
+  if (text.includes('nvidia') || text.includes('nemotron')) return 'NVIDIA'
   if (text.includes('llama')) return 'Llama'
   if (text.includes('mistral')) return 'Mistral'
   const prefix = String(modelId || '').split(/[-_:/.]/).filter(Boolean)[0]

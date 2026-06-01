@@ -3,7 +3,6 @@ import { useAppStore } from '../store/appStore'
 import { useI18n } from '../i18n'
 import { MessageList } from './MessageList'
 import { Composer } from './Composer'
-import { TaskPanel } from './TaskPanel'
 import { PermissionCard } from './PermissionCard'
 
 export function MainPanel() {
@@ -13,7 +12,6 @@ export function MainPanel() {
     messages,
     taskSteps,
     promptRunning,
-    showTaskPanel,
     vgoAIPreferredModel,
     modelCatalog,
     remoteProfiles,
@@ -255,14 +253,7 @@ export function MainPanel() {
           )}
         </div>
 
-        {showTaskPanel && (
-          <div className="task-panel-wrapper">
-            <div className="task-panel-header">
-              <span>{t('mainPanel.taskPanel')}</span>
-            </div>
-            <TaskPanel steps={taskSteps} />
-          </div>
-        )}
+        
       </div>
 
       <div className="composer-wrapper">

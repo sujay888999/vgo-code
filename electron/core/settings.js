@@ -104,7 +104,6 @@ const DEFAULT_SETTINGS = {
   behavior: {
     enterToSend: true,
     autoScroll: true,
-    showTaskPanel: false,
     confirmDangerousOps: true
   },
   agent: {

@@ -186,7 +186,6 @@ export interface AppState {
   compactMode: boolean
   enterToSend: boolean
   autoScroll: boolean
-  showTaskPanel: boolean
   confirmDangerousOps: boolean
   autoSummarizeContext: boolean
   showRuntimeMeta: boolean
@@ -265,7 +264,6 @@ export interface AppState {
   toggleCompactMode: () => void
   toggleEnterToSend: () => void
   toggleAutoScroll: () => void
-  toggleShowTaskPanel: () => void
   toggleConfirmDangerousOps: () => void
   toggleAutoSummarize: () => void
   toggleShowRuntimeMeta: () => void
@@ -314,7 +312,6 @@ export const useAppStore = create<AppState>((set) => ({
   compactMode: false,
   enterToSend: true,
   autoScroll: true,
-  showTaskPanel: false,
   confirmDangerousOps: true,
   autoSummarizeContext: true,
   showRuntimeMeta: true,
@@ -464,7 +461,6 @@ export const useAppStore = create<AppState>((set) => ({
   toggleCompactMode: () => set((state) => ({ compactMode: !state.compactMode })),
   toggleEnterToSend: () => set((state) => ({ enterToSend: !state.enterToSend })),
   toggleAutoScroll: () => set((state) => ({ autoScroll: !state.autoScroll })),
-  toggleShowTaskPanel: () => set((state) => ({ showTaskPanel: !state.showTaskPanel })),
   toggleConfirmDangerousOps: () => set((state) => ({ confirmDangerousOps: !state.confirmDangerousOps })),
   toggleAutoSummarize: () => set((state) => ({ autoSummarizeContext: !state.autoSummarizeContext })),
   toggleShowRuntimeMeta: () => set((state) => ({ showRuntimeMeta: !state.showRuntimeMeta })),
@@ -584,8 +580,6 @@ export const useAppStore = create<AppState>((set) => ({
         typeof behavior.enterToSend === 'boolean' ? behavior.enterToSend : current.enterToSend,
       autoScroll:
         typeof behavior.autoScroll === 'boolean' ? behavior.autoScroll : current.autoScroll,
-      showTaskPanel:
-        typeof behavior.showTaskPanel === 'boolean' ? behavior.showTaskPanel : current.showTaskPanel,
       confirmDangerousOps:
         typeof behavior.confirmDangerousOps === 'boolean'
           ? behavior.confirmDangerousOps
