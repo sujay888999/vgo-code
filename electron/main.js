@@ -512,7 +512,6 @@ function sendAgentEvent(payload = {}) {
 }
 
 function sendAuthStateUpdate() {
-  console.log("Sending auth state update:", browserAuthState.status);
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send("auth:stateUpdate", browserAuthState);
@@ -521,7 +520,6 @@ function sendAuthStateUpdate() {
 }
 
 function sendStateRefresh() {
-  console.log("Sending state refresh to all windows");
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send("app:stateRefresh", serializeState());
@@ -550,8 +548,8 @@ function sendUpdateEvent(channel, payload = {}) {
 
 function createTrayIcon() {
   const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, "app.asar", "ui", "logo.png")
-    : path.join(app.getAppPath(), "ui", "logo.png");
+    ? path.join(process.resourcesPath, "app.asar", "build", "icon.png")
+    : path.join(app.getAppPath(), "build", "icon.png");
   
   let trayIcon;
   if (fs.existsSync(iconPath)) {
@@ -711,7 +709,6 @@ function createAuthWindow(loginUrl) {
 function createRemoteProfileState(payload = {}, { activate = true } = {}) {
   const profileId = `profile-${Date.now()}`;
   const normalizedProvider = (payload.provider || "").trim() || "VGO Remote";
-  const isOllamaProvider = normalizedProvider.toLowerCase().includes("ollama");
   const incomingApiKey = typeof payload.apiKey === "string" ? payload.apiKey.trim() : "";
   const currentApiKey = String(settings.remote.apiKey || "").trim();
   const resolvedApiKey =
@@ -725,7 +722,6 @@ function createRemoteProfileState(payload = {}, { activate = true } = {}) {
     baseUrl: payload.baseUrl || settings.remote.baseUrl,
     modelListUrl: payload.modelListUrl || "",
     modelCatalog: Array.isArray(payload.modelCatalog) ? payload.modelCatalog : [],
-    ollamaUrl: isOllamaProvider ? payload.ollamaUrl || settings.remote.ollamaUrl || "" : "",
     model: normalizeExternalModelId(payload.model || settings.remote.model),
     apiKey: resolvedApiKey,
     systemPrompt: payload.systemPrompt || settings.remote.systemPrompt
@@ -738,7 +734,6 @@ function createRemoteProfileState(payload = {}, { activate = true } = {}) {
           provider: profile.provider || "VGO Remote",
           baseUrl: profile.baseUrl,
           modelListUrl: profile.modelListUrl || "",
-          ollamaUrl: profile.ollamaUrl || "",
           model: profile.model,
           apiKey: profile.apiKey,
           systemPrompt: profile.systemPrompt
@@ -760,8 +755,6 @@ function selectRemoteProfileState(profileId) {
   if (!profile) {
     return serializeState();
   }
-  const isOllamaProvider = String(profile.provider || "").toLowerCase().includes("ollama");
-
   saveAllSettings({
     ...settings,
     activeRemoteProfileId: profileId,
@@ -769,7 +762,6 @@ function selectRemoteProfileState(profileId) {
       provider: profile.provider || "VGO Remote",
       baseUrl: profile.baseUrl,
       modelListUrl: profile.modelListUrl || "",
-      ollamaUrl: isOllamaProvider ? profile.ollamaUrl || "" : "",
       model: profile.model,
       apiKey: profile.apiKey,
       systemPrompt: profile.systemPrompt
@@ -793,18 +785,15 @@ function updateRemoteProfileState(profileId, payload = {}, { activate = false } 
         ? profile.apiKey
         : incomingApiKey;
   const nextProvider = (payload.provider || "").trim() || profile.provider || "VGO Remote";
-  const nextIsOllamaProvider = String(nextProvider).toLowerCase().includes("ollama");
   const baseUrlFromPayload = payload.baseUrl || profile.baseUrl;
   const modelListUrlFromPayload =
     typeof payload.modelListUrl === "string"
       ? payload.modelListUrl
       : profile.modelListUrl || "";
-  const ollamaUrlFromPayload = nextIsOllamaProvider ? payload.ollamaUrl || profile.ollamaUrl || "" : "";
   const endpointChanged =
     String(profile.provider || "") !== String(nextProvider || "") ||
     normalizeUrlForCompare(profile.baseUrl) !== normalizeUrlForCompare(baseUrlFromPayload) ||
-    normalizeUrlForCompare(profile.modelListUrl) !== normalizeUrlForCompare(modelListUrlFromPayload) ||
-    normalizeUrlForCompare(profile.ollamaUrl) !== normalizeUrlForCompare(ollamaUrlFromPayload);
+    normalizeUrlForCompare(profile.modelListUrl) !== normalizeUrlForCompare(modelListUrlFromPayload);
 
   const nextProfile = {
     ...profile,
@@ -818,7 +807,6 @@ function updateRemoteProfileState(profileId, payload = {}, { activate = false } 
         : endpointChanged
           ? []
           : profile.modelCatalog || [],
-    ollamaUrl: ollamaUrlFromPayload,
     model: normalizeExternalModelId(payload.model || profile.model),
     apiKey: nextApiKey,
     systemPrompt:
@@ -840,7 +828,6 @@ function updateRemoteProfileState(profileId, payload = {}, { activate = false } 
           provider: nextProfile.provider || "VGO Remote",
           baseUrl: nextProfile.baseUrl,
           modelListUrl: nextProfile.modelListUrl || "",
-          ollamaUrl: nextProfile.ollamaUrl || "",
           model: nextProfile.model,
           apiKey: nextProfile.apiKey,
           systemPrompt: nextProfile.systemPrompt
@@ -867,7 +854,6 @@ function deleteRemoteProfileState(profileId) {
           baseUrl: settings.remote.baseUrl,
           modelListUrl: settings.remote.modelListUrl || "",
           modelCatalog: [],
-          ollamaUrl: settings.remote.ollamaUrl || "",
           model: settings.remote.model,
           apiKey: settings.remote.apiKey,
           systemPrompt: settings.remote.systemPrompt
@@ -884,7 +870,6 @@ function deleteRemoteProfileState(profileId) {
       provider: activeProfile.provider || "VGO Remote",
       baseUrl: activeProfile.baseUrl,
       modelListUrl: activeProfile.modelListUrl || "",
-      ollamaUrl: activeProfile.ollamaUrl || "",
       model: activeProfile.model,
       apiKey: activeProfile.apiKey,
       systemPrompt: activeProfile.systemPrompt
@@ -1012,25 +997,22 @@ async function fetchRealVgoModels(accessToken) {
 
   const items = payload?.data || payload?.items || payload?.models || [];
       return Array.isArray(items)
-    ? items.map((item) => ({
-        id: item.id,
-        label: item.name || item.label || item.id,
-        description: item.description || "",
-        contextWindow: Number(
-          item.contextWindow ||
-            item.contextTokens ||
-            item.maxContextTokens ||
-            item.max_input_tokens ||
-            item.maxTokens ||
-            0
-        )
-      }))
+    ? items
+        .filter((m) => !/^nvidia\//i.test(m.id))
+        .map((item) => ({
+          id: item.id,
+          label: item.name || item.label || item.id,
+          description: item.description || "",
+          contextWindow: Number(
+            item.contextWindow ||
+              item.contextTokens ||
+              item.maxContextTokens ||
+              item.max_input_tokens ||
+              item.maxTokens ||
+              0
+          )
+        }))
     : [];
-}
-
-async function fetchModelCatalog(baseUrl) {
-  const payload = await fetchJson(`${baseUrl.replace(/\/+$/, "")}/models`);
-  return Array.isArray(payload.items) ? payload.items : [];
 }
 
 function mapGenericModelCatalog(payload = {}) {
@@ -1136,7 +1118,6 @@ async function refreshRemoteProfileModelCatalogState(profileId, { activateModelI
           provider: activeProfile.provider || settings.remote.provider,
           baseUrl: activeProfile.baseUrl || settings.remote.baseUrl,
           modelListUrl: activeProfile.modelListUrl || settings.remote.modelListUrl || "",
-          ollamaUrl: activeProfile.ollamaUrl || settings.remote.ollamaUrl || "",
           model: activeProfile.model || settings.remote.model,
           apiKey: activeProfile.apiKey,
           systemPrompt: activeProfile.systemPrompt
@@ -1236,7 +1217,6 @@ function clearRealVgoAiSession() {
           provider: activeProfile.provider || settings.remote.provider,
           baseUrl: activeProfile.baseUrl || settings.remote.baseUrl,
           modelListUrl: activeProfile.modelListUrl || settings.remote.modelListUrl || "",
-          ollamaUrl: activeProfile.ollamaUrl || settings.remote.ollamaUrl || "",
           model: activeProfile.model || "vgo-coder-pro",
           apiKey: activeProfile.apiKey,
           systemPrompt: activeProfile.systemPrompt
@@ -1308,11 +1288,7 @@ async function loginRealVgoAi(payload = {}) {
     throw new Error("请输入网页登录账号对应的邮箱和密码。");
   }
 
-  console.log("Attempting login to vgoai.cn with email:", email);
-  
   const loginPayload = await requestRealVgoAiLogin(email, password);
-
-  console.log("Login response:", JSON.stringify(loginPayload).slice(0, 200));
 
   const accessToken = extractAccessToken(loginPayload);
   if (!accessToken) {
@@ -1334,7 +1310,6 @@ async function loginRealVgoAi(payload = {}) {
     rememberPassword: payload.rememberPassword ?? settings.vgoAI.rememberPassword
   });
 
-  console.log("Login successful, state serialized");
   return serializeState();
 }
 

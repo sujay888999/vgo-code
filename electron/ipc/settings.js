@@ -2,7 +2,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const http = require("node:http");
 const crypto = require("node:crypto");
-const { spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const { isVgoManagedCloudProfile, syncRemoteProfileState } = require("../core/settings");
 
 function toBase64Url(input) {
@@ -61,10 +61,21 @@ function normalizeUrlForCompare(input = "") {
   return String(input || "").trim().replace(/\/+$/, "").toLowerCase();
 }
 
-function installWhisperRuntime() {
-  const result = spawnSync("python", ["-m", "pip", "install", "-U", "openai-whisper"], { encoding: "utf8", shell: false, timeout: 3_600_000, maxBuffer: 20 * 1024 * 1024, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
-  const output = [String(result.stdout || "").trim(), String(result.stderr || "").trim()].filter(Boolean).join("\n");
-  return { ok: result.status === 0, exitCode: result.status, summary: result.status === 0 ? "Whisper runtime installed successfully." : `Whisper install exited with code ${result.status}.`, output };
+async function installWhisperRuntime() {
+  return new Promise((resolve) => {
+    const child = spawn("python", ["-m", "pip", "install", "-U", "openai-whisper"], { encoding: "utf8", shell: false, timeout: 3_600_000, env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += String(chunk); });
+    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    child.on("close", (exitCode) => {
+      const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+      resolve({ ok: exitCode === 0, exitCode, summary: exitCode === 0 ? "Whisper runtime installed successfully." : `Whisper install exited with code ${exitCode}.`, output });
+    });
+    child.on("error", (error) => {
+      resolve({ ok: false, exitCode: -1, summary: `Whisper install failed: ${error.message}`, output: error.message });
+    });
+  });
 }
 
 function serializeSettings(settings) {
@@ -271,7 +282,7 @@ function registerHandlers(ipcMain, ctx) {
 
   ipcMain.handle("logs:normalizeEngine", () => { const { normalizeEngineLogFile } = require("../core/engineLog"); normalizeEngineLogFile(path.join(process.cwd(), "logs", "agent.log")); });
 
-  ipcMain.handle("runtime:installWhisper", () => installWhisperRuntime());
+  ipcMain.handle("runtime:installWhisper", async () => installWhisperRuntime());
   ipcMain.handle("runtime:installSkill", (_event, payload = {}) => { const result = installSkillFromSource(payload.sourcePath, payload.name); ctx.sendStateRefresh(); return result; });
 
   ipcMain.handle("settings:get", () => serializeSettings(ctx.getSettings()));

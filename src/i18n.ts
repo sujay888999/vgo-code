@@ -297,9 +297,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'runtime.endpointBadge.legacy': 'Legacy',
     'runtime.updateProgress': '更新进度',
     'runtime.baseUrlPlaceholder': 'http://localhost:11434 / https://api.example.com/v1',
-    'runtime.refreshModels': '刷新模型列表',
-    'runtime.status.modelsRefreshed': '模型列表已刷新',
-    'runtime.status.modelsRefreshFailed': '刷新模型列表失败',
+
     'runtime.status.downloadingPkg': '正在下载更新包：{percent}%（{downloaded} / {total}）',
     'runtime.status.downloading': '正在下载更新包：{downloaded}',
     'runtime.status.downloadCompleted': '更新包下载完成，正在准备安装...',
@@ -603,9 +601,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'runtime.endpointBadge.legacy': 'Legacy',
     'runtime.updateProgress': 'Update Progress',
     'runtime.baseUrlPlaceholder': 'http://localhost:11434 / https://api.example.com/v1',
-    'runtime.refreshModels': 'Refresh Models',
-    'runtime.status.modelsRefreshed': 'Model list refreshed',
-    'runtime.status.modelsRefreshFailed': 'Failed to refresh model list',
+
     'runtime.status.downloadingPkg': 'Downloading update: {percent}% ({downloaded} / {total})',
     'runtime.status.downloading': 'Downloading update: {downloaded}',
     'runtime.status.downloadCompleted': 'Download complete, preparing installation...',

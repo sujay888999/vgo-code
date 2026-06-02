@@ -79,7 +79,6 @@ export function RuntimeTab() {
   const [updateStatus, setUpdateStatus] = useState('')
   const [updateCandidate, setUpdateCandidate] = useState<UpdateInfo | null>(null)
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null)
-  const [modelCatalogBusy, setModelCatalogBusy] = useState(false)
 
   const activeProfile = useMemo(
     () => remoteProfiles.find((item) => item.id === activeRemoteProfileId) || null,
@@ -370,24 +369,6 @@ export function RuntimeTab() {
     })
   }
 
-  const handleRefreshProfileModels = async () => {
-    if (!editableActiveProfile) return
-    setModelCatalogBusy(true)
-    try {
-      const result = await window.vgoDesktop?.refreshRemoteProfileModels?.(editableActiveProfile.id)
-      if (result) {
-        hydrate(result)
-      } else {
-        await refreshState()
-      }
-      setStatus(t('runtime.status.modelsRefreshed'))
-    } catch (error: unknown) {
-      setStatus(error instanceof Error ? error.message : t('runtime.status.modelsRefreshFailed'))
-    } finally {
-      setModelCatalogBusy(false)
-    }
-  }
-
   const handleActivateProfile = async (profileId: string) => {
     const profile = remoteProfiles.find((p) => p.id === profileId)
     if (!profile) return
@@ -630,28 +611,18 @@ export function RuntimeTab() {
           />
         </div>
 
-        {editableActiveProfile && (
-          <div className="manual-config-card" style={{ marginTop: 12 }}>
-            <div className="button-row manual-config-actions">
-              <button type="button" className="ghost-button" onClick={() => void handleRefreshProfileModels()} disabled={modelCatalogBusy || busy}>
-                {modelCatalogBusy ? <Loader2 size={14} className="spin" /> : <Wrench size={14} />}
-                {t('runtime.refreshModels')}
+        {Array.isArray(editableActiveProfile?.modelCatalog) && editableActiveProfile.modelCatalog.length > 0 && (
+          <div className="remote-profiles" style={{ marginTop: 12 }}>
+            {editableActiveProfile.modelCatalog.map((item) => (
+              <button key={item.id} type="button"
+                className={`profile-item ${model === item.id ? 'active' : ''}`}
+                onClick={() => { setModel(item.id); setDraftDirty(true) }}>
+                <div className="profile-info">
+                  <span className="profile-name">{item.label || item.id}</span>
+                  <span className="profile-model">{item.id}</span>
+                </div>
               </button>
-            </div>
-            {Array.isArray(editableActiveProfile.modelCatalog) && editableActiveProfile.modelCatalog.length > 0 && (
-              <div className="remote-profiles" style={{ marginTop: 8 }}>
-                {editableActiveProfile.modelCatalog.map((item) => (
-                  <button key={item.id} type="button"
-                    className={`profile-item ${model === item.id ? 'active' : ''}`}
-                    onClick={() => { setModel(item.id); setDraftDirty(true) }}>
-                    <div className="profile-info">
-                      <span className="profile-name">{item.label || item.id}</span>
-                      <span className="profile-model">{item.id}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+            ))}
           </div>
         )}
 

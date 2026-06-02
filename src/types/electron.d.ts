@@ -69,7 +69,7 @@ interface VGODesktopAPI {
   removeAttachment?: (index: number) => Promise<{ ok: boolean }>
   respondPermission?: (payload: { requestId: string; approved: boolean }) => Promise<DesktopResult>
   
-  on?: (channel: string, callback: (...args: unknown[]) => void) => void
+  on?: (channel: string, callback: (...args: unknown[]) => void) => () => void
   off?: (channel: string, callback: (...args: unknown[]) => void) => void
   
   getState?: () => Promise<DesktopState>
