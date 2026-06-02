@@ -8,6 +8,9 @@ export default defineConfig({
   build: {
     outDir: '../dist-web',
     emptyOutDir: true,
+    target: 'es2020',
+    reportCompressedSize: false,
+    sourcemap: false,
     rollupOptions: {
       input: path.resolve(__dirname, 'index.html'),
       output: {
@@ -17,9 +20,6 @@ export default defineConfig({
           }
           if (id.includes('react') || id.includes('zustand') || id.includes('scheduler')) {
             return 'react-vendor'
-          }
-          if (id.includes('lucide-react')) {
-            return 'ui-vendor'
           }
         },
       },
