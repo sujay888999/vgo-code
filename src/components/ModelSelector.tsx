@@ -203,7 +203,9 @@ export function ModelSelector() {
   }, [remoteProfiles, activeRemoteProfileId, modelCatalog, vgoAIPreferredModel, t])
 
   const cloudModelEntries = useMemo<CloudModelEntry[]>(() => {
-    const fromDefault = modelCatalog.map((model) => ({
+    const fromDefault = modelCatalog
+      .filter((m) => !/^nvidia\//i.test(m.id))
+      .map((model) => ({
       key: `default:${model.id}`,
       source: 'default-cloud' as const,
       profileId: 'default',
