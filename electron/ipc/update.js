@@ -1,5 +1,6 @@
 const path = require("node:path");
 const fs = require("node:fs");
+const fsp = require("node:fs/promises");
 const http = require("node:http");
 const https = require("node:https");
 const { spawn } = require("node:child_process");
@@ -17,7 +18,8 @@ function resolveInstallerFileName(downloadUrl = "", latestVersion = "") {
   return `VGO CODE Setup ${String(latestVersion || "").trim() || "latest"}.exe`;
 }
 
-function downloadInstallerFile(downloadUrl, targetPath, onProgress) {
+async function downloadInstallerFile(downloadUrl, targetPath, onProgress) {
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
   return new Promise((resolve, reject) => {
     const fetchFile = (url, redirectCount = 0) => {
       if (redirectCount > 5) { reject(new Error("Too many redirects")); return; }
@@ -31,7 +33,6 @@ function downloadInstallerFile(downloadUrl, targetPath, onProgress) {
           return;
         }
         if (statusCode !== 200) { response.resume(); reject(new Error(`Download failed with HTTP ${statusCode}`)); return; }
-        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
         const output = fs.createWriteStream(targetPath);
         const totalBytes = Number(response.headers?.["content-length"] || 0);
         let downloadedBytes = 0;
@@ -48,7 +49,7 @@ function downloadInstallerFile(downloadUrl, targetPath, onProgress) {
         response.on("end", () => emitProgress(true));
         response.pipe(output);
         output.on("finish", () => output.close(() => resolve(targetPath)));
-        output.on("error", (error) => { output.destroy(); try { fs.unlinkSync(targetPath); } catch {} reject(error); });
+        output.on("error", (error) => { output.destroy(); fsp.unlink(targetPath).catch(() => {}); reject(error); });
       });
       request.on("error", reject);
       request.setTimeout(120000, () => request.destroy(new Error("Installer download timed out")));
@@ -68,14 +69,14 @@ function launchWindowsInstallerDirect(installerPath) {
   return Boolean(child?.pid);
 }
 
-function launchWindowsUpgradeScript(installerPath, app, isPackaged) {
+async function launchWindowsUpgradeScript(installerPath, app, isPackaged) {
   const updateDir = path.join(app.getPath("userData"), "updates");
-  fs.mkdirSync(updateDir, { recursive: true });
-  const scriptContent = fs.readFileSync(resolveUpgradeScriptTemplatePath(app, isPackaged), "utf8");
+  await fsp.mkdir(updateDir, { recursive: true });
+  const scriptContent = await fsp.readFile(resolveUpgradeScriptTemplatePath(app, isPackaged), "utf8");
   const tempScriptPath = path.join(updateDir, `install-update-${Date.now()}.ps1`);
-  fs.writeFileSync(tempScriptPath, scriptContent, "utf8");
+  await fsp.writeFile(tempScriptPath, scriptContent, "utf8");
   const logPath = path.join(updateDir, "install-update.log");
-  try { fs.appendFileSync(logPath, `${new Date().toISOString()} launch script=${tempScriptPath} installer=${installerPath}\n`, "utf8"); } catch {}
+  try { await fsp.appendFile(logPath, `${new Date().toISOString()} launch script=${tempScriptPath} installer=${installerPath}\n`, "utf8"); } catch {}
   const processHandle = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tempScriptPath, "-InstallerPath", installerPath, "-AppExePath", process.execPath, "-LogPath", logPath], { detached: true, stdio: "ignore", windowsHide: true });
   processHandle.unref();
   return Boolean(processHandle?.pid);
@@ -96,12 +97,12 @@ async function installUpdatePackage(payload, ctx) {
     sendUpdateEvent("update:status", { status: "downloading", ...updateInfo });
     const targetPath = path.join(app.getPath("userData"), "updates", resolveInstallerFileName(updateInfo.downloadUrl, updateInfo.latestVersion));
     await downloadInstallerFile(updateInfo.downloadUrl, targetPath, (progress) => sendUpdateEvent("update:status", { status: "downloading", ...updateInfo, ...progress }));
-    const installerStat = fs.statSync(targetPath);
+    const installerStat = await fsp.stat(targetPath);
     if (!installerStat?.size || installerStat.size < 1024 * 1024) throw new Error("Downloaded installer is invalid or incomplete");
     sendUpdateEvent("update:status", { status: "downloaded", installerPath: targetPath, ...updateInfo });
     sendUpdateEvent("update:status", { status: "installing", installerPath: targetPath, ...updateInfo });
     let launched = launchWindowsInstallerDirect(targetPath);
-    if (!launched) launched = launchWindowsUpgradeScript(targetPath, app, ctx.appIsPackaged);
+    if (!launched) launched = await launchWindowsUpgradeScript(targetPath, app, ctx.appIsPackaged);
     if (!launched) throw new Error("Failed to launch updater script");
     sendUpdateEvent("update:status", { status: "restarting", installerPath: targetPath, ...updateInfo });
     setTimeout(() => { app.isQuitting = true; app.exit(0); }, 1500);

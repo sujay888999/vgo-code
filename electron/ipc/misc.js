@@ -1,18 +1,19 @@
 const path = require("node:path");
 const fs = require("node:fs");
+const fsp = require("node:fs/promises");
 
 const TEXT_EXTENSIONS = new Set([".txt", ".md", ".json", ".js", ".ts", ".jsx", ".tsx", ".css", ".html", ".xml", ".yml", ".yaml", ".py", ".java", ".cs", ".go", ".rs", ".sh", ".ps1", ".bat", ".env"]);
 
-function readAttachmentPreview(filePath) {
-  const stat = fs.statSync(filePath);
+async function readAttachmentPreview(filePath) {
+  const stat = await fsp.stat(filePath);
   const ext = path.extname(filePath).toLowerCase();
   const isText = TEXT_EXTENSIONS.has(ext) && stat.size <= 256 * 1024;
   const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"]);
   const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".flac", ".ogg"]);
   const videoExtensions = new Set([".mp4", ".mov", ".mkv", ".avi", ".webm"]);
-  const imageBase64 = imageExtensions.has(ext) && stat.size <= 10 * 1024 * 1024 ? fs.readFileSync(filePath).toString("base64") : "";
+  const imageBase64 = imageExtensions.has(ext) && stat.size <= 10 * 1024 * 1024 ? (await fsp.readFile(filePath)).toString("base64") : "";
   const mediaType = imageExtensions.has(ext) ? "image" : audioExtensions.has(ext) ? "audio" : videoExtensions.has(ext) ? "video" : "file";
-  return { name: path.basename(filePath), path: filePath, size: stat.size, isText, mediaType, imageBase64, content: isText ? fs.readFileSync(filePath, "utf8") : "" };
+  return { name: path.basename(filePath), path: filePath, size: stat.size, isText, mediaType, imageBase64, content: isText ? await fsp.readFile(filePath, "utf8") : "" };
 }
 
 async function exportHistory(store, dialog) {
@@ -23,7 +24,7 @@ async function exportHistory(store, dialog) {
   const result = await dialog.showSaveDialog({ defaultPath: defaultFile, filters: [{ name: "Markdown", extensions: ["md"] }] });
   if (result.canceled || !result.filePath) return { ok: false, canceled: true };
   const body = ["# VGO CODE Session Export", "", `Workspace: ${state.workspace}`, `Session ID: ${session.id}`, `Session Title: ${session.title}`, `Runtime: ${state.runtime.engineLabel}`, `Provider: ${state.runtime.providerLabel}`, `Exported At: ${new Date().toISOString()}`, "", ...session.history.map((item) => [`## ${item.role.toUpperCase()}`, "", item.text, ""].join("\n"))].join("\n");
-  fs.writeFileSync(result.filePath, body, "utf8");
+  await fsp.writeFile(result.filePath, body, "utf8");
   return { ok: true, filePath: result.filePath };
 }
 
@@ -56,7 +57,7 @@ function registerHandlers(ipcMain, ctx) {
   ipcMain.handle("dialog:pickFiles", async () => {
     const result = await ctx.dialog.showOpenDialog({ properties: ["openFile", "multiSelections"] });
     if (result.canceled || result.filePaths.length === 0) return [];
-    return result.filePaths.map((filePath) => readAttachmentPreview(filePath));
+    return Promise.all(result.filePaths.map((filePath) => readAttachmentPreview(filePath)));
   });
 
   ipcMain.handle("attachments:remove", async (_event, index) => {

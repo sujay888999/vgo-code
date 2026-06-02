@@ -1035,7 +1035,7 @@ function mapGenericModelCatalog(payload = {}) {
           0
       )
     }))
-    .filter((item) => item.id)
+    .filter((item) => item.id && !/^nvidia\//i.test(item.id))
     .map((item) => ({
       ...item,
       label: item.label || item.id
@@ -1644,42 +1644,8 @@ async function syncVgoAiModels() {
   return serializeState();
 }
 
-async function exportHistory() {
-  const state = store.getState();
-  const session = store.getActiveSession();
-  if (!session) {
-    return { ok: false, canceled: true };
-  }
-
-  const defaultFile = path.join(state.workspace, `vgo-session-${session.id.slice(0, 8)}.md`);
-  const result = await dialog.showSaveDialog({
-    defaultPath: defaultFile,
-    filters: [{ name: "Markdown", extensions: ["md"] }]
-  });
-
-  if (result.canceled || !result.filePath) {
-    return { ok: false, canceled: true };
-  }
-
-  const body = [
-    "# VGO CODE Session Export",
-    "",
-    `Workspace: ${state.workspace}`,
-    `Session ID: ${session.id}`,
-    `Session Title: ${session.title}`,
-    `Runtime: ${state.runtime.engineLabel}`,
-    `Provider: ${state.runtime.providerLabel}`,
-    `Exported At: ${new Date().toISOString()}`,
-    "",
-    ...session.history.map((item) => [`## ${item.role.toUpperCase()}`, "", item.text, ""].join("\n"))
-  ].join("\n");
-
-  fs.writeFileSync(result.filePath, body, "utf8");
-  return { ok: true, filePath: result.filePath };
-}
-
 app.whenReady().then(async () => {
-  normalizeEngineLogFile(path.join(process.cwd(), "logs", "agent.log"));
+  await normalizeEngineLogFile(path.join(process.cwd(), "logs", "agent.log"));
   store.load();
   await validateStoredRealLogin();
 

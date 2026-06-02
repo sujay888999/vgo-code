@@ -40,7 +40,8 @@ function normalizeModelCatalog(catalog, { isLoggedIn = false } = {}) {
         contextWindow: Number(item?.contextWindow || item?.contextTokens || item?.maxContextTokens || 0)
       };
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((item) => !/^nvidia\//i.test(item.id));
 
   if (!isLoggedIn) {
     const guestOnly = normalized
@@ -62,7 +63,7 @@ function dedupeModelCatalog(catalog) {
   const unique = new Map();
   for (const item of items) {
     const id = String(item?.id || "").trim();
-    if (!id || unique.has(id)) continue;
+    if (!id || unique.has(id) || /^nvidia\//i.test(id)) continue;
     unique.set(id, {
       id,
       label: String(item?.label || item?.name || id).trim() || id,
@@ -140,28 +141,6 @@ const DEFAULT_SETTINGS = {
       apiKey: "",
       systemPrompt: "You are VGO CODE, a practical coding agent deeply integrated with VGO AI."
     },
-    {
-      id: "ollama-gemma4",
-      name: "Gemma4 本地模型",
-      provider: "Ollama",
-      baseUrl: "http://localhost:11434",
-      modelListUrl: "",
-      modelCatalog: [],
-      model: "gemma4:latest",
-      apiKey: "",
-      systemPrompt: ""
-    },
-    {
-      id: "ollama-gemma4-e4b",
-      name: "Gemma4 E4B 本地模型",
-      provider: "Ollama",
-      baseUrl: "http://localhost:11434",
-      modelListUrl: "",
-      modelCatalog: [],
-      model: "gemma4:e4b",
-      apiKey: "",
-      systemPrompt: ""
-    }
   ],
   activeRemoteProfileId: DEFAULT_PROFILE_ID,
   vgoAI: {

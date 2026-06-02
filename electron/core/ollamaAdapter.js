@@ -40,7 +40,7 @@ const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "agent.log");
 
 function logRuntime(event, payload = {}) {
-  appendEngineLog(LOG_FILE, event, { channel: "ollama", ...payload });
+  appendEngineLog(LOG_FILE, event, { channel: "ollama", ...payload }).catch(() => {});
 }
 const DEFAULT_MAX_TOOL_STEPS = 120;
 const MIN_TOOL_STEPS = 20;

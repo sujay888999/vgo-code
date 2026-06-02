@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
@@ -111,8 +112,9 @@ function ensureWorkspacePath(workspace, inputPath = ".", options = {}) {
   throw new Error(`Path is outside the allowed scope: ${targetPath}`);
 }
 
-function formatFileEntry(fullPath, dirent) {
-  const stats = fs.statSync(fullPath);
+async function formatFileEntry(fullPath, dirent) {
+  let stats;
+  try { stats = await fsp.stat(fullPath); } catch { stats = { size: 0, mtime: new Date(0) }; }
   const marker = dirent.isDirectory() ? "[DIR]" : "[FILE]";
   return `${marker} ${dirent.name} | ${stats.size} B | ${stats.mtime.toISOString()}`;
 }
@@ -136,12 +138,12 @@ function getToolManifestText() {
   ].join("\n");
 }
 
-function readFile(workspace, args = {}, options = {}) {
+async function readFile(workspace, args = {}, options = {}) {
   if (!args.path) {
     return { ok: false, name: "read_file", summary: "Missing required argument: path", output: "" };
   }
   const targetPath = ensureWorkspacePath(workspace, args.path, options);
-  const content = fs.readFileSync(targetPath, "utf8");
+  const content = await fsp.readFile(targetPath, "utf8");
   const maxLines = clamp(args.maxLines, 1, 400, 200);
   const lines = content.split(/\r?\n/);
   const totalLines = lines.length;
@@ -157,8 +159,7 @@ function readFile(workspace, args = {}, options = {}) {
   };
 }
 
-function writeFile(workspace, args = {}, options = {}) {
-  // Normalize common content/path aliases before validation
+async function writeFile(workspace, args = {}, options = {}) {
   const normalizedArgs = { ...args };
   if (!normalizedArgs.path) {
     const pathAlias = normalizedArgs.filePath || normalizedArgs.filepath || normalizedArgs.file ||
@@ -181,7 +182,6 @@ function writeFile(workspace, args = {}, options = {}) {
 
   const targetPath = ensureWorkspacePath(workspace, resolvedArgs.path, options);
   let content = resolvedArgs.content;
-  // Recover from escaped multiline payloads like "\\n" that should be real line breaks.
   if (typeof content === "string") {
     const escapedNewlineCount = (content.match(/\\n/g) || []).length;
     const actualNewlineCount = (content.match(/\r?\n/g) || []).length;
@@ -194,11 +194,13 @@ function writeFile(workspace, args = {}, options = {}) {
         .replace(/\\"/g, "\"");
     }
   }
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.writeFileSync(targetPath, content, "utf8");
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+  await fsp.writeFile(targetPath, content, "utf8");
 
-  const exists = fs.existsSync(targetPath);
-  const size = exists ? fs.statSync(targetPath).size : 0;
+  let stat;
+  try { stat = await fsp.stat(targetPath); } catch { stat = null; }
+  const exists = !!stat;
+  const size = stat ? stat.size : 0;
   return {
     ok: exists,
     name: "write_file",
@@ -207,7 +209,7 @@ function writeFile(workspace, args = {}, options = {}) {
   };
 }
 
-function appendFile(workspace, args = {}, options = {}) {
+async function appendFile(workspace, args = {}, options = {}) {
   const normalizedArgs = { ...args };
   if (!normalizedArgs.path) {
     const pathAlias = normalizedArgs.filePath || normalizedArgs.filepath || normalizedArgs.file ||
@@ -228,11 +230,13 @@ function appendFile(workspace, args = {}, options = {}) {
   }
 
   const targetPath = ensureWorkspacePath(workspace, normalizedArgs.path, options);
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.appendFileSync(targetPath, normalizedArgs.content, "utf8");
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+  await fsp.appendFile(targetPath, normalizedArgs.content, "utf8");
 
-  const exists = fs.existsSync(targetPath);
-  const size = exists ? fs.statSync(targetPath).size : 0;
+  let stat;
+  try { stat = await fsp.stat(targetPath); } catch { stat = null; }
+  const exists = !!stat;
+  const size = stat ? stat.size : 0;
   return {
     ok: exists,
     name: "append_file",
@@ -241,13 +245,15 @@ function appendFile(workspace, args = {}, options = {}) {
   };
 }
 
-function listDir(workspace, args = {}, options = {}) {
+async function listDir(workspace, args = {}, options = {}) {
   const targetPath = ensureWorkspacePath(workspace, args.path || ".", options);
-  const entries = fs
-    .readdirSync(targetPath, { withFileTypes: true })
-    .sort((left, right) => left.name.localeCompare(right.name))
-    .slice(0, clamp(args.maxEntries, 1, 100, 50))
-    .map((entry) => formatFileEntry(path.join(targetPath, entry.name), entry));
+  const dirents = await fsp.readdir(targetPath, { withFileTypes: true });
+  const entries = (await Promise.all(
+    dirents
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, clamp(args.maxEntries, 1, 100, 50))
+      .map((entry) => formatFileEntry(path.join(targetPath, entry.name), entry))
+  ));
 
   return {
     ok: true,
@@ -257,7 +263,7 @@ function listDir(workspace, args = {}, options = {}) {
   };
 }
 
-function searchCode(workspace, args = {}, options = {}) {
+async function searchCode(workspace, args = {}, options = {}) {
   const rootPath = ensureWorkspacePath(workspace, args.path || ".", options);
   const query = String(args.query || "").trim();
   if (!query) {
@@ -267,18 +273,20 @@ function searchCode(workspace, args = {}, options = {}) {
   const maxResults = clamp(args.maxResults, 1, 100, 30);
   const results = [];
 
-  function walk(dir) {
+  async function walk(dir) {
     if (results.length >= maxResults) return;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    let entries;
+    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
       if (results.length >= maxResults) break;
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (["node_modules", ".git", "dist"].includes(entry.name)) continue;
-        walk(fullPath);
+        await walk(fullPath);
         continue;
       }
       try {
-        const content = fs.readFileSync(fullPath, "utf8");
+        const content = await fsp.readFile(fullPath, "utf8");
         const lines = content.split(/\r?\n/);
         lines.forEach((line, index) => {
           if (results.length >= maxResults) return;
@@ -292,7 +300,7 @@ function searchCode(workspace, args = {}, options = {}) {
     }
   }
 
-  walk(rootPath);
+  await walk(rootPath);
   return {
     ok: true,
     name: "search_code",
@@ -351,12 +359,10 @@ function isProcessAlive(pid) {
   }
 }
 
-function readBackgroundRegistry() {
+async function readBackgroundRegistry() {
   try {
-    if (!fs.existsSync(BACKGROUND_PROCESS_REGISTRY)) {
-      return [];
-    }
-    const raw = fs.readFileSync(BACKGROUND_PROCESS_REGISTRY, "utf8");
+    await fsp.access(BACKGROUND_PROCESS_REGISTRY);
+    const raw = await fsp.readFile(BACKGROUND_PROCESS_REGISTRY, "utf8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -364,32 +370,35 @@ function readBackgroundRegistry() {
   }
 }
 
-function writeBackgroundRegistry(entries = []) {
+async function writeBackgroundRegistry(entries = []) {
   try {
-    fs.mkdirSync(path.dirname(BACKGROUND_PROCESS_REGISTRY), { recursive: true });
-    fs.writeFileSync(BACKGROUND_PROCESS_REGISTRY, JSON.stringify(entries, null, 2), "utf8");
+    await fsp.mkdir(path.dirname(BACKGROUND_PROCESS_REGISTRY), { recursive: true });
+    await fsp.writeFile(BACKGROUND_PROCESS_REGISTRY, JSON.stringify(entries, null, 2), "utf8");
   } catch {
     // ignore registry write failure
   }
 }
 
-function cleanupBackgroundRegistry() {
-  const entries = readBackgroundRegistry();
+async function cleanupBackgroundRegistry() {
+  const entries = await readBackgroundRegistry();
   const alive = entries.filter((entry) => isProcessAlive(entry?.pid));
   if (alive.length !== entries.length) {
-    writeBackgroundRegistry(alive);
+    await writeBackgroundRegistry(alive);
   }
   return alive;
 }
 
-function tailTextFile(filePath, maxLines = 120) {
-  if (!filePath || !fs.existsSync(filePath)) {
+async function tailTextFile(filePath, maxLines = 120) {
+  if (!filePath) return "";
+  try {
+    await fsp.access(filePath);
+    const content = await fsp.readFile(filePath, "utf8");
+    const lines = content.split(/\r?\n/);
+    const selected = lines.slice(Math.max(0, lines.length - Math.max(1, maxLines)));
+    return selected.join("\n");
+  } catch {
     return "";
   }
-  const content = fs.readFileSync(filePath, "utf8");
-  const lines = content.split(/\r?\n/);
-  const selected = lines.slice(Math.max(0, lines.length - Math.max(1, maxLines)));
-  return selected.join("\n");
 }
 
 async function waitForPortOpen(host, port, timeoutMs = 12000) {
@@ -503,7 +512,7 @@ async function runCommand(workspace, args = {}, options = {}) {
   ).trim();
   const action = String(args.processAction || args.action || "").trim().toLowerCase();
   if (action === "list") {
-    const entries = cleanupBackgroundRegistry();
+    const entries = await cleanupBackgroundRegistry();
     const output = entries.length
       ? entries
           .map(
@@ -525,7 +534,7 @@ async function runCommand(workspace, args = {}, options = {}) {
     if (!Number.isInteger(pid) || pid <= 0) {
       return { ok: false, name: "run_command", summary: "Missing required argument: pid", output: "" };
     }
-    const entries = cleanupBackgroundRegistry();
+    const entries = await cleanupBackgroundRegistry();
     const entry = entries.find((item) => Number(item.pid) === pid) || null;
     const alive = isProcessAlive(pid);
     return {
@@ -542,7 +551,7 @@ async function runCommand(workspace, args = {}, options = {}) {
       return { ok: false, name: "run_command", summary: "Missing required argument: pid", output: "" };
     }
     const stopped = await stopBackgroundProcess(pid);
-    cleanupBackgroundRegistry();
+    await cleanupBackgroundRegistry();
     return {
       ok: stopped.ok,
       name: "run_command",
@@ -557,7 +566,8 @@ async function runCommand(workspace, args = {}, options = {}) {
       return { ok: false, name: "run_command", summary: "Missing required argument: pid", output: "" };
     }
     const maxLines = clamp(args.maxLines, 10, 1000, 120);
-    const entry = cleanupBackgroundRegistry().find((item) => Number(item.pid) === pid);
+    const entries = await cleanupBackgroundRegistry();
+    const entry = entries.find((item) => Number(item.pid) === pid);
     if (!entry?.logPath) {
       return {
         ok: false,
@@ -566,7 +576,7 @@ async function runCommand(workspace, args = {}, options = {}) {
         output: ""
       };
     }
-    const content = tailTextFile(entry.logPath, maxLines);
+    const content = await tailTextFile(entry.logPath, maxLines);
     return {
       ok: true,
       name: "run_command",
@@ -607,7 +617,7 @@ async function runCommand(workspace, args = {}, options = {}) {
   if (shouldBackground) {
     const nowTag = new Date().toISOString().replace(/[:.]/g, "-");
     const logsDir = path.join(process.cwd(), "logs", "background");
-    fs.mkdirSync(logsDir, { recursive: true });
+    await fsp.mkdir(logsDir, { recursive: true });
     const logPath = path.join(logsDir, `run_command-${nowTag}.log`);
     const logFd = fs.openSync(logPath, "a");
 
@@ -627,7 +637,7 @@ async function runCommand(workspace, args = {}, options = {}) {
     child.unref();
 
     const pid = Number(child.pid);
-    const entries = cleanupBackgroundRegistry();
+    const entries = await cleanupBackgroundRegistry();
     entries.push({
       pid,
       command,
@@ -636,7 +646,7 @@ async function runCommand(workspace, args = {}, options = {}) {
       mode: "background",
       logPath
     });
-    writeBackgroundRegistry(entries.slice(-80));
+    await writeBackgroundRegistry(entries.slice(-80));
 
     const startupTimeoutMs = clamp(args.startupTimeoutMs ?? args.startup_timeout_ms, 1000, 120000, 12000);
     const healthUrl = String(args.healthCheckUrl || args.health_url || "").trim();
@@ -717,7 +727,9 @@ async function transcribeMedia(workspace, args = {}, options = {}) {
   }
 
   const mediaPath = ensureWorkspacePath(workspace, args.path, options);
-  if (!fs.existsSync(mediaPath)) {
+  try {
+    await fsp.access(mediaPath);
+  } catch {
     return {
       ok: false,
       name: "transcribe_media",
@@ -759,7 +771,7 @@ async function transcribeMedia(workspace, args = {}, options = {}) {
     };
   }
 
-  fs.mkdirSync(outputDir, { recursive: true });
+  await fsp.mkdir(outputDir, { recursive: true });
 
   const script = [
     "import os, sys",
@@ -813,7 +825,10 @@ async function transcribeMedia(workspace, args = {}, options = {}) {
     };
   }
 
-  if (result.status !== 0 || !fs.existsSync(transcriptPath)) {
+  let transcript;
+  try {
+    transcript = await fsp.readFile(transcriptPath, "utf8");
+  } catch {
     return {
       ok: false,
       name: "transcribe_media",
@@ -821,8 +836,6 @@ async function transcribeMedia(workspace, args = {}, options = {}) {
       output: combined
     };
   }
-
-  const transcript = fs.readFileSync(transcriptPath, "utf8");
   return {
     ok: true,
     name: "transcribe_media",
@@ -831,7 +844,7 @@ async function transcribeMedia(workspace, args = {}, options = {}) {
   };
 }
 
-function copyFile(workspace, args = {}, options = {}) {
+async function copyFile(workspace, args = {}, options = {}) {
   if (!args.source && !args.from && !args.path) {
     return { ok: false, name: "copy_file", summary: "Missing required argument: source", output: "" };
   }
@@ -845,8 +858,8 @@ function copyFile(workspace, args = {}, options = {}) {
     return { ok: false, name: "copy_file", summary: "Source and destination are the same path.", output: "" };
   }
 
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.copyFileSync(sourcePath, targetPath);
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+  await fsp.copyFile(sourcePath, targetPath);
   return {
     ok: true,
     name: "copy_file",
@@ -855,7 +868,7 @@ function copyFile(workspace, args = {}, options = {}) {
   };
 }
 
-function moveFile(workspace, args = {}, options = {}) {
+async function moveFile(workspace, args = {}, options = {}) {
   if (!args.source && !args.from && !args.path) {
     return { ok: false, name: "move_file", summary: "Missing required argument: source", output: "" };
   }
@@ -869,8 +882,11 @@ function moveFile(workspace, args = {}, options = {}) {
     return { ok: false, name: "move_file", summary: "Source and destination are the same path.", output: "" };
   }
 
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.renameSync(sourcePath, targetPath);
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+  try { await fsp.rename(sourcePath, targetPath); } catch {
+    await fsp.copyFile(sourcePath, targetPath);
+    await fsp.rm(sourcePath, { force: true });
+  }
   return {
     ok: true,
     name: "move_file",
@@ -879,7 +895,7 @@ function moveFile(workspace, args = {}, options = {}) {
   };
 }
 
-function renameFile(workspace, args = {}, options = {}) {
+async function renameFile(workspace, args = {}, options = {}) {
   if (!args.path && !args.source) {
     return { ok: false, name: "rename_file", summary: "Missing required argument: path", output: "" };
   }
@@ -894,7 +910,7 @@ function renameFile(workspace, args = {}, options = {}) {
     return { ok: false, name: "rename_file", summary: "Source and destination are the same path.", output: "" };
   }
 
-  fs.renameSync(sourcePath, targetPath);
+  await fsp.rename(sourcePath, targetPath);
   return {
     ok: true,
     name: "rename_file",
@@ -903,12 +919,12 @@ function renameFile(workspace, args = {}, options = {}) {
   };
 }
 
-function makeDir(workspace, args = {}, options = {}) {
+async function makeDir(workspace, args = {}, options = {}) {
   if (!args.path) {
     return { ok: false, name: "make_dir", summary: "Missing required argument: path", output: "" };
   }
   const targetPath = ensureWorkspacePath(workspace, args.path, options);
-  fs.mkdirSync(targetPath, { recursive: true });
+  await fsp.mkdir(targetPath, { recursive: true });
   return {
     ok: true,
     name: "make_dir",
@@ -917,12 +933,12 @@ function makeDir(workspace, args = {}, options = {}) {
   };
 }
 
-function deleteFile(workspace, args = {}, options = {}) {
+async function deleteFile(workspace, args = {}, options = {}) {
   if (!args.path) {
     return { ok: false, name: "delete_file", summary: "Missing required argument: path", output: "" };
   }
   const targetPath = ensureWorkspacePath(workspace, args.path, options);
-  fs.rmSync(targetPath, { force: true });
+  await fsp.rm(targetPath, { force: true });
   return {
     ok: true,
     name: "delete_file",
@@ -931,12 +947,12 @@ function deleteFile(workspace, args = {}, options = {}) {
   };
 }
 
-function deleteDir(workspace, args = {}, options = {}) {
+async function deleteDir(workspace, args = {}, options = {}) {
   if (!args.path) {
     return { ok: false, name: "delete_dir", summary: "Missing required argument: path", output: "" };
   }
   const targetPath = ensureWorkspacePath(workspace, args.path, options);
-  fs.rmSync(targetPath, { recursive: true, force: true });
+  await fsp.rm(targetPath, { recursive: true, force: true });
   return {
     ok: true,
     name: "delete_dir",
@@ -1243,7 +1259,7 @@ function htmlToText(html) {
   return text;
 }
 
-function generateWordDoc(workspace, args = {}, options = {}) {
+async function generateWordDoc(workspace, args = {}, options = {}) {
   if (!args.path) {
     return { ok: false, name: "generate_word_doc", summary: "Missing required argument: path", output: "" };
   }
@@ -1293,17 +1309,17 @@ function generateWordDoc(workspace, args = {}, options = {}) {
   htmlContent += `</body></html>`;
 
   try {
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    fs.writeFileSync(targetPath, htmlContent, "utf8");
+    await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+    await fsp.writeFile(targetPath, htmlContent, "utf8");
 
-    const exists = fs.existsSync(targetPath);
-    const size = exists ? fs.statSync(targetPath).size : 0;
+    const stat = await fsp.stat(targetPath);
+    const size = stat.size;
 
     return {
-      ok: exists,
+      ok: true,
       name: "generate_word_doc",
-      summary: exists ? `Generated Word doc at ${targetPath} (${size} B).` : `Failed to generate ${targetPath}.`,
-      output: exists ? `path=${targetPath}\nsize=${size}\ntitle=${title}\nitems=${items.length}` : `path=${targetPath}`
+      summary: `Generated Word doc at ${targetPath} (${size} B).`,
+      output: `path=${targetPath}\nsize=${size}\ntitle=${title}\nitems=${items.length}`
     };
   } catch (error) {
     return {

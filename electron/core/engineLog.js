@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const fsp = require("node:fs/promises");
 const path = require("node:path");
 const { tryRecoverMojibake } = require("./agentProtocol");
 const UTF8_BOM = "\uFEFF";
@@ -18,29 +19,32 @@ function normalizeStrings(value) {
   return value;
 }
 
-function appendEngineLog(logFile, event, payload = {}) {
+async function appendEngineLog(logFile, event, payload = {}) {
   try {
-    fs.mkdirSync(path.dirname(logFile), { recursive: true });
-    if (!fs.existsSync(logFile)) {
-      fs.writeFileSync(logFile, UTF8_BOM, "utf8");
+    await fsp.mkdir(path.dirname(logFile), { recursive: true });
+    try { await fsp.access(logFile, fs.constants.F_OK); } catch {
+      await fsp.writeFile(logFile, UTF8_BOM, "utf8");
     }
     const record = normalizeStrings({
       ts: new Date().toISOString(),
       event,
       ...payload
     });
-    fs.appendFileSync(logFile, `${JSON.stringify(record)}\n`, "utf8");
+    await fsp.appendFile(logFile, `${JSON.stringify(record)}\n`, "utf8");
   } catch {}
 }
 
-function normalizeEngineLogFile(logFile) {
-  if (!fs.existsSync(logFile)) {
-    fs.mkdirSync(path.dirname(logFile), { recursive: true });
-    fs.writeFileSync(logFile, UTF8_BOM, "utf8");
+async function normalizeEngineLogFile(logFile) {
+  let exists = false;
+  try { await fsp.access(logFile, fs.constants.F_OK); exists = true; } catch {}
+
+  if (!exists) {
+    await fsp.mkdir(path.dirname(logFile), { recursive: true });
+    await fsp.writeFile(logFile, UTF8_BOM, "utf8");
     return { ok: true, changed: 0, total: 0, rewrote: true };
   }
 
-  const raw = fs.readFileSync(logFile, "utf8");
+  const raw = await fsp.readFile(logFile, "utf8");
   const hadBom = raw.startsWith(UTF8_BOM);
   const sanitizedRaw = hadBom ? raw.slice(1) : raw;
   const lines = sanitizedRaw.split(/\r?\n/).filter(Boolean);
@@ -65,7 +69,7 @@ function normalizeEngineLogFile(logFile) {
   });
 
   if (changed > 0 || !hadBom) {
-    fs.writeFileSync(logFile, `${UTF8_BOM}${normalizedLines.join("\n")}\n`, "utf8");
+    await fsp.writeFile(logFile, `${UTF8_BOM}${normalizedLines.join("\n")}\n`, "utf8");
   }
 
   return {

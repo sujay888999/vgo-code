@@ -139,7 +139,7 @@ async function fetchRealVgoModels(accessToken) {
 
 function mapGenericModelCatalog(payload = {}) {
   const items = payload?.items || payload?.data || payload?.models || [];
-  return Array.isArray(items) ? items.map((item) => ({ id: String(item?.id || "").trim(), label: String(item?.name || item?.label || item?.id || "").trim(), description: String(item?.description || ""), contextWindow: Number(item?.contextWindow || item?.contextTokens || item?.maxContextTokens || item?.max_input_tokens || item?.maxTokens || 0) })).filter((item) => item.id).map((item) => ({ ...item, label: item.label || item.id })) : [];
+  return Array.isArray(items) ? items.map((item) => ({ id: String(item?.id || "").trim(), label: String(item?.name || item?.label || item?.id || "").trim(), description: String(item?.description || ""), contextWindow: Number(item?.contextWindow || item?.contextTokens || item?.maxContextTokens || item?.max_input_tokens || item?.maxTokens || 0) })).filter((item) => item.id && !/^nvidia\//i.test(item.id)).map((item) => ({ ...item, label: item.label || item.id })) : [];
 }
 
 async function fetchRemoteProfileModelCatalog(profile = {}) {
@@ -280,7 +280,7 @@ function registerHandlers(ipcMain, ctx) {
 
   const browserAuthStateFlag = { value: false };
 
-  ipcMain.handle("logs:normalizeEngine", () => { const { normalizeEngineLogFile } = require("../core/engineLog"); normalizeEngineLogFile(path.join(process.cwd(), "logs", "agent.log")); });
+  ipcMain.handle("logs:normalizeEngine", async () => { const { normalizeEngineLogFile } = require("../core/engineLog"); await normalizeEngineLogFile(path.join(process.cwd(), "logs", "agent.log")); });
 
   ipcMain.handle("runtime:installWhisper", async () => installWhisperRuntime());
   ipcMain.handle("runtime:installSkill", (_event, payload = {}) => { const result = installSkillFromSource(payload.sourcePath, payload.name); ctx.sendStateRefresh(); return result; });

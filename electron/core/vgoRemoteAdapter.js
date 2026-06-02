@@ -28,7 +28,7 @@ const LOG_DIR = path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "agent.log");
 
 function logRuntime(event, payload = {}) {
-  appendEngineLog(LOG_FILE, event, { channel: "vgo-remote", ...payload });
+  appendEngineLog(LOG_FILE, event, { channel: "vgo-remote", ...payload }).catch(() => {});
 }
 
 async function parseJsonResponse(response) {
