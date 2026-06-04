@@ -201,13 +201,14 @@ function registerHandlers(ipcMain, ctx) {
       const [fallbackSessionId, fallbackEntry] = fallback;
       ctx.userAbortedSessions.add(fallbackSessionId);
       fallbackEntry.controller.abort(new Error("aborted_by_user"));
-      ctx.activePromptControllers.delete(fallbackSessionId);
+      // Do NOT delete the entry — let chat:send's finally block clean it up
+      // so the completed flag and error message are set correctly.
       ctx.sendAgentEvent({ sessionId: fallbackSessionId, type: "task_status", status: "failed", message: "已手动停止本轮任务。" });
       return { ok: true, sessionId: fallbackSessionId };
     }
     ctx.userAbortedSessions.add(session.id);
     entry.controller.abort(new Error("aborted_by_user"));
-    ctx.activePromptControllers.delete(session.id);
+    // Do NOT delete the entry — let chat:send's finally block clean it up
     ctx.sendAgentEvent({ sessionId: session.id, type: "task_status", status: "failed", message: "已手动停止本轮任务。" });
     return { ok: true };
   });

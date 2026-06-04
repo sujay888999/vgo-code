@@ -65,6 +65,27 @@ try {
   process.title = "VGO CODE";
 } catch {}
 
+process.on("unhandledRejection", (reason, promise) => {
+  try {
+    const message = reason instanceof Error ? reason.message : String(reason || "unknown");
+    logMainEvent("unhandled_rejection", { message: message.slice(0, 2000) });
+  } catch {}
+});
+
+process.on("uncaughtException", (error) => {
+  try {
+    const message = String(error?.message || error || "unknown");
+    logMainEvent("uncaught_exception", { message: message.slice(0, 2000), stack: String(error?.stack || "").slice(0, 4000) });
+  } catch {}
+  // Clean up active controllers before exit
+  for (const [, data] of activePromptControllers) {
+    try { data.controller.abort(new Error("process_crash")); } catch {}
+  }
+  activePromptControllers.clear();
+  pendingPermissionRequests.clear();
+  userAbortedSessions.clear();
+});
+
 function logMainEvent(event, payload = {}) {
   try {
     fs.mkdirSync(MAIN_LOG_DIR, { recursive: true });
@@ -190,10 +211,13 @@ function normalizeUrlForCompare(input = "") {
 function cleanupExpiredMapEntries() {
   const now = Date.now();
   for (const [key, data] of activePromptControllers) {
+    if (data.completed) continue;
     const maxRuntimeMs = Number(data.maxRuntimeMs) > 0 ? Number(data.maxRuntimeMs) : DEFAULT_MAX_TASK_RUNTIME_MINUTES * 60000;
-    if (now - data.createdAt > maxRuntimeMs) {
+    const lastActive = data.lastTouchedAt || data.createdAt;
+    if (now - lastActive > maxRuntimeMs) {
       data.controller.abort(new Error("task_runtime_limit_reached"));
-      activePromptControllers.delete(key);
+      // Do NOT delete the entry here — let chat:send's finally block clean it up,
+      // so completed flag and error message can be set correctly.
     }
   }
   for (const [key, data] of pendingPermissionRequests) {

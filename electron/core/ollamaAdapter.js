@@ -1369,8 +1369,13 @@ async function runOllamaPrompt({
   const buildMessages = (hist, sysPr, pr) => buildMessageHistory(hist, sysPr, pr, attachments);
 
   let rateLimitRetryUsed = 0;
-  const sendRequest = async (messages) => {
+  const sendRequest = async (messages, outerSignal) => {
+    //  Merge outer abort signal with our own timeout logic
+    const effectiveSignal = outerSignal || signal;
     for (let attempt = 0; attempt <= MAX_OLLAMA_RATE_LIMIT_RETRIES; attempt++) {
+      if (effectiveSignal?.aborted) {
+        throw effectiveSignal.reason || new Error("aborted_by_user");
+      }
       if (attempt > 0) {
         emitEvent({
           type: "task_status",
@@ -1381,7 +1386,7 @@ async function runOllamaPrompt({
       }
 
       const response = await sendOllamaRequest({
-        baseUrl, model, messages, signal,
+        baseUrl, model, messages, signal: effectiveSignal,
         timeout: 300000,
         numPredict,
         onChunk: ({ content, done }) => {

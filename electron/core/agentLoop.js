@@ -216,15 +216,22 @@ async function runAgentLoop(opts) {
 
   for (let step = 0; step < maxSteps; step += 1) {
     if (signal?.aborted) {
-      return { ok: false, exitCode: 130, sessionId, text: "任务已被用户中断。", error: "aborted_by_user", rawEvents, usedModel, actualChannel: channelId };
+      const abortReason = signal?.reason?.message || "";
+      const isTimeout = abortReason.includes("task_runtime_limit_reached");
+      return {
+        ok: false, exitCode: isTimeout ? 124 : 130, sessionId,
+        text: isTimeout ? "任务运行超时，已自动终止。" : "任务已被用户中断。",
+        error: isTimeout ? "task_timeout" : "aborted_by_user",
+        rawEvents, usedModel, actualChannel: channelId
+      };
     }
 
     emitEvent({ type: "task_status", status: step === 0 ? "thinking" : "continuing", message: "正在思考并规划下一步执行..." });
 
-    //  Send request to model 
+    //  Send request to model (pass signal so in-flight HTTP can be cancelled)
     let stepResult;
     try {
-      stepResult = await sendRequest(messages);
+      stepResult = await sendRequest(messages, signal);
     } catch (err) {
       if (rawEvents.some((e) => e?.type === "tool_result")) {
         return {
@@ -308,7 +315,14 @@ async function runAgentLoop(opts) {
     const toolResults = [];
     for (const call of toolCalls) {
       if (signal?.aborted) {
-        return { ok: false, exitCode: 130, sessionId, text: "任务已被用户中断。", error: "aborted_by_user", rawEvents, usedModel, actualChannel: channelId };
+        const abortReason = signal?.reason?.message || "";
+        const isTimeout = abortReason.includes("task_runtime_limit_reached");
+        return {
+          ok: false, exitCode: isTimeout ? 124 : 130, sessionId,
+          text: isTimeout ? "任务运行超时，已自动终止。" : "任务已被用户中断。",
+          error: isTimeout ? "task_timeout" : "aborted_by_user",
+          rawEvents, usedModel, actualChannel: channelId
+        };
       }
 
       emitEvent({ type: "task_status", status: "tool_running", message: "正在执行工具: " + call.name });

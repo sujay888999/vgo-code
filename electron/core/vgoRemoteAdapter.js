@@ -1533,18 +1533,26 @@ async function runRealVgoPrompt({
   let upstreamFallbackModelUsed = false;
   let upstreamRateLimitRetryUsed = 0;
 
-  const sendRequest = async (messages) => {
+  const sendRequest = async (messages, outerSignal) => {
+    // Merge outer abort signal with the run-level signal so both can cancel in-flight HTTP
+    const effectiveSignal = outerSignal || signal;
     for (let attempt = 0; attempt < 3; attempt++) {
+      if (effectiveSignal?.aborted) {
+        throw effectiveSignal.reason || new Error("aborted_by_user");
+      }
       let response;
       let payload;
 
       try {
         ({ response, payload: payload } = await (async (targetModel) => {
           for (let netAttempt = 0; netAttempt < DEFAULT_REMOTE_NETWORK_RETRIES; netAttempt++) {
+            if (effectiveSignal?.aborted) {
+              throw effectiveSignal.reason || new Error("aborted_by_user");
+            }
             try {
-              return await sendRealVgoRequest({ token, model: targetModel, activeHistory: messages, signal });
+              return await sendRealVgoRequest({ token, model: targetModel, activeHistory: messages, signal: effectiveSignal });
             } catch (error) {
-              if (signal?.aborted || error?.name === "AbortError") throw error;
+              if (effectiveSignal?.aborted || error?.name === "AbortError") throw error;
               if (!isNetworkFetchFailure(error) || netAttempt >= DEFAULT_REMOTE_NETWORK_RETRIES - 1) throw error;
               emitRealEvent({ type: "task_status", status: "retrying", message: "网络波动，正在自动重试..." });
               await wait(computeRetryDelayMs(netAttempt + 1));
@@ -1575,11 +1583,12 @@ async function runRealVgoPrompt({
       if (isRetryableUpstreamFailure(response, payload) && !upstreamFallbackModelUsed) {
         upstreamFallbackModelUsed = true;
         const fallbackCandidates = buildFallbackModelCandidates(settings, currentModel);
-        for (const candidateModel of fallbackCandidates) {
+          for (const candidateModel of fallbackCandidates) {
+          if (effectiveSignal?.aborted) { throw effectiveSignal.reason || new Error("aborted_by_user"); }
           emitRealEvent({ type: "task_status", status: "fallback_model", message: `正在切换备用模型：${candidateModel}` });
           currentModel = candidateModel;
           try {
-            ({ response, payload } = await sendRealVgoRequest({ token, model: currentModel, activeHistory: messages, signal }));
+            ({ response, payload } = await sendRealVgoRequest({ token, model: currentModel, activeHistory: messages, signal: effectiveSignal }));
           } catch (e) { continue; }
           messageText = formatRemoteServiceError(settings, response, payload);
           if (!isRetryableUpstreamFailure(response, payload)) break;
@@ -1651,7 +1660,8 @@ async function runLocalPrompt({
   history,
   sessionMeta,
   attachments = [],
-  onEvent
+  onEvent,
+  signal
 }) {
   const remote = settings?.remote || {};
   const normalizedModelId = normalizeRemoteModelId(remote.model);
@@ -1696,7 +1706,7 @@ async function runLocalPrompt({
     };
 
     // sendRequest: one HTTP call, returns { text, toolCalls }
-    const sendRequest = async (messages) => {
+    const sendRequest = async (messages, outerSignal) => {
       const body = (endpointPlan.mode === "openai" || endpointPlan.mode === "ollama")
         ? JSON.stringify({ model: normalizedModelId, messages, stream: false })
         : JSON.stringify({ model: normalizedModelId, systemPrompt, workspace, sessionId, prompt: finalPrompt, history });
@@ -1704,11 +1714,17 @@ async function runLocalPrompt({
       let response = null;
       let lastError = null;
       for (let attempt = 1; attempt <= DEFAULT_REMOTE_NETWORK_RETRIES; attempt += 1) {
+        if (outerSignal?.aborted) {
+          throw outerSignal.reason || new Error("aborted_by_user");
+        }
         const timeoutController = new AbortController();
         const timer = setTimeout(
           () => timeoutController.abort(new Error("remote_local_prompt_timeout")),
           DEFAULT_REMOTE_REQUEST_TIMEOUT_MS
         );
+        // Relay outer abort to the fetch
+        const abortRelay = () => { clearTimeout(timer); timeoutController.abort(new Error("aborted_by_user")); };
+        if (outerSignal) { outerSignal.addEventListener("abort", abortRelay, { once: true }); }
         try {
           response = await fetch(endpointPlan.requestUrl, {
             method: "POST",
@@ -1720,9 +1736,11 @@ async function runLocalPrompt({
             body
           });
           clearTimeout(timer);
+          if (outerSignal) { outerSignal.removeEventListener("abort", abortRelay); }
           break;
         } catch (error) {
           clearTimeout(timer);
+          if (outerSignal) { outerSignal.removeEventListener("abort", abortRelay); }
           lastError = error;
           if (!isNetworkFetchFailure(error) || attempt >= DEFAULT_REMOTE_NETWORK_RETRIES) throw error;
           await wait(computeRetryDelayMs(attempt));
@@ -1764,6 +1782,7 @@ async function runLocalPrompt({
       workspace,
       history,
       settings,
+      signal,
       emitEvent: (ev) => emitEvent(onEvent, [], ev),
       logRuntime: (event, data) => logRuntime(event, { channel: "custom-http", ...data }),
       buildMessages: buildMsgs,
