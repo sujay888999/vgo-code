@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
   // Chat
   submitPrompt: (payload) => ipcRenderer.invoke("chat:send", payload),
   stopPrompt: () => ipcRenderer.invoke("chat:abort"),
+  detectResumableSessions: () => ipcRenderer.invoke("chat:detectResumable"),
+  resumeSession: (sessionId) => ipcRenderer.invoke("chat:resumeSession", { sessionId }),
+  dismissResume: (sessionId) => ipcRenderer.invoke("chat:dismissResume", sessionId),
   
   // Workspace
   pickWorkspace: () => ipcRenderer.invoke("dialog:pickWorkspace"),

@@ -152,7 +152,18 @@ function registerHandlers(ipcMain, ctx) {
     ctx.userAbortedSessions.delete(session.id);
     const controllerEntry = { controller, createdAt: Date.now(), lastTouchedAt: Date.now(), maxRuntimeMs: resolveTaskRuntimeLimitMs(ctx), completed: false };
     ctx.activePromptControllers.set(session.id, controllerEntry);
+    let controllerIdForResume = "";
+    try {
+      const stateNow = ctx.store.getState();
+      const lastTaskEntry = stateNow.sessions.find((s) => s.id === session.id)?.lastTask;
+      controllerIdForResume = lastTaskEntry?.controllerId || crypto.randomUUID();
+    } catch {}
     let result;
+    ctx.store.recordTaskStart(session.id, {
+      prompt: normalizedPrompt,
+      controllerId: controllerIdForResume,
+      model: ctx.getSettings().vgoAI?.preferredModel || ctx.getSettings().remote?.model || ""
+    });
     try {
       result = await ctx.activeEngine().runPrompt({
         workspace: taskWorkspace,
@@ -166,7 +177,7 @@ function registerHandlers(ipcMain, ctx) {
           touchActivePromptController(session.id, ctx);
           return requestToolPermission(call, (event) => { touchActivePromptController(session.id, ctx); ctx.sendAgentEvent({ sessionId: session.id, ...event }); }, ctx);
         },
-        onEvent: (event) => { touchActivePromptController(session.id, ctx); ctx.sendAgentEvent({ sessionId: session.id, ...event }); },
+        onEvent: (event) => { touchActivePromptController(session.id, ctx); ctx.sendAgentEvent({ sessionId: session.id, ...event }); if (event && event.type === "model_response" && Number.isFinite(event.step)) { try { store.recordTaskStep(session.id, event.step); } catch {} } },
         sessionMeta: { contextSummary: session.contextSummary || "" },
         history: session.history
       });
@@ -176,10 +187,29 @@ function registerHandlers(ipcMain, ctx) {
       ctx.userAbortedSessions.delete(session.id);
       result = { ...result, ok: false, exitCode: 130, text: "已手动停止本轮任务。", error: "aborted_by_user" };
     }
-    if (!String(result.text || "").trim()) result.text = result.ok ? "本轮任务已结束，但没有生成最终文本结果。请查看上方工具步骤，并根据需要继续追问。" : "本轮任务执行失败，而且没有返回可显示的错误文本。";
+    if (!String(result.text || "").trim()) {
+      // Try stream-delta accumulation before giving up.
+      const streamText = (Array.isArray(result.rawEvents) ? result.rawEvents : [])
+        .filter((e) => e?.type === "model_stream_delta" && typeof e?.text === "string")
+        .map((e) => e.text)
+        .join("");
+      if (streamText.trim()) {
+        result.text = streamText;
+      } else {
+        result.text = result.ok ? "本轮任务已结束，但没有生成最终文本结果。请查看上方工具步骤，并根据需要继续追问。" : "本轮任务执行失败，而且没有返回可显示的错误文本。";
+      }
+    }
     result.text = buildSessionClosingSummaryV2(result, normalizedPrompt);
     if (result.usedModel) ctx.savePreferredModelIfChanged(result.usedModel);
     store.updateSessionMeta(session.id, { actualModel: result.usedModel || ctx.getSettings().vgoAI?.preferredModel || ctx.getSettings().remote?.model || "", actualChannel: result.actualChannel || "", actualContextWindow: Number(result.actualContextWindow) || ctx.resolveModelContextWindow(ctx.getSettings(), result.usedModel || ctx.getSettings().vgoAI?.preferredModel), usageInputTokens: Number(result.usageInputTokens) || 0, usageOutputTokens: Number(result.usageOutputTokens) || 0, usageTotalTokens: Number(result.usageTotalTokens) || 0 });
+    // Mark task completed — set lastCompletedStepIndex to the last step we actually saw and then clear the in-flight marker.
+    try {
+      const stepEvents = (Array.isArray(result.rawEvents) ? result.rawEvents : []).filter((e) => e?.type === "model_response" && Number.isFinite(e.step));
+      const maxStep = stepEvents.reduce((max, e) => Math.max(max, Number(e.step) || 0), 0);
+      if (maxStep > 0) store.recordTaskStep(session.id, maxStep);
+    } catch {}
+    // Always clear the in-flight marker at the end of a successful or aborted run.
+    try { store.clearTask(session.id); } catch {}
     for (const event of result.rawEvents || []) {
       const message = formatAgentEvent(event);
       if (!message) continue;
@@ -214,6 +244,44 @@ function registerHandlers(ipcMain, ctx) {
   });
 
   ipcMain.handle("chat:resetSession", () => { const sessionId = ctx.store.resetActiveSession(); return { sessionId, state: ctx.serializeState() }; });
+
+  // Detect crashed / interrupted sessions on startup.
+  // Returns list of sessions whose lastTask is fresh enough to suggest resuming.
+  ipcMain.handle("chat:detectResumable", () => {
+    const RESUME_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+    const now = Date.now();
+    const sessions = ctx.store.getState().sessions || [];
+    return sessions
+      .filter((session) => session.lastTask && session.lastTask.startedAt && (now - new Date(session.lastTask.startedAt).getTime() < RESUME_WINDOW_MS))
+      .map((session) => ({
+        sessionId: session.id,
+        title: session.title,
+        lastTask: session.lastTask,
+        lastCompletedStepIndex: session.lastCompletedStepIndex,
+        directory: session.directory || ""
+      }));
+  });
+
+  // Operator-initiated resume. Re-runs the saved prompt; clearTask will be called
+  // automatically by the chat:send flow once the new run begins and ends.
+  ipcMain.handle("chat:resumeSession", async (_event, payload = {}) => {
+    const targetSession = ctx.store.getSessionById(payload.sessionId);
+    if (!targetSession || !targetSession.lastTask) {
+      return { ok: false, error: "session_not_resumable" };
+    }
+    ctx.store.switchSession(targetSession.id);
+    const prompt = String(targetSession.lastTask.prompt || "").trim();
+    if (!prompt) {
+      return { ok: false, error: "empty_prompt" };
+    }
+    // Tell the renderer to re-submit via chat:send so the existing flow takes over.
+    return { ok: true, resumePrompt: prompt, sessionId: targetSession.id };
+  });
+
+  ipcMain.handle("chat:dismissResume", (_event, sessionId) => {
+    if (sessionId) ctx.store.clearTask(sessionId);
+    return { ok: true };
+  });
   ipcMain.handle("chat:createSession", () => ({ session: ctx.store.createAndActivateSession(ctx.getSettings().workspace || null), state: ctx.serializeState() }));
   ipcMain.handle("chat:switchSession", (_event, sessionId) => { const result = ctx.store.switchSession(sessionId); return result ? { state: result } : null; });
   ipcMain.handle("chat:renameSession", (_event, payload) => { ctx.store.renameSession(payload.sessionId, payload.title); return { state: ctx.serializeState() }; });

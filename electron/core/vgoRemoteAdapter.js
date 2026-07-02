@@ -16,7 +16,23 @@ const DEFAULT_MAX_AGENT_STEPS = 120;
 const MIN_AGENT_STEPS = 20;
 const MAX_AGENT_STEPS = 300;
 const UPSTREAM_RETRYABLE_PATTERN = /Failed to connect to upstream channel/i;
+// Phrases the VGO AI provider commonly returns when the upstream channel is
+// degraded even though the HTTP response itself is 200. Treat these as
+// retryable upstream failures so we can fall back to another model.
+const PROVIDER_REFUSAL_PATTERNS = [
+  /no response was returned from the model/i,
+  /model\s+service\s+is\s+temporarily unavailable/i,
+  /upstream\s+model\s+is\s+unavailable/i,
+];
+function isProviderRefusal(cleanText) {
+  const text = String(cleanText || "").trim();
+  if (!text) return true; // empty body = upstream silent fail
+  return PROVIDER_REFUSAL_PATTERNS.some((p) => p.test(text));
+}
+
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 90000;
+const MIN_REMOTE_REQUEST_TIMEOUT_MS = 30000;
+const MAX_REMOTE_REQUEST_TIMEOUT_MS = 600000;
 const DEFAULT_REMOTE_NETWORK_RETRIES = 3;
 const REMOTE_RETRY_BASE_DELAY_MS = 600;
 const MAX_UPSTREAM_RATE_LIMIT_RETRIES = 4;
@@ -193,6 +209,29 @@ function normalizeToolCalls(calls = []) {
     "ls": "list_dir",
     "dir": "list_dir",
     "cat": "read_file",
+    "Read": "read_file",
+    "ReadFile": "read_file",
+    "Readfile": "read_file",
+    "read_file": "read_file",
+    "read": "read_file",
+    "Glob": "search_code",
+    "glob": "search_code",
+    "Grep": "search_code",
+    "grep": "search_code",
+    "search": "search_code",
+    "find": "search_code",
+    "Write": "write_file",
+    "write": "write_file",
+    "Edit": "str_replace",
+    "edit": "str_replace",
+    "MultiEdit": "str_replace",
+    "multiedit": "str_replace",
+    "ListFiles": "list_dir",
+    "list_files": "list_dir",
+    "LS": "list_dir",
+    "ls": "list_dir",
+    "Bash": "run_command",
+    "bash": "run_command",
     "open": "open_path",
     "browse": "fetch_web",
     "get_url": "fetch_web",
@@ -598,8 +637,8 @@ function extractAssistantRawText(payload) {
   );
 }
 
-function extractToolCalls(rawText = "") {
-  const fallbackCalls = normalizeToolCalls(protocol.parseToolCalls(rawText));
+function extractToolCalls(rawText = "", modelId = "") {
+  const fallbackCalls = normalizeToolCalls(protocol.parseToolCalls(rawText, modelId));
   if (fallbackCalls.length) {
     logRuntime("tool_calls:fallback_from_text", {
       count: fallbackCalls.length,
@@ -639,6 +678,19 @@ function clampText(text = "", maxChars = 0) {
   return `${source.slice(0, Math.max(0, maxChars - 64))}\n...[trimmed ${source.length - maxChars} chars]`;
 }
 
+// Lightweight content hash for caching — fast string hash, not crypto
+function contentHash(messages = []) {
+  // Use length + first/last message content checksums for O(1) hash
+  if (!messages.length) return "";
+  const first = String(messages[0]?.content || "").slice(0, 80);
+  const last = String(messages[messages.length - 1]?.content || "").slice(-80);
+  return `${messages.length}:${first}:${last}`;
+}
+
+// Cache for compactConversationMessages — avoids re-computing when messages
+// haven't changed between sendRequest invocations in the same agent loop.
+const _compactCache = new Map();
+
 function compactConversationMessages(messages = [], options = {}) {
   const maxMessages = Number(options.maxMessages) || REMOTE_MAX_HISTORY_MESSAGES;
   const maxMessageChars = Number(options.maxMessageChars) || REMOTE_MAX_MESSAGE_CHARS;
@@ -648,6 +700,11 @@ function compactConversationMessages(messages = [], options = {}) {
   if (!Array.isArray(messages) || !messages.length) {
     return [];
   }
+
+  // Check cache — keyed by content fingerprint + limits
+  const cacheKey = `${contentHash(messages)}|${maxMessages}|${maxTotalChars}|${preserveSystem}`;
+  const cached = _compactCache.get(cacheKey);
+  if (cached) return cached;
 
   const normalized = messages
     .map((item) => ({
@@ -689,6 +746,12 @@ function compactConversationMessages(messages = [], options = {}) {
     }
   }
 
+  // Cache the result (limit cache size to prevent unbounded growth)
+  if (_compactCache.size > 50) {
+    const firstKey = _compactCache.keys().next().value;
+    _compactCache.delete(firstKey);
+  }
+  _compactCache.set(cacheKey, compacted);
   return compacted;
 }
 
@@ -776,11 +839,18 @@ function resolveSkillRequiredInspectionPaths(skills = [], workspace = "") {
   });
 }
 
-async function sendRealVgoRequest({ token, model, activeHistory, signal }) {
+function resolveRemoteRequestTimeoutMs(settings) {
+  const configured = Number(settings?.agent?.maxRemoteRequestTimeoutMs);
+  if (!Number.isFinite(configured) || configured <= 0) return DEFAULT_REMOTE_REQUEST_TIMEOUT_MS;
+  return Math.min(MAX_REMOTE_REQUEST_TIMEOUT_MS, Math.max(MIN_REMOTE_REQUEST_TIMEOUT_MS, configured));
+}
+
+async function sendRealVgoRequest({ token, model, activeHistory, signal, timeoutMs }) {
   logRuntime("request:start", {
     model,
     conversationId: "",
-    messageCount: Array.isArray(activeHistory) ? activeHistory.length : 0
+    messageCount: Array.isArray(activeHistory) ? activeHistory.length : 0,
+    timeoutMs: timeoutMs || DEFAULT_REMOTE_REQUEST_TIMEOUT_MS
   });
 
   const timeoutController = new AbortController();
@@ -790,7 +860,7 @@ async function sendRealVgoRequest({ token, model, activeHistory, signal }) {
   }
   const timer = setTimeout(
     () => timeoutController.abort(new Error("remote_request_timeout")),
-    DEFAULT_REMOTE_REQUEST_TIMEOUT_MS
+    timeoutMs || DEFAULT_REMOTE_REQUEST_TIMEOUT_MS
   );
 
   try {
@@ -945,6 +1015,14 @@ function isRetryableUpstreamFailure(response, payload) {
     return true;
   }
 
+  // Provider surfaces model-deprecated results wrapped as HTTP 400 with body
+  // like "当前模型服务 返回异常（HTTP 404）". Treat as upstream-dead so the
+  // engine immediately switches to the next fallback candidate instead of
+  // bailing out the whole task with a single stale URL.
+  if (/返回异常\s*\(HTTP\s*404\)|model\s*not\s*found|当前模型服务.*404/i.test(messageText)) {
+    return true;
+  }
+
   if (/upstream\s*channel|No available channel for this model/i.test(messageText)) {
     return true;
   }
@@ -979,6 +1057,14 @@ function formatRemoteServiceError(settings, response, payload) {
     return "当前云端模型触发限流（HTTP 429）。系统已自动退避重试；若仍失败，请稍后再试或切换模型。";
   }
 
+  if (status === 400 && /Failed to connect to upstream channel|No available channel/i.test(rawMessage)) {
+    return "当前云端模型的 provider 上游通道（VGO AI 后端）暂不可用。本次任务无法继续，请稍候重试，或切换到其他云端模型。";
+  }
+
+  if (status === 400 && /当前模型服务\s*返回异常\s*\(HTTP\s*404\)|model\s*not\s*found|HTTP\s*404/i.test(rawMessage)) {
+    return "当前云端模型在 VGO AI 已下架或暂不可用（HTTP 404）。请从左侧模型列表切换到另一个云端模型，本机会自动重试。";
+  }
+
   return rawMessage || `HTTP ${status || 500}`;
 }
 
@@ -1001,6 +1087,33 @@ function computeRateLimitRetryDelayMs(attempt = 1) {
   return Math.min(60000, base + jitter);
 }
 
+// In-memory cache of upstream-channel-dead models. Cleared when run ends or every 5 minutes.
+const _unhealthyModelCache = new Map(); // modelId -> expiresAtMs
+const UNHEALTHY_MODEL_TTL_MS = 5 * 60 * 1000;
+function isModelUnhealthy(modelId) {
+  const exp = _unhealthyModelCache.get(modelId);
+  if (!exp) return false;
+  if (Date.now() > exp) {
+    _unhealthyModelCache.delete(modelId);
+    return false;
+  }
+  return true;
+}
+function markModelUnhealthy(modelId) {
+  if (!modelId) return;
+  _unhealthyModelCache.set(modelId, Date.now() + UNHEALTHY_MODEL_TTL_MS);
+  if (_unhealthyModelCache.size > 50) {
+    const first = _unhealthyModelCache.keys().next().value;
+    if (first) _unhealthyModelCache.delete(first);
+  }
+}
+function clearUnhealthyModelCache() {
+  _unhealthyModelCache.clear();
+}
+
+// Selector used by fallback chain to drop models whose upstream channel is
+// currently dead. We do NOT silently skip the user's selected model — only
+// fallback candidates. The current model is allowed to retry once first.
 function pickFallbackModelForUpstream(settings, currentModel) {
   const catalog = getCatalogModels(settings).map((item) => item.id).filter(Boolean);
   if (!catalog.length) {
@@ -1036,18 +1149,33 @@ function buildFallbackModelCandidates(settings, currentModel) {
   const pushCandidate = (id) => {
     const value = String(id || "").trim();
     if (!value || seen.has(value)) return;
+    if (isModelUnhealthy(value)) return; // Skip upstream-dead models.
     seen.add(value);
     candidates.push(value);
   };
+
+  // Detect whether same-family has any siblings remaining. If the entire
+  // family is unhealthy (provider-wide outage), we deliberately skip tier 2
+  // to avoid producing a single candidate that just retries the same dead
+  // family — we want the cross-family fallback chain instead.
+  const isUnstableFamily = (id) =>
+    /^google\/gemma/i.test(id) || /^nvidia\//i.test(id);
+  const currentFamily = modelAdapters.getModelFamily(currentModel);
+  const sameFamilySurvivors = catalog.filter(
+    (id) => id !== currentModel && !isUnstableFamily(id) && !isModelUnhealthy(id) && modelAdapters.getModelFamily(id) === currentFamily
+  );
+  const skipSameFamilyTier = sameFamilySurvivors.length === 0;
 
   // 1) Explicit fallback model in settings.
   const configuredFallback = String(settings?.agent?.fallbackModel || "").trim();
   pushCandidate(configuredFallback);
 
-  // 2) Same-family alternative first (keeps behavior continuity).
-  const currentFamily = modelAdapters.getModelFamily(currentModel);
+  // 2) Same-family alternative first (keeps behavior continuity) — skip unstable families.
   for (const modelId of catalog) {
-    if (modelAdapters.getModelFamily(modelId) === currentFamily) {
+    if (modelId === currentModel) continue;
+    if (isUnstableFamily(modelId)) continue;
+    if (isModelUnhealthy(modelId)) continue;
+    if (!skipSameFamilyTier && modelAdapters.getModelFamily(modelId) === currentFamily) {
       pushCandidate(modelId);
     }
   }
@@ -1055,16 +1183,17 @@ function buildFallbackModelCandidates(settings, currentModel) {
   // 3) Preferred model if different.
   pushCandidate(preferred);
 
-  // 4) Non-NVIDIA/Gemma models first when upstream is unstable for that family.
-  const nonNvidiaLike = catalog.filter(
-    (id) => !/^google\/gemma-/i.test(id) && !/^nvidia\//i.test(id)
-  );
-  for (const modelId of nonNvidiaLike) {
+  // 4) Cross-family: prefer non-NVIDIA/Gemma when the family is unstable.
+  for (const modelId of catalog) {
+    if (modelId === currentModel) continue;
+    if (isUnstableFamily(modelId)) continue;
+    if (isModelUnhealthy(modelId)) continue;
     pushCandidate(modelId);
   }
 
-  // 5) Remaining models.
+  // 5) Last resort — remaining models even with unstable families.
   for (const modelId of catalog) {
+    if (isModelUnhealthy(modelId)) continue;
     pushCandidate(modelId);
   }
 
@@ -1516,6 +1645,7 @@ async function runRealVgoPrompt({
   }
   let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   let contextWindow = 0;
+  const currentRequestTimeoutMs = resolveRemoteRequestTimeoutMs(settings);
 
   const emitRealEvent = (event) => {
     if (typeof onEvent === "function") onEvent(event);
@@ -1530,18 +1660,36 @@ async function runRealVgoPrompt({
 
   let currentModel = initialModel;
   let upstreamRetryUsed = false;
-  let upstreamFallbackModelUsed = false;
   let upstreamRateLimitRetryUsed = 0;
+  // Per-invocation fallback tracking — each sendRequest() call gets its own
+  // fallback chance instead of sharing one flag across the whole agent loop.
+  let attemptFallbackModelUsed = false;
 
   const sendRequest = async (messages, outerSignal) => {
     // Merge outer abort signal with the run-level signal so both can cancel in-flight HTTP
     const effectiveSignal = outerSignal || signal;
+    // Reset per-invocation fallback so each sendRequest gets its own fallback chance
+    attemptFallbackModelUsed = false;
+    let lastFailureReason = "";
+    let triedModels = [];
+    // Per-sendRequest last-known-good model: if currentModel is upstream-dead (cached),
+    // we immediately fall back to a healthy one rather than waiting for one full timeout.
+    let lastWorkingModel = currentModel;
+    if (isModelUnhealthy(currentModel)) {
+      const prefHealth = pickFallbackModelForUpstream(settings, currentModel);
+      if (prefHealth) {
+        emitRealEvent({ type: "task_status", status: "fallback_model", message: `当前模型上游通道暂不可用，自动切换：${prefHealth}` });
+        currentModel = prefHealth;
+        lastWorkingModel = prefHealth;
+      }
+    }
     for (let attempt = 0; attempt < 3; attempt++) {
       if (effectiveSignal?.aborted) {
         throw effectiveSignal.reason || new Error("aborted_by_user");
       }
       let response;
       let payload;
+      triedModels.push(currentModel);
 
       try {
         ({ response, payload: payload } = await (async (targetModel) => {
@@ -1550,7 +1698,7 @@ async function runRealVgoPrompt({
               throw effectiveSignal.reason || new Error("aborted_by_user");
             }
             try {
-              return await sendRealVgoRequest({ token, model: targetModel, activeHistory: messages, signal: effectiveSignal });
+              return await sendRealVgoRequest({ token, model: targetModel, activeHistory: messages, signal: effectiveSignal, timeoutMs: currentRequestTimeoutMs });
             } catch (error) {
               if (effectiveSignal?.aborted || error?.name === "AbortError") throw error;
               if (!isNetworkFetchFailure(error) || netAttempt >= DEFAULT_REMOTE_NETWORK_RETRIES - 1) throw error;
@@ -1575,41 +1723,137 @@ async function runRealVgoPrompt({
 
       if (isRetryableUpstreamFailure(response, payload) && !upstreamRetryUsed) {
         upstreamRetryUsed = true;
+        // Cache this model as upstream-dead so future runs skip directly to fallback.
+        markModelUnhealthy(currentModel);
         emitRealEvent({ type: "task_status", status: "retrying", message: "上游通道连接失败，正在自动重试..." });
         await wait(1200);
         continue;
       }
 
-      if (isRetryableUpstreamFailure(response, payload) && !upstreamFallbackModelUsed) {
-        upstreamFallbackModelUsed = true;
+      if (isRetryableUpstreamFailure(response, payload) && !attemptFallbackModelUsed) {
+        attemptFallbackModelUsed = true;
         const fallbackCandidates = buildFallbackModelCandidates(settings, currentModel);
-          for (const candidateModel of fallbackCandidates) {
+        let retryFoundHealthy = false;
+        for (const candidateModel of fallbackCandidates) {
           if (effectiveSignal?.aborted) { throw effectiveSignal.reason || new Error("aborted_by_user"); }
           emitRealEvent({ type: "task_status", status: "fallback_model", message: `正在切换备用模型：${candidateModel}` });
           currentModel = candidateModel;
           try {
-            ({ response, payload } = await sendRealVgoRequest({ token, model: currentModel, activeHistory: messages, signal: effectiveSignal }));
+            ({ response, payload } = await sendRealVgoRequest({ token, model: currentModel, activeHistory: messages, signal: effectiveSignal, timeoutMs: currentRequestTimeoutMs }));
           } catch (e) { continue; }
           messageText = formatRemoteServiceError(settings, response, payload);
-          if (!isRetryableUpstreamFailure(response, payload)) break;
+          // Healthy candidate: hydrate the outer state and continue the attempt loop.
+          if (response.ok && !isRetryableUpstreamFailure(response, payload) && !isProviderRefusal(extractAssistantRawText(payload))) {
+            retryFoundHealthy = true;
+            break; // exits candidate loop only
+          }
+          if (response.ok) markModelUnhealthy(currentModel);
         }
-        if (!isRetryableUpstreamFailure(response, payload)) break;
+        if (retryFoundHealthy) {
+          // Skip downstream `if (!response.ok) throw` by reaching the happy path.
+        } else if (!isRetryableUpstreamFailure(response, payload)) {
+          // exits outer attempt block too
+        } else if (false) {
+          // exhausted
+        }
       }
 
       usage = extractUsage(payload);
       contextWindow = extractContextWindow(payload);
 
       if (!response.ok) {
-        throw new Error(messageText || `HTTP ${response.status}`);
+        lastFailureReason = messageText || `HTTP ${response.status}`;
+        throw new Error(lastFailureReason);
       }
 
-      const rawText = extractAssistantRawText(payload);
-      const cleanText = modelAdapters.stripCustomerServiceBoilerplate(protocol.sanitizeAssistantText(rawText), prompt);
-      const toolCalls = extractToolCalls(rawText);
+      let rawText = extractAssistantRawText(payload);
+      let cleanText = modelAdapters.stripCustomerServiceBoilerplate(protocol.sanitizeAssistantText(rawText), prompt);
+      let toolCalls = extractToolCalls(rawText, currentModel);
+
+      // Upstream may return HTTP 200 but with refusal/empty placeholder content.
+      // Mark and switch to a healthy candidate; if any candidate succeeds, return
+      // its content; only throw after exhausting the chain.
+      if (response.ok && isProviderRefusal(cleanText)) {
+        markModelUnhealthy(currentModel);
+        if (!upstreamRetryUsed) {
+          upstreamRetryUsed = true;
+          emitRealEvent({ type: "task_status", status: "retrying", message: `当前模型 "${currentModel}" 上游未返回有效内容，正在自动重试...` });
+          await wait(1200);
+          continue;
+        }
+        if (!attemptFallbackModelUsed) {
+          attemptFallbackModelUsed = true;
+          const fallbackCandidates = buildFallbackModelCandidates(settings, currentModel);
+          // Best result across the chain — we hydrate these locally so that
+          // when the loop exits we can return the healthy candidate's reply.
+          let bestCleanText = cleanText;
+          let bestToolCalls = [...toolCalls];
+          let bestModel = currentModel;
+          let foundHealthy = false;
+          for (const candidateModel of fallbackCandidates) {
+            if (effectiveSignal?.aborted) { throw effectiveSignal.reason || new Error("aborted_by_user"); }
+            emitRealEvent({ type: "task_status", status: "fallback_model", message: `正在切换备用模型：${candidateModel}` });
+            currentModel = candidateModel;
+            try {
+              ({ response, payload } = await sendRealVgoRequest({ token, model: currentModel, activeHistory: messages, signal: effectiveSignal, timeoutMs: currentRequestTimeoutMs }));
+            } catch (e) {
+              // Network failure — continue to next candidate.
+              markModelUnhealthy(currentModel);
+              continue;
+            }
+            messageText = formatRemoteServiceError(settings, response, payload);
+            // If candidate yields a healthy response, capture it and stop.
+            if (response.ok && !isProviderRefusal(extractAssistantRawText(payload))) {
+              bestModel = currentModel;
+              bestCleanText = modelAdapters.stripCustomerServiceBoilerplate(protocol.sanitizeAssistantText(extractAssistantRawText(payload), extractAssistantRawText(payload)), prompt);
+              if (!bestCleanText && extractAssistantRawText(payload)) {
+                bestCleanText = modelAdapters.stripCustomerServiceBoilerplate(protocol.sanitizeAssistantText(extractAssistantRawText(payload), prompt), prompt);
+              }
+              bestToolCalls = extractToolCalls(extractAssistantRawText(payload), currentModel);
+              payload = payload;
+              foundHealthy = true;
+              break;
+            }
+            if (response.ok) markModelUnhealthy(currentModel);
+            if (!isRetryableUpstreamFailure(response, payload) && response.ok) break;
+          }
+          if (foundHealthy && bestCleanText) {
+            // Hydrate outer state with the healthy candidate's reply.
+            payload = payload;
+            cleanText = bestCleanText;
+            toolCalls.length = 0;
+            toolCalls.push(...bestToolCalls);
+          } else {
+            throw new Error(`provider_refusal:${cleanText.slice(0, 80)}`);
+          }
+        } else if (!upstreamRetryUsed) {
+          // already attempted a retry earlier in this request — fall through to throw
+        } else {
+          throw new Error(`provider_refusal:${cleanText.slice(0, 80)}`);
+        }
+      }
+
+      // Emit a single model_stream_delta with the full clean text. VGO Remote
+      // upstream doesn't stream live so emit-once is enough; the renderer
+      // already animates the final text via upsertFinalMessage.
+      if (cleanText && typeof cleanText === "string" && cleanText.length > 0) {
+        try {
+          emitRealEvent({
+            type: "model_stream_delta",
+            step: 0,
+            model: currentModel,
+            text: cleanText,
+            done: true
+          });
+        } catch {}
+      }
 
       return { text: cleanText, toolCalls, raw: payload };
     }
 
+    if (lastFailureReason) {
+      throw new Error(lastFailureReason);
+    }
     throw new Error("remote_request_failed");
   };
 
@@ -1759,7 +2003,7 @@ async function runLocalPrompt({
         (response.ok ? "" : "Custom HTTP Provider request failed.");
 
       const rawText = extractAssistantRawText(payload) || text;
-      const toolCalls = extractToolCalls(rawText);
+      const toolCalls = extractToolCalls(rawText, currentModel);
       const cleanText = protocol.sanitizeAssistantText(rawText);
       // Extract think content for intent detection (shouldContinueAutonomously needs it)
       // but don't show it to the user
@@ -1827,7 +2071,15 @@ async function runPrompt(args) {
 
   if (shouldUseRealVgoChannel(args.settings)) {
     try {
-      return await runRealVgoPrompt(args);
+      const result = await runRealVgoPrompt(args);
+      // Annotate upstream-connector / 404 failures so the user clearly sees it's a provider-side outage,
+      // not a local-engine fallback. Stay on the remote channel — never silently downgrade.
+      const errMsg = String(result?.error || "");
+      if (result && !result.ok && result.exitCode !== 130 && result.error !== "aborted_by_user" &&
+          /Failed to connect to upstream channel|No available channel|HTTP 404|upstream channel|400|HTTP\s*50[0-9]|provider_refusal/i.test(errMsg)) {
+        result.error = `VGO AI provider unavailable: ${errMsg}`;
+      }
+      return result;
     } catch (error) {
       if (error?.name === "AbortError" || error?.message === "aborted_by_user") {
         return {
@@ -1843,7 +2095,7 @@ async function runPrompt(args) {
         ok: false,
         exitCode: 1,
         sessionId: args.sessionId,
-        text: `真实 VGO 远程调用失败：${error.message}`,
+        text: `真实 VGO 远程调用失败：${error.message}\n\n建议：在右侧切换到其他模型，或稍后再试。`,
         error: error.message,
         rawEvents: []
       };

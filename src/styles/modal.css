@@ -120,3 +120,93 @@ body.mode-ux-pro-max .settings-modal {
   padding: 1rem;
   border-top: 1px solid var(--border);
 }
+
+.modal-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.resume-dialog {
+  width: min(520px, 92vw);
+}
+
+.resume-dialog-header {
+  padding: 1.1rem 1.25rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.resume-dialog-header h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+
+.resume-dialog-body {
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.resume-context {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.4rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.6rem 0.8rem;
+}
+
+.resume-context-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.resume-context-row .label {
+  color: var(--text-muted);
+}
+
+.resume-context-row .value {
+  font-weight: 500;
+}
+
+.resume-prompt-preview {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.6rem 0.8rem;
+}
+
+.resume-prompt-preview summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.resume-prompt-preview pre {
+  margin-top: 0.6rem;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.resume-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.85rem 1.25rem 1.05rem;
+  border-top: 1px solid var(--border);
+}

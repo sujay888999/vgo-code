@@ -46,6 +46,20 @@ interface UpdateInfo {
   releaseDate?: string
 }
 
+interface ResumableSession {
+  sessionId: string
+  title?: string
+  directory?: string
+  lastCompletedStepIndex?: number
+  lastTask?: {
+    prompt?: string
+    startedAt?: string
+    step?: number
+    controllerId?: string
+    model?: string
+  } | null
+}
+
 interface UpdateSettings {
   autoCheck: boolean
   intervalHours?: number
@@ -65,6 +79,9 @@ interface VGODesktopAPI {
   renameSession?: (name: string) => Promise<DesktopResult>
   submitPrompt?: (payload: { text: string; attachments?: AttachmentItem[] } | string) => void
   stopPrompt?: () => void
+  detectResumableSessions?: () => Promise<ResumableSession[]>
+  resumeSession?: (sessionId: string) => Promise<{ ok: boolean; resumePrompt?: string; sessionId?: string; error?: string }>
+  dismissResume?: (sessionId: string) => Promise<{ ok: boolean }>
   attachFile?: () => Promise<AttachmentItem[]>
   removeAttachment?: (index: number) => Promise<{ ok: boolean }>
   respondPermission?: (payload: { requestId: string; approved: boolean }) => Promise<DesktopResult>

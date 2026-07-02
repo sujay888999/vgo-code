@@ -24,7 +24,7 @@ const { executeToolCallWithResilience } = require("./toolResilience");
 const { appendEngineLog } = require("./engineLog");
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const DEFAULT_MAX_STEPS = 28;
+const DEFAULT_MAX_STEPS = 200;
 const MAX_AUTO_CONTINUE_NUDGES = 4;
 
 // ── Shared helper functions (single source of truth) ─────────────────────────
@@ -154,7 +154,9 @@ function needsForcedFinalAnswer(text, rawEvents, prompt, workspace) {
   if (protocol.looksLikeGenericAcknowledgement(normalized)) return true;
   const lower = normalized.toLowerCase();
   if (lower.includes("please provide") || lower.includes("what task") || lower.includes("what would you like")) return true;
-  return normalized.length < 80;
+  // Length-based heuristic removed: short assistant replies (e.g. "正在分析..." delivered as text between tool calls)
+  // should not force termination. Force-final only when the model signals generic acknowledgement, asks for the task, or sends nothing.
+  return false;
 }
 
 //  Main unified agent loop 
@@ -226,7 +228,23 @@ async function runAgentLoop(opts) {
       };
     }
 
-    emitEvent({ type: "task_status", status: step === 0 ? "thinking" : "continuing", message: "正在思考并规划下一步执行..." });
+    // Soft cap: only nudge the model when we're within the last 100 steps
+    // of the configured maxToolSteps cap. Anything earlier trusts the model's
+    // own judgment of how much to read.
+    const SOFT_NUDGE_REMAINING_STEPS = 100;
+    const remainingSteps = maxSteps - step;
+    if (remainingSteps === SOFT_NUDGE_REMAINING_STEPS) {
+      messages.push({
+        role: "user",
+        content: `本次任务还剩约 ${SOFT_NUDGE_REMAINING_STEPS} 轮工具调用预算。请按需调用工具继续完成分析，不要急于给出最终结论。`
+      });
+    } else if (remainingSteps === 1) {
+      messages.push({
+        role: "user",
+        content: "最后 1 轮工具调用。立刻输出最终分析报告，不要再调用任何工具。"
+      });
+    }
+    emitEvent({ type: "task_status", status: step === 0 ? "thinking" : "continuing", message: `第 ${step + 1}/${maxSteps} 步 — 正在思考下一步...`, step: step + 1, maxSteps });
 
     //  Send request to model (pass signal so in-flight HTTP can be cancelled)
     let stepResult;
@@ -325,7 +343,7 @@ async function runAgentLoop(opts) {
         };
       }
 
-      emitEvent({ type: "task_status", status: "tool_running", message: "正在执行工具: " + call.name });
+      emitEvent({ type: "task_status", status: "tool_running", message: `第 ${step + 1}/${maxSteps} 步 — 正在执行工具: ${call.name}`, step: step + 1, maxSteps, tool: call.name });
 
       const execution = await executeToolCallWithResilience({
         workspace, call, executeToolCall,
@@ -341,7 +359,7 @@ async function runAgentLoop(opts) {
       toolResults.push(result);
       logRuntime("tool:executed", { tool: call.name, ok: result.ok, summary: result.summary });
 
-      const isRetryable = !result.ok && !result.recovered && /Command exited with code|ENOENT|timed out|timeout/i.test(String(result.summary || ""));
+      const isRetryable = !result.ok && !result.recovered && /Command exited with code|ENOENT|timed out|timeout|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|network|fetch error|aborted/i.test(String(result.summary || ""));
       if (result.ok || result.recovered || !isRetryable) {
         emitEvent({ type: "tool_result", step: step+1, tool: call.name, ok: result.ok, recovered: Boolean(result.recovered), summary: result.summary, output: result.output });
       } else {

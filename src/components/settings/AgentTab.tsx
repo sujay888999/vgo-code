@@ -15,6 +15,18 @@ export function AgentTab() {
   } = useAppStore()
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
+  const liveSettings = useAppStore.getState().settings as {
+    agent?: {
+      promptIdleWatchdogMs?: number
+      maxRemoteRequestTimeoutMs?: number
+    }
+  } | undefined
+  const [idleWatchdogMs, setIdleWatchdogMs] = useState<number>(
+    Number(liveSettings?.agent?.promptIdleWatchdogMs) || 300000
+  )
+  const [remoteTimeoutMs, setRemoteTimeoutMs] = useState<number>(
+    Number(liveSettings?.agent?.maxRemoteRequestTimeoutMs) || 90000
+  )
 
   const withStatus = async (message: string, fn: () => Promise<void>) => {
     setStatus(message)
@@ -75,6 +87,48 @@ export function AgentTab() {
             }}
           />
           <span>{Math.round(compressionThreshold * 100)}%</span>
+        </div>
+      </div>
+      <div className="slider-row">
+        <div>
+          <span>{t('settings.idleWatchdogMs')}</span>
+          <p className="hint">{t('settings.idleWatchdogMsHint')}</p>
+        </div>
+        <div className="slider-control">
+          <input
+            type="number"
+            min={30000}
+            max={1800000}
+            step={10000}
+            value={idleWatchdogMs}
+            onChange={async (event) => {
+              const next = Math.max(30000, Math.min(1800000, Number(event.target.value) || 300000))
+              setIdleWatchdogMs(next)
+              await applyAgentPrefs({ promptIdleWatchdogMs: next })
+            }}
+          />
+          <span>ms</span>
+        </div>
+      </div>
+      <div className="slider-row">
+        <div>
+          <span>{t('settings.remoteTimeoutMs')}</span>
+          <p className="hint">{t('settings.remoteTimeoutMsHint')}</p>
+        </div>
+        <div className="slider-control">
+          <input
+            type="number"
+            min={30000}
+            max={900000}
+            step={10000}
+            value={remoteTimeoutMs}
+            onChange={async (event) => {
+              const next = Math.max(30000, Math.min(900000, Number(event.target.value) || 90000))
+              setRemoteTimeoutMs(next)
+              await applyAgentPrefs({ maxRemoteRequestTimeoutMs: next })
+            }}
+          />
+          <span>ms</span>
         </div>
       </div>
       <ToggleRow

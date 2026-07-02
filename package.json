@@ -22,7 +22,8 @@
     "dist": "npm run build:web && electron-builder --win nsis",
     "verify:release": "powershell -ExecutionPolicy Bypass -File ./scripts/release-check.ps1",
     "release:single": "powershell -ExecutionPolicy Bypass -File ./scripts/publish-single-version-release.ps1 -LocalOnly",
-    "release:remote": "powershell -ExecutionPolicy Bypass -File ./scripts/publish-single-version-release.ps1"
+    "release:remote": "powershell -ExecutionPolicy Bypass -File ./scripts/publish-single-version-release.ps1",
+    "test:protocol": "node ./scripts/test-agent-protocol.js"
   },
   "build": {
     "appId": "com.vgo.code",

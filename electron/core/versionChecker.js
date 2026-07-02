@@ -223,15 +223,7 @@ async function initializeAutoCheck(appVersion, updateConfig = {}) {
     return null;
   }
 
-  const now = Date.now();
-  const intervalMs = (updateSettings.checkIntervalHours || 6) * 60 * 60 * 1000;
-
-  if (now - updateSettings.lastCheckTime < intervalMs) {
-    appendVersionLog("Skipping initial check: within interval");
-    return null;
-  }
-
-  return await checkForUpdates(appVersion, updateConfig);
+  return await checkForUpdates(appVersion, { ...updateConfig, force: true });
 }
 
 module.exports = {

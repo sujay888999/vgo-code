@@ -1403,7 +1403,7 @@ async function runOllamaPrompt({
       if (!response.error) {
         const assistantMessage = response.message;
         const msgText = protocol.tryRecoverMojibake(extractMessageText(assistantMessage));
-        const toolCalls = extractToolCalls(assistantMessage);
+        const toolCalls = extractToolCalls(assistantMessage, model);
         const cleanText = modelAdapters.stripCustomerServiceBoilerplate(
           protocol.sanitizeAssistantText(msgText), prompt
         );

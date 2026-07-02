@@ -57,6 +57,8 @@ export interface Session {
   actualModel?: string
   actualChannel?: string
   compressionCount?: number
+  lastCompletedStepIndex?: number
+  lastTaskStartedAt?: string
 }
 
 export interface TaskStep {
@@ -170,7 +172,8 @@ export interface AppState {
   // Runtime State
   promptRunning: boolean
   activeSessionId: string | null
-  
+  agentProgress: { step: number; maxSteps: number; tool?: string } | null
+
   // Data State
   sessions: Session[]
   messages: Message[]
@@ -282,7 +285,8 @@ export interface AppState {
   setRuntimeInfo: (engineId: string, engineLabel: string, providerLabel: string) => void
   setContextStats: (stats: AppState['contextStats']) => void
   switchEngine: (engineId: string) => Promise<void>
-  
+  setAgentProgress: (progress: AppState['agentProgress']) => void
+
   // Hydrate from desktop
   hydrate: (state: Partial<AppState>) => void
 }
@@ -296,6 +300,7 @@ export const useAppStore = create<AppState>((set) => ({
   authPollTimer: null,
   promptRunning: false,
   activeSessionId: null,
+  agentProgress: null,
   
   // Initial Data State
   sessions: [],
@@ -487,6 +492,7 @@ export const useAppStore = create<AppState>((set) => ({
     runtimeProviderLabel: providerLabel
   }),
   setContextStats: (stats) => set({ contextStats: stats }),
+  setAgentProgress: (progress) => set({ agentProgress: progress }),
   switchEngine: async (engineId: string) => {
     try {
       const result = await window.vgoDesktop?.setEngine?.(engineId)

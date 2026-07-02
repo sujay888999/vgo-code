@@ -122,7 +122,7 @@ function registerHandlers(ipcMain, ctx) {
     ctx.mainWindow.webContents.once("did-finish-load", async () => {
       const hasUpdate = await (async () => {
         try {
-          const result = await initializeAutoCheck(ctx.app.getVersion(), { updateUrl });
+          const result = await checkForUpdates(ctx.app.getVersion(), { updateUrl, force: true });
           if (result?.updateAvailable) { ctx.lastDetectedUpdate = { currentVersion: result.currentVersion, latestVersion: result.latestVersion, downloadUrl: result.downloadUrl, releaseNotes: result.releaseNotes, releaseDate: result.releaseDate }; return true; }
         } catch {} return false;
       })();

@@ -1,4 +1,4 @@
-$version = "1.2.9"
+$version = "1.3.2"
 $body = @{
     version = $version
     tag = "v$version"

@@ -46,6 +46,17 @@ const sessionEventCounters = new Map();
 const MAIN_LOG_DIR = path.join(process.cwd(), "logs");
 const MAIN_LOG_FILE = path.join(MAIN_LOG_DIR, "main-process.log");
 
+// AppUserModelId and Name MUST be set before the app is ready (else Windows uses default
+// for the running exe and the taskbar/status-bar group renders a generic document icon).
+// These calls also need to run before any BrowserWindow is created so Windows can associate
+// the right icon with the app id in Explorer/Start Menu/Status Bar.
+if (process.platform === "win32") {
+  try { app.setAppUserModelId("com.vgo.code"); } catch {}
+}
+try { app.setName("VGO CODE"); } catch {}
+try { app.setPath("userData", path.join(app.getPath("appData"), "vgo-code")); } catch {}
+try { process.title = "VGO CODE"; } catch {}
+
 try {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch("disable-gpu");
@@ -53,17 +64,9 @@ try {
   app.commandLine.appendSwitch("in-process-gpu");
 } catch {}
 
-if (process.platform === "win32") {
-  try {
-    app.setAppUserModelId("com.vgo.code");
-  } catch {}
+if (process.platform === "darwin") {
+  try { app.dock?.setIcon?.(getWindowIconPath()); } catch {}
 }
-try {
-  app.setName("VGO CODE");
-} catch {}
-try {
-  process.title = "VGO CODE";
-} catch {}
 
 process.on("unhandledRejection", (reason, promise) => {
   try {
@@ -498,15 +501,72 @@ function deriveTaskWorkspace(prompt = "", currentWorkspace = "", sessionDirector
     }
   }
 
+  let candidate = "";
   if (preferredRoots.length) {
-    return path.resolve(preferredRoots[0]);
+    candidate = path.resolve(preferredRoots[0]);
+  } else {
+    candidate = path.resolve(currentWorkspace || process.cwd());
   }
 
-  return path.resolve(currentWorkspace || process.cwd());
+  // Final safety: if candidate doesn't exist, fall back to actual app cwd which
+  // is always reachable (process.cwd() during npm start of VGO CODE is project root).
+  if (!safeIsDirectory(candidate)) {
+    try {
+      const fallback = path.resolve(process.cwd());
+      if (safeIsDirectory(fallback)) return fallback;
+    } catch {}
+    try {
+      const fallback = app.getPath("home");
+      if (safeIsDirectory(fallback)) return fallback;
+    } catch {}
+    candidate = path.resolve(process.cwd());
+  }
+  return candidate;
+}
+
+function safeIsDirectory(targetPath) {
+  try {
+    return fs.statSync(targetPath).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function applyRuntimeForProfile(profile = {}) {
   setRuntimeEngine(resolveEngineIdForProfile(profile));
+}
+
+// Coalesce same-tick low-priority events (tool_result, model_response) so the
+// renderer doesn't get hit N times per loop tick. High-priority events
+// (task_status, permission_*) flush immediately so the UI reacts fast.
+const _agentEventBuffers = new Map(); // sessionId -> { timer, events: [] }
+const AGENT_EVENT_BATCH_MS = 16;
+function flushAgentEventBuffer(sessionId) {
+  const entry = _agentEventBuffers.get(sessionId);
+  if (!entry) return;
+  _agentEventBuffers.delete(sessionId);
+  if (!entry.events.length) return;
+  const event = entry.events[entry.events.length - 1]; // collapse: only latest event wins
+  event.batchSize = entry.events.length;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send("agent:event", event);
+    }
+  }
+}
+
+function bufferAgentEvent(sessionId, normalizedPayload) {
+  let entry = _agentEventBuffers.get(sessionId);
+  if (!entry) {
+    entry = { timer: null, events: [] };
+    _agentEventBuffers.set(sessionId, entry);
+  }
+  entry.events.push(normalizedPayload);
+  if (entry.timer) return;
+  entry.timer = setTimeout(() => {
+    entry.timer = null;
+    flushAgentEventBuffer(sessionId);
+  }, AGENT_EVENT_BATCH_MS);
 }
 
 function sendAgentEvent(payload = {}) {
@@ -527,6 +587,23 @@ function sendAgentEvent(payload = {}) {
     eventAt,
     eventId
   };
+
+  // Coalesce identical low-priority events within the same microtask.
+  const coalescable =
+    eventType === "tool_result" ||
+    eventType === "model_response" ||
+    eventType === "model_stream_delta";
+  if (coalescable) {
+    bufferAgentEvent(sessionId, normalizedPayload);
+    return;
+  }
+
+  // High-priority: flush any pending buffered events for this session first
+  // so order is preserved (status followed by tool_result is logical).
+  const pending = _agentEventBuffers.get(sessionId);
+  if (pending && pending.events.length) {
+    flushAgentEventBuffer(sessionId);
+  }
 
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
@@ -1012,7 +1089,16 @@ async function fetchVgoAiProfile(accessToken) {
   return payload.user || payload.data || payload.profile || payload;
 }
 
+let _modelCatalogCache = null;
+let _modelCatalogCacheAt = 0;
+const MODEL_CATALOG_TTL_MS = 60 * 60 * 1000; // 1 hour
+
 async function fetchRealVgoModels(accessToken) {
+  // Use a short-lived cache so menu boot doesn't re-hit /api/v1/chat/models.
+  if (_modelCatalogCache && Date.now() - _modelCatalogCacheAt < MODEL_CATALOG_TTL_MS && _modelCatalogCache.token === accessToken) {
+    return _modelCatalogCache.models;
+  }
+
   const payload = await fetchJson("https://vgoai.cn/api/v1/chat/models", {
     headers: {
       Authorization: `Bearer ${accessToken}`
@@ -1020,7 +1106,7 @@ async function fetchRealVgoModels(accessToken) {
   });
 
   const items = payload?.data || payload?.items || payload?.models || [];
-      return Array.isArray(items)
+  const models = Array.isArray(items)
     ? items
         .filter((m) => !/^nvidia\//i.test(m.id))
         .map((item) => ({
@@ -1037,6 +1123,15 @@ async function fetchRealVgoModels(accessToken) {
           )
         }))
     : [];
+
+  _modelCatalogCache = { token: accessToken, models };
+  _modelCatalogCacheAt = Date.now();
+  return models;
+}
+
+function invalidateModelCatalogCache() {
+  _modelCatalogCache = null;
+  _modelCatalogCacheAt = 0;
 }
 
 function mapGenericModelCatalog(payload = {}) {

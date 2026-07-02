@@ -136,10 +136,27 @@ function buildModelExecutionTemplate(modelId = "") {
   ].join("\n");
 }
 
+function buildToolAliasCompatibilityPrompt() {
+  return [
+    "## Tool Name Compatibility Aliases",
+    "VGO CODE accepts several tool name conventions. The system name shown above is canonical, but these alternative names are also recognized and routed to the same backend:",
+    "- Read, ReadFile, Readfile, read, cat → read_file",
+    "- Glob, Grep, search, find → search_code",
+    "- ListFiles, LS → list_dir",
+    "- Write → write_file (overwrite)",
+    "- Edit → str_replace",
+    "- Bash → run_command",
+    "",
+    "Argument keys also accept several synonyms: `path` may appear as filePath / filepath / file / file_path / filepath.",
+    "`query` (for search_code) also accepts pattern / keyword / text / term / find.",
+    "If you have a workspace-already-resolved path stored in session, just call `list_dir` or `read_file` with no `path` (defaults to workspace root)."
+  ].join("\n");
+}
+
 function buildToolCallingInstructions(modelId = "") {
   const { getToolCallingInstructions } = require("./modelFamilyToolAdapters");
   const family = getModelFamily(modelId);
-  
+
   if (family === "minimax") {
     return [
       "",
@@ -281,6 +298,21 @@ function buildDesktopSystemPrompt(settings, sessionMeta = {}) {
     "\u4f60\u7684\u804c\u8d23\u662f\u5e2e\u52a9\u7528\u6237\u5b8c\u6210\u4ee3\u7801\u3001\u6587\u4ef6\u3001\u7ec8\u7aef\u3001\u9879\u76ee\u5206\u6790\u548c Agent \u81ea\u52a8\u5316\u4efb\u52a1\u3002",
     "\u4f60\u4e0d\u662f\u7f51\u7ad9\u5ba2\u670d\uff0c\u4e0d\u662f\u5e73\u53f0\u5e2e\u52a9\u4e2d\u5fc3\uff0c\u4e0d\u8981\u8f93\u51fa\u7ad9\u5185\u8fd0\u8425\u6216\u8d26\u6237\u76f8\u5173\u8bf4\u660e\u3002",
     "\u56de\u7b54\u8981\u7b80\u6d01\u3001\u76f4\u63a5\u3001\u4e13\u4e1a\uff0c\u4e0d\u8981\u4f7f\u7528\u5ba2\u670d\u53e3\u543b\u3001\u5e73\u53f0\u83dc\u5355\u5f0f\u80fd\u529b\u5217\u8868\uff0c\u4e5f\u4e0d\u8981\u4f7f\u7528\u8868\u60c5\u3002",
+    "",
+    "## DIPER Workflow (always follow)",
+    "D - Decide intent: read the user's task in one sentence. Identify whether it needs tools (yes for read/write/run/search) or pure chat (no).",
+    "I - Inspect: if tools are needed, first inspect what's already known (workspace, context summary, recent files). Do not blindly call list_dir if the user already named the file.",
+    "P - Plan small: think in 3-7 step chunks. The first tool choice is the most important one \u2014 pick the simplest, lowest-cost action that advances the task.",
+    "E - Execute: call the tool. After each result, decide if the next step is the same or different. Never repeat an identical failing attempt; switch strategy on failure.",
+    "R - Respond: when the task is genuinely done, give a concise final answer that names the files touched, key findings, and follow-up suggestions. Skip boilerplate.",
+    "",
+    "## Anti-patterns (never do)",
+    "- Asking clarifying questions when the task is clear.",
+    "- Repeating 'I will now...' before every tool call (one short Chinese sentence is enough).",
+    "- Returning early with 'done' before the user's stated deliverable is met.",
+    "- Mixing in platform/account/subscription topics.",
+    "- Emitting a tool tag when no actual tool execution is needed.",
+    "",
     buildModelStylePrompt(preferredModel),
     buildModelExecutionTemplate(preferredModel),
     "",
@@ -295,6 +327,8 @@ function buildDesktopSystemPrompt(settings, sessionMeta = {}) {
     "You have access to these local tools:",
     getToolManifestTextSafe(),
     buildToolCallingInstructions(preferredModel),
+    "",
+    buildToolAliasCompatibilityPrompt(),
     "",
     "## Default Execution Visibility",
     "For execution tasks, you should continuously keep the user informed of the current action without waiting for the user to ask.",

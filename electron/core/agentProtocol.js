@@ -113,6 +113,12 @@ function sanitizeAssistantText(text = "") {
     return validArgs ? "" : match;
   });
   cleaned = cleaned.replace(/<\/?tool_call[^>]*>/gi, "");
+  // Also strip the inner Ruby-hash-shape body of [TOOL_CALL] markers so the
+  // user-facing message doesn't display fragment from a fallback parser.
+  cleaned = cleaned.replace(/\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi, "");
+  // Standalone opening/closing tags can leak if the model emits broken XML.
+  cleaned = cleaned.replace(/\[TOOL_CALL\]/gi, "");
+  cleaned = cleaned.replace(/\[\/TOOL_CALL\]/gi, "");
   cleaned = cleaned.replace(/^\s*<[^>]+>\s*$/gm, "");
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
   return cleaned;
@@ -456,12 +462,23 @@ function collectLooseToolCalls(rawText = "") {
   return calls;
 }
 
-function parseToolCalls(rawText = "") {
+function parseToolCalls(rawText = "", modelId = "") {
+  // Optional modelId allows callers to skip irrelevant parsing strategies
+  // based on which model family is generating the output.
+  const family = String(modelId || "").trim().toLowerCase();
   const source = String(rawText || "");
   const normalizedSource = normalizeEscapedToolMarkup(source);
   const calls = [];
-  
-  const minimaxCalls = parseMinimaxToolCalls(normalizedSource);
+
+  // Marker-style [TOOL_CALL] parsing runs FIRST regardless of family — it's the
+  // most explicit shape and short-circuits the heavier workers below.
+  const earlyMarker = parseMarkerToolCalls(normalizedSource);
+  if (earlyMarker.length) {
+    return earlyMarker;
+  }
+
+  // Family-optimized: minimax (M2.7 etc) prefers <minimax:tool_call> XML.
+  const minimaxCalls = family.includes("minimax") ? parseMinimaxToolCalls(normalizedSource) : [];
   if (minimaxCalls.length) {
     return minimaxCalls;
   }
@@ -525,7 +542,10 @@ function parseToolCalls(rawText = "") {
     });
   }
 
+  // Line-based parsing is a last resort for models that don't use structured
+  // tool call formats. Skip for families known to produce proper JSON/XML.
   const lineBasedCalls = [];
+  const skipLineBased = family.includes("minimax") || family.includes("openai") || family.includes("claude");
   const toolLineMatches = [
     ...source.matchAll(
       /(?:^|\n)\s*[-*]?\s*(?:Agent\s*)?(?:\u6b63\u5728\u8c03\u7528\u5de5\u5177[:\uff1a])?\s*(read_file|list_dir|search_code|write_file|run_command|open_path)\s*\|\s*([^\n]+)/gim
@@ -570,7 +590,7 @@ function parseToolCalls(rawText = "") {
     }
   }
   
-  if (lineBasedCalls.length) {
+  if (lineBasedCalls.length && !skipLineBased) {
     const allCodeBlocks = [...normalizedSource.matchAll(/```(?:\w+)?\s*([\s\S]*?)```/gi)];
     let codeBlockIndex = 0;
     
@@ -606,6 +626,53 @@ function parseToolCalls(rawText = "") {
   }
 
   return [];
+}
+
+function parseMarkerToolCalls(normalizedSource = "") {
+  // Marker-style: [TOOL_CALL]{tool => "X", args => {...}}[/TOOL_CALL]
+  // Some providers emit Ruby-like hash syntax with single quotes and bare hashes.
+  // Anthropic-style models may also place params outside the `args` hash as
+  // `--name "value"` lines (Ruby "comment-like" trailing args).
+  const markerCalls = [];
+  const markerPattern = /\[TOOL_CALL\]\s*\{[\s\S]*?\}\s*\[\/TOOL_CALL\]/gi;
+  const markerMatches = [...normalizedSource.matchAll(markerPattern)];
+  for (const match of markerMatches) {
+    const block = match[0];
+    const inner = block
+      .replace(/^\[TOOL_CALL\]\s*/, "")
+      .replace(/\s*\[\/TOOL_CALL\]$/, "")
+      .trim();
+    const toolMatch = inner.match(/tool\s*=>\s*"([^"]+)"/i);
+    if (!toolMatch) continue;
+    const toolName = toolMatch[1];
+    let argumentsObj = {};
+    const argsMatch = inner.match(/args\s*=>\s*\{([\s\S]*)\}\s*\}\s*$/i);
+    if (argsMatch) {
+      const argsBody = argsMatch[1];
+      const cleanedArgs = argsBody
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line && !/^\s*--/.test(line))
+        .join("\n");
+      try {
+        const jsonLike = cleanedArgs
+          .replace(/(\b[\w-]+)\s*=>/g, '"$1":')
+          .replace(/'/g, '"');
+        const parsedArgs = JSON.parse(`{${jsonLike}}`);
+        if (parsedArgs && typeof parsedArgs === "object") argumentsObj = parsedArgs;
+      } catch {}
+    }
+    if (!Object.keys(argumentsObj).length) {
+      const dashParams = inner.matchAll(/--([a-zA-Z][\w-]*)\s+(?:"([^"]*)"|'([^']*)'|(\S+))/g);
+      for (const m of dashParams) {
+        const key = m[1];
+        const value = m[2] ?? m[3] ?? m[4] ?? "";
+        argumentsObj[key] = value;
+      }
+    }
+    markerCalls.push({ name: String(toolName), arguments: argumentsObj });
+  }
+  return markerCalls;
 }
 
 function parseMinimaxToolCalls(source) {

@@ -116,6 +116,7 @@ export function Composer() {
     remoteProfiles,
     activeRemoteProfileId,
     runtimeEngineId,
+    agentProgress,
     hydrate,
     permissionMode,
     setPermissionMode,
@@ -444,6 +445,21 @@ export function Composer() {
           )}
         </div>
       </div>
+
+      {agentProgress && promptRunning && (
+        <div className="composer-progress" role="status" aria-live="polite">
+          <div className="composer-progress-meta">
+            <span className="composer-progress-step">第 {agentProgress.step} / {agentProgress.maxSteps} 步</span>
+            {agentProgress.tool ? <span className="composer-progress-tool">· {agentProgress.tool}</span> : null}
+          </div>
+          <div className="composer-progress-track">
+            <div
+              className="composer-progress-bar"
+              style={{ width: `${Math.min(100, Math.round((agentProgress.step / Math.max(1, agentProgress.maxSteps)) * 100))}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="composer-hint">
         <span>Shift + Enter {t('composer.newLine')}</span>

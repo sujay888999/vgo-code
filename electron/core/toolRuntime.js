@@ -246,8 +246,55 @@ async function appendFile(workspace, args = {}, options = {}) {
 }
 
 async function listDir(workspace, args = {}, options = {}) {
-  const targetPath = ensureWorkspacePath(workspace, args.path || ".", options);
-  const dirents = await fsp.readdir(targetPath, { withFileTypes: true });
+  const requestedPath = String(args.path || "").trim();
+  let targetPath;
+  try {
+    targetPath = ensureWorkspacePath(workspace, args.path || ".", options);
+  } catch (scopeError) {
+    // When model emits a path outside the allowed scope we don't return ok:false
+    // — the agent would just give up. Instead return an error that hints at the
+    // workspace root so the next tool call can recover.
+    return {
+      ok: false,
+      name: "list_dir",
+      summary: `Cannot access path "${requestedPath || '.'}": ${scopeError.message}. Try the workspace root (".")`,
+      output: ""
+    };
+  }
+  let dirents;
+  try {
+    dirents = await fsp.readdir(targetPath, { withFileTypes: true });
+  } catch (ioError) {
+    // ENOENT/EISDIR/hallucinated paths: fall back to workspace root so the model
+    // gets a recoverable listing.
+    if (ioError.code === "ENOENT" || ioError.code === "ENOTDIR" || ioError.code === "EISDIR") {
+      try {
+        const fallbackRoot = path.resolve(workspace);
+        const fallbackDirents = await fsp.readdir(fallbackRoot, { withFileTypes: true });
+        const fallbackEntries = (await Promise.all(
+          fallbackDirents
+            .sort((l, r) => l.name.localeCompare(r.name))
+            .slice(0, clamp(args.maxEntries, 1, 100, 50))
+            .map((entry) => formatFileEntry(path.join(fallbackRoot, entry.name), entry))
+        ));
+        return {
+          ok: true,
+          name: "list_dir",
+          recovered: true,
+          summary: `Path "${requestedPath}" not resolvable; listed ${fallbackEntries.length} entries in workspace root (${fallbackRoot}) instead.`,
+          output: fallbackEntries.join("\n") || "(empty directory)"
+        };
+      } catch {
+        // Last resort — propagate original error
+      }
+    }
+    return {
+      ok: false,
+      name: "list_dir",
+      summary: `${ioError.code || "IO"}: ${ioError.message}`,
+      output: ""
+    };
+  }
   const entries = (await Promise.all(
     dirents
       .sort((left, right) => left.name.localeCompare(right.name))
@@ -263,6 +310,52 @@ async function listDir(workspace, args = {}, options = {}) {
   };
 }
 
+// ── ripgrep fast-path for searchCode ──────────────────────────────────────────
+// Tries ripgrep (rg) first; returns null when unavailable so the caller falls
+// back to the pure-JS walk.  Matches are trimmed and capped at maxResults.
+async function tryRipgrepSearch(rootPath, query, maxResults) {
+  try {
+    // --no-heading: omit filename-only lines between matches
+    // --line-number: include line numbers
+    // --max-count: cap per-file matches to avoid flooding one file
+    // --smart-case: case-insensitive unless query has uppercase
+    // -g '!node_modules' -g '!.git': skip noise directories
+    const args = [
+      "--no-heading", "--line-number",
+      "--max-count", String(maxResults),
+      "--smart-case",
+      "-g", "!node_modules",
+      "-g", "!.git",
+      "-g", "!dist",
+      query,
+      rootPath
+    ];
+    const result = await spawnAsync("rg", args, {
+      cwd: rootPath,
+      timeout: 15000,
+      shell: false,
+      env: process.env
+    });
+    if (result.error || result.status > 1) return null; // rg not found or error
+    const lines = String(result.stdout || "").split(/\r?\n/).filter(Boolean);
+    const trimmed = lines.slice(0, maxResults).map((line) => {
+      // rg output format: path:lineno:text — keep as-is but trim long text
+      const colon2 = line.indexOf(":", line.indexOf(":") + 1);
+      if (colon2 > 0 && line.length - colon2 > 300) {
+        return line.slice(0, colon2 + 301) + "...";
+      }
+      return line;
+    });
+    return {
+      matchCount: trimmed.length,
+      output: trimmed.join("\n")
+    };
+  } catch {
+    return null;
+  }
+}
+
+
 async function searchCode(workspace, args = {}, options = {}) {
   const rootPath = ensureWorkspacePath(workspace, args.path || ".", options);
   const query = String(args.query || "").trim();
@@ -270,7 +363,40 @@ async function searchCode(workspace, args = {}, options = {}) {
     return { ok: false, name: "search_code", summary: "Missing required argument: query", output: "" };
   }
 
+  // Glob-style query (e.g. "**/*.ts", "*.*") from providers that emit
+  // Claude-Code-style Glob tools — return directory listing as the actual
+  // tree, not as zero matches bending the agent into a hallucinated path.
+  const looksLikeGlob = /\*+|\?|\[.+\]/.test(query);
+  if (looksLikeGlob) {
+    const dirents = await fsp.readdir(rootPath, { withFileTypes: true }).catch(() => []);
+    const entries = (await Promise.all(
+      dirents
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .slice(0, clamp(args.maxEntries, 1, 100, 50))
+        .map((entry) => formatFileEntry(path.join(rootPath, entry.name), entry))
+    ));
+    return {
+      ok: true,
+      name: "search_code",
+      summary: `Glob "${query}" interpreted as listing ${entries.length} entries in ${rootPath}.`,
+      output: entries.join("\n") || "(empty directory)"
+    };
+  }
+
   const maxResults = clamp(args.maxResults, 1, 100, 30);
+
+  // Try ripgrep first — orders of magnitude faster on large projects
+  const rgResult = await tryRipgrepSearch(rootPath, query, maxResults);
+  if (rgResult) {
+    return {
+      ok: true,
+      name: "search_code",
+      summary: `Found ${rgResult.matchCount} matches for "${query}" via ripgrep.`,
+      output: rgResult.output || "(no matches)"
+    };
+  }
+
+  // Fallback to pure-JS walk for environments without ripgrep installed
   const results = [];
 
   async function walk(dir) {
@@ -281,19 +407,23 @@ async function searchCode(workspace, args = {}, options = {}) {
       if (results.length >= maxResults) break;
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (["node_modules", ".git", "dist"].includes(entry.name)) continue;
+        if (["node_modules", ".git", "dist", ".next", "__pycache__", ".venv", "venv"].includes(entry.name)) continue;
         await walk(fullPath);
         continue;
       }
+      // Skip binary and large files (>1MB) for performance
+      try {
+        const stat = await fsp.stat(fullPath);
+        if (stat.size > 1_000_000) continue;
+      } catch { continue; }
       try {
         const content = await fsp.readFile(fullPath, "utf8");
         const lines = content.split(/\r?\n/);
-        lines.forEach((line, index) => {
-          if (results.length >= maxResults) return;
-          if (line.toLowerCase().includes(query.toLowerCase())) {
-            results.push(`${fullPath}:${index + 1}: ${line.trim()}`);
+        for (let idx = 0; idx < lines.length && results.length < maxResults; idx++) {
+          if (lines[idx].toLowerCase().includes(query.toLowerCase())) {
+            results.push(`${fullPath}:${idx + 1}: ${lines[idx].trim().slice(0, 300)}`);
           }
-        });
+        }
       } catch {
         // ignore binary or unreadable files
       }
@@ -304,7 +434,7 @@ async function searchCode(workspace, args = {}, options = {}) {
   return {
     ok: true,
     name: "search_code",
-    summary: `Found ${results.length} matches for "${query}".`,
+    summary: `Found ${results.length} matches for "${query}" (fallback walk).`,
     output: results.join("\n") || "(no matches)"
   };
 }

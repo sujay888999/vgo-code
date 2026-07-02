@@ -109,6 +109,8 @@ function createSession(title = DEFAULT_SESSION_TITLE, directory = null) {
     usageInputTokens: 0,
     usageOutputTokens: 0,
     usageTotalTokens: 0,
+    lastTask: null, // { prompt, startedAt, step, controllerId, model } — set when a task begins, cleared when it ends cleanly.
+    lastCompletedStepIndex: 0,
     createdAt: now,
     updatedAt: now
   };
@@ -174,6 +176,16 @@ function normalizeSession(session, workspace = "") {
     usageInputTokens: Number.isFinite(session.usageInputTokens) ? session.usageInputTokens : 0,
     usageOutputTokens: Number.isFinite(session.usageOutputTokens) ? session.usageOutputTokens : 0,
     usageTotalTokens: Number.isFinite(session.usageTotalTokens) ? session.usageTotalTokens : 0,
+    lastTask: session.lastTask && typeof session.lastTask === "object"
+      ? {
+          prompt: String(session.lastTask.prompt || ""),
+          startedAt: session.lastTask.startedAt || "",
+          step: Number(session.lastTask.step) || 0,
+          controllerId: String(session.lastTask.controllerId || ""),
+          model: session.lastTask.model || ""
+        }
+      : null,
+    lastCompletedStepIndex: Number.isFinite(session.lastCompletedStepIndex) ? session.lastCompletedStepIndex : 0,
     createdAt: session.createdAt || new Date().toISOString(),
     updatedAt: session.updatedAt || new Date().toISOString()
   };
@@ -357,6 +369,43 @@ function appendHistory(role, text, status = "done") {
     return session;
   }
 
+  function recordTaskStart(sessionId, payload) {
+    const session = getSessionById(sessionId);
+    if (!session) return null;
+    session.lastTask = {
+      prompt: String(payload?.prompt || "").slice(0, 8000),
+      startedAt: new Date().toISOString(),
+      step: 0,
+      controllerId: String(payload?.controllerId || ""),
+      model: payload?.model || ""
+    };
+    session.lastCompletedStepIndex = 0;
+    touchSession(session);
+    persistAndSort();
+    return { ...session.lastTask };
+  }
+
+  function recordTaskStep(sessionId, stepIndex) {
+    const session = getSessionById(sessionId);
+    if (!session || !session.lastTask) return null;
+    const next = Math.max(session.lastCompletedStepIndex, Number(stepIndex) || 0);
+    if (next === session.lastCompletedStepIndex) return session.lastCompletedStepIndex;
+    session.lastCompletedStepIndex = next;
+    session.lastTask = { ...session.lastTask, step: next };
+    touchSession(session);
+    scheduleSave();
+    return next;
+  }
+
+  function clearTask(sessionId) {
+    const session = getSessionById(sessionId);
+    if (!session) return;
+    session.lastTask = null;
+    session.lastCompletedStepIndex = 0;
+    touchSession(session);
+    persistAndSort();
+  }
+
   function serialize() {
     const session = getActiveSession();
     return {
@@ -385,6 +434,8 @@ function appendHistory(role, text, status = "done") {
       contextSummary: session?.contextSummary || "",
       compressionCount: session?.compressionCount || 0,
       lastCompressionAt: session?.lastCompressionAt || "",
+      lastTask: session?.lastTask || null,
+      lastCompletedStepIndex: session?.lastCompletedStepIndex || 0,
       actualModel: session?.actualModel || "",
       actualChannel: session?.actualChannel || "",
       actualContextWindow: session?.actualContextWindow || 0,
@@ -489,12 +540,15 @@ function appendHistory(role, text, status = "done") {
   return {
     appendHistory,
     clearActiveHistory,
+    clearTask,
     createAndActivateSession,
     deleteSession,
     getActiveSession,
     getSessionById,
     getState,
     load,
+    recordTaskStart,
+    recordTaskStep,
     renameSession,
     renameSessionFromFirstPrompt,
     replaceSessionHistory,

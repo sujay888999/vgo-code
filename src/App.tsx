@@ -7,6 +7,7 @@ import { MainPanel } from './components/MainPanel'
 import { SettingsModal } from './components/SettingsModal'
 import { RenameModal } from './components/RenameModal'
 import { UpdateNotification } from './components/UpdateNotification'
+import { ResumeDialog } from './components/ResumeDialog'
 
 const FINAL_MESSAGE_PREFIX = 'final-assistant-'
 
@@ -129,6 +130,7 @@ export function App() {
     activeSessionId,
     hydrate,
     setPromptRunning,
+    setAgentProgress,
     addMessage,
     updateMessage,
     addTaskStep,
@@ -139,6 +141,7 @@ export function App() {
     uiMode,
   } = useAppStore()
   const [updateNotificationOpen, setUpdateNotificationOpen] = useState(false)
+  const [interruptedSession, setInterruptedSession] = useState<ResumableSession | null>(null)
   const seenEventIdsRef = useRef<Map<string, number>>(new Map())
   const lastEventSeqRef = useRef<Map<string, number>>(new Map())
 
@@ -172,6 +175,12 @@ export function App() {
           if (state.settings?.localization?.locale) {
             setI18nLocale(state.settings.localization.locale)
           }
+        }
+        // On boot, surface any sessions whose lastTask is still in-flight from a prior run.
+        const resumable = await window.vgoDesktop?.detectResumableSessions?.()
+        if (Array.isArray(resumable) && resumable.length) {
+          const focus = resumable[0]
+          setInterruptedSession(focus)
         }
       } catch (error) {
         console.error('Failed to load initial state:', error)
@@ -314,6 +323,13 @@ export function App() {
 
       if (eventType === 'task_status') {
         const taskCopy = getTaskCopy(status, payload, t)
+        // Reflect agent step/maxSteps in the store so Composer / MainPanel
+        // can render a determinate progress indicator.
+        const stepNum = Number(payload?.step)
+        const maxStepsNum = Number(payload?.maxSteps)
+        if (Number.isFinite(stepNum) && Number.isFinite(maxStepsNum) && maxStepsNum > 0) {
+          setAgentProgress({ step: stepNum, maxSteps: maxStepsNum, tool: payload?.tool })
+        }
         if (taskCopy) {
           if (
             status === 'planning' ||
@@ -359,6 +375,7 @@ export function App() {
           if (status === 'completed') {
             settleTaskSteps('completed')
             setPromptRunning(false)
+            setAgentProgress(null)
             upsertTaskStep('task-status-final', {
               title: taskCopy.title,
               detail: taskCopy.detail,
@@ -373,6 +390,7 @@ export function App() {
           if (status === 'error' || status === 'failed') {
             settleTaskSteps('warning')
             setPromptRunning(false)
+            setAgentProgress(null)
             upsertTaskStep('task-status-final', {
               title: taskCopy.title,
               detail: taskCopy.detail,
@@ -564,6 +582,26 @@ export function App() {
       {renameOverlayOpen && <RenameModal />}
       {updateNotificationOpen && (
         <UpdateNotification onClose={() => setUpdateNotificationOpen(false)} />
+      )}
+      {interruptedSession && (
+        <ResumeDialog
+          session={interruptedSession}
+          onResume={async () => {
+            const target = interruptedSession
+            setInterruptedSession(null)
+            const result = await window.vgoDesktop?.resumeSession?.(target.sessionId)
+            if (result?.ok && result.resumePrompt) {
+              await window.vgoDesktop?.submitPrompt?.({ text: result.resumePrompt })
+            } else {
+              await window.vgoDesktop?.dismissResume?.(target.sessionId)
+            }
+          }}
+          onDismiss={async () => {
+            const target = interruptedSession
+            setInterruptedSession(null)
+            await window.vgoDesktop?.dismissResume?.(target.sessionId)
+          }}
+        />
       )}
     </div>
   )

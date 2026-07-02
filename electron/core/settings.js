@@ -115,8 +115,10 @@ const DEFAULT_SETTINGS = {
     fallbackModel: "",
     suggestSkillAugmentation: true,
     autoSearchSkillsOnApproval: true,
-    maxToolSteps: 120,
-    maxTaskRuntimeMinutes: 240
+    maxToolSteps: 200,
+    maxTaskRuntimeMinutes: 240,
+    promptIdleWatchdogMs: 300000,
+    maxRemoteRequestTimeoutMs: 90000
   },
   skills: {
     disabled: []

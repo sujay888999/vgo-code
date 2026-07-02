@@ -23,7 +23,6 @@ export function MainPanel() {
     workspace,
     hydrate,
   } = useAppStore()
-
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [followOutput, setFollowOutput] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -68,6 +67,41 @@ export function MainPanel() {
       nextContainer.scrollTop = nextContainer.scrollHeight
     })
   }, [autoScroll])
+
+  // Live status indicator — surfaces the most recent in-flight step so the user
+  // can see exactly what the agent is doing (planning/thinking/running tools/etc).
+  const liveStatus = useMemo(() => {
+    if (!promptRunning) return null
+    const inflight = [...taskSteps].reverse().find((s) =>
+      ['planning', 'working', 'tool_running', 'permission_requested'].includes(s.state)
+    ) || null
+    if (!inflight) {
+      return { state: 'working', title: t('task.thinking'), detail: '' }
+    }
+    return { state: inflight.state, title: inflight.title, detail: inflight.detail }
+  }, [promptRunning, taskSteps, t])
+
+  // Idle watchdog — if promptRunning stays true for > agent.promptIdleWatchdogMs
+  // without a new step, force-resolve it so the UI doesn't appear stuck forever.
+  useEffect(() => {
+    if (!promptRunning) return
+    const settings = useAppStore.getState().settings as {
+      agent?: { promptIdleWatchdogMs?: number }
+    } | undefined
+    const idleMs = Math.max(30000, Number(settings?.agent?.promptIdleWatchdogMs) || 300000)
+    const lastTs = taskSteps.reduce((max, s) => {
+      const t = Number(s.timestamp) || 0
+      return t > max ? t : max
+    }, 0)
+    const targetDelay = Date.now() - lastTs >= idleMs ? 1000 : idleMs - (Date.now() - lastTs)
+    const timer = window.setTimeout(() => {
+      const stillRunning = useAppStore.getState().promptRunning
+      if (stillRunning) {
+        useAppStore.getState().setPromptRunning(false)
+      }
+    }, Math.max(15000, targetDelay))
+    return () => window.clearTimeout(timer)
+  }, [promptRunning, taskSteps])
 
   useEffect(() => {
     const container = scrollRef.current
@@ -196,9 +230,13 @@ export function MainPanel() {
         <div className="header-center">
           {currentModelBadge.name && (
             <div className="model-badge">
+              {promptRunning && <span className="running-indicator" aria-label="thinking" />}
               <span className="model-name">{currentModelBadge.name}</span>
               {currentModelBadge.provider && (
                 <span className="provider-name">{currentModelBadge.provider}</span>
+              )}
+              {promptRunning && (
+                <span className="running-text">{liveStatus?.title || t('mainPanel.thinking') || '思考中'}</span>
               )}
             </div>
           )}
