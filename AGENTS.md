@@ -100,7 +100,7 @@
 - 待办: `electron/preload.js` 中确认 `looksLikeMojibake` 导入路径存在 (verify 导入来自 `src/utils/mojibake.ts`)
 
 ## Critical Context
-- 项目版本号: 根目录 `package.json` v1.3.0, `src/package.json` v1.3.0（已统一）
+- 项目版本号: 根目录 `package.json` v1.3.3, `src/package.json` v1.3.3（已统一）
 - 根目录 `electron ^36.3.0` 与 `src/` 之前 `electron ^30.0.0` 版本不一致已解决（src 中已移除 electron）
 - 构建产物输出到 `dist-web/` 目录（`outDir: ../dist-web`）；`electron .` 直接加载 `dist-web/index.html`
 - `npm run build:web` 在 `src/` 下运行 `tsc && vite build`
