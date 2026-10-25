@@ -36,8 +36,6 @@
 powershell -ExecutionPolicy Bypass -File E:\VGO-CODE\scripts\rollback-cloudflare-to-vultr.ps1 -CfApiToken "<NEW_CF_TOKEN>"
 ```
 
-默认回滚到：`139.180.213.100`
-
 ## 你现在只需要做的一件事
 
 删除旧的 Cloudflare API Token（已在聊天中暴露），重新创建新 token 仅用于后续变更。
