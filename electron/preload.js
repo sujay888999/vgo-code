@@ -1,11 +1,23 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+// Only these main-process event channels may be subscribed from the renderer.
+// The main process forwards exactly these five (see the ipcRenderer.on handlers
+// at the bottom of this file); any other channel subscription is ignored so a
+// compromised renderer cannot listen on arbitrary internal channels.
+const ALLOWED_EVENT_CHANNELS = new Set([
+  "auth:stateUpdate",
+  "app:stateRefresh",
+  "agent:event",
+  "update:available",
+  "update:status",
+]);
+
 contextBridge.exposeInMainWorld("vgoDesktop", {
   // State
   getState: () => ipcRenderer.invoke("app:getState"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   normalizeEngineLog: () => ipcRenderer.invoke("logs:normalizeEngine"),
-  
+
   // Session management
   createSession: () => ipcRenderer.invoke("chat:createSession"),
   resetSession: () => ipcRenderer.invoke("chat:resetSession"),
@@ -14,29 +26,29 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
   togglePinSession: (sessionId) => ipcRenderer.invoke("chat:togglePinSession", sessionId),
   deleteSession: (sessionId) => ipcRenderer.invoke("chat:deleteSession", sessionId),
   updateSession: (sessionId, meta) => ipcRenderer.invoke("chat:updateSession", { sessionId, ...meta }),
-  
+
   // Chat
   submitPrompt: (payload) => ipcRenderer.invoke("chat:send", payload),
   stopPrompt: () => ipcRenderer.invoke("chat:abort"),
   detectResumableSessions: () => ipcRenderer.invoke("chat:detectResumable"),
   resumeSession: (sessionId) => ipcRenderer.invoke("chat:resumeSession", { sessionId }),
   dismissResume: (sessionId) => ipcRenderer.invoke("chat:dismissResume", sessionId),
-  
+
   // Workspace
   pickWorkspace: () => ipcRenderer.invoke("dialog:pickWorkspace"),
   analyze: () => ipcRenderer.invoke("workspace:analyze"),
-  
+
   // Auth
   login: () => ipcRenderer.invoke("settings:startBrowserVgoAiAuth", { displayName: "VGO AI Developer", preferredModel: "vgo-coder-pro" }),
   loginWithCredentials: (payload) => ipcRenderer.invoke("settings:loginAndBindVgoAi", payload),
   logout: () => ipcRenderer.invoke("settings:logoutVgoAi"),
   getAuthStatus: () => ipcRenderer.invoke("settings:getBrowserAuthStatus"),
   syncModels: () => ipcRenderer.invoke("settings:syncVgoAiModels"),
-  
+
   // Files
   attachFile: () => ipcRenderer.invoke("dialog:pickFiles"),
   removeAttachment: (index) => ipcRenderer.invoke("attachments:remove", index),
-  
+
   // Settings
   updateAppearance: (payload) => ipcRenderer.invoke("settings:updateAppearance", payload),
   updateLocalization: (payload) => ipcRenderer.invoke("settings:updateLocalization", payload),
@@ -53,16 +65,17 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
     ipcRenderer.invoke("settings:updateRemoteProfile", { profileId, payload }),
   deleteRemoteProfile: (profileId) =>
     ipcRenderer.invoke("settings:deleteRemoteProfile", profileId),
-  selectRemoteProfile: (profileId) => ipcRenderer.invoke("settings:selectRemoteProfile", profileId),
+  selectRemoteProfile: (profileId) =>
+    ipcRenderer.invoke("settings:selectRemoteProfile", profileId),
   refreshRemoteProfileModels: (profileId) =>
     ipcRenderer.invoke("settings:refreshRemoteProfileModels", profileId),
-  
+
   // Runtime
   setEngine: (engineId) => ipcRenderer.invoke("runtime:setEngine", engineId),
   installWhisper: () => ipcRenderer.invoke("runtime:installWhisper"),
   installSkill: (payload) => ipcRenderer.invoke("runtime:installSkill", payload),
   reportRendererError: (payload) => ipcRenderer.send("renderer:error", payload || {}),
-  
+
   // Update
   checkForUpdates: (payload) => ipcRenderer.invoke("update:check", payload || {}),
   installUpdate: (payload) => ipcRenderer.invoke("update:install", payload || {}),
@@ -70,14 +83,20 @@ contextBridge.exposeInMainWorld("vgoDesktop", {
   resetSkipVersion: () => ipcRenderer.invoke("update:resetSkip"),
   setAutoCheck: (enabled, intervalHours) => ipcRenderer.invoke("update:setAutoCheck", enabled, intervalHours),
   getUpdateSettings: () => ipcRenderer.invoke("update:getSettings"),
-  
+
   // Events
   on: (channel, callback) => {
+    if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
+      return () => {};
+    }
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
   },
   off: (channel, callback) => {
+    if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
+      return;
+    }
     ipcRenderer.removeListener(channel, callback);
   }
 });
