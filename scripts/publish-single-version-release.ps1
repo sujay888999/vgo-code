@@ -8,7 +8,8 @@ param(
   [string]$ServerHost = "139.180.213.100",
   [string]$ServerUser = "root",
   [string]$SshKeyPath = "C:\Users\one\.ssh\id_ed25519_vgo_ai",
-  [string]$RemoteDownloadDir = "/opt/vgo-ai/downloads/vgo-code"
+  [string]$RemoteDownloadDir = "/opt/vgo-ai/downloads/vgo-code",
+  [string]$ServedDownloadDir = "/var/www/html/downloads/vgo-code"
 )
 
 $ErrorActionPreference = "Stop"
@@ -150,7 +151,15 @@ find . -maxdepth 1 -type f -name 'VGO-CODE-Setup-*.exe' ! -name '$installerName'
 find . -maxdepth 1 -type f -name 'VGO-CODE-Setup-*.exe.blockmap' ! -name '$blockMapName' -delete
 find . -maxdepth 1 -type f -name 'VGO CODE Setup *.exe' -delete
 find . -maxdepth 1 -type f -name 'VGO CODE Setup *.exe.blockmap' -delete
+# Sync the nginx-served directory so public URLs serve the new release.
+mkdir -p $ServedDownloadDir
+cp -f $RemoteDownloadDir/$installerName $RemoteDownloadDir/$blockMapName $RemoteDownloadDir/latest.yml $RemoteDownloadDir/version.json $RemoteDownloadDir/README.md $ServedDownloadDir/
+find $ServedDownloadDir -maxdepth 1 -type f -name 'VGO-CODE-Setup-*.exe' ! -name '$installerName' -delete
+find $ServedDownloadDir -maxdepth 1 -type f -name 'VGO-CODE-Setup-*.exe.blockmap' ! -name '$blockMapName' -delete
+find $ServedDownloadDir -maxdepth 1 -type f -name 'VGO CODE Setup *.exe' -delete
+find $ServedDownloadDir -maxdepth 1 -type f -name 'VGO CODE Setup *.exe.blockmap' -delete
 ls -lah
+ls -lah $ServedDownloadDir
 "@
 
 ssh -i $SshKeyPath "${ServerUser}@${ServerHost}" $remoteScript
