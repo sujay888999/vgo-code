@@ -27,6 +27,53 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+// This server only ever listens on 127.0.0.1, but loopback is still reachable
+// by any local process (and, via simple cross-origin requests, by web pages),
+// so config responses must never carry real secrets, and config mutations
+// must stay off unless explicitly enabled. The desktop app itself manages
+// profiles through IPC, not through these HTTP endpoints, so nothing in the
+// app depends on them.
+function maskSettings(settings) {
+  if (!settings || typeof settings !== "object") {
+    return settings;
+  }
+  return {
+    ...settings,
+    remote: settings.remote
+      ? { ...settings.remote, apiKey: settings.remote.apiKey ? "********" : "" }
+      : settings.remote,
+    remoteProfiles: Array.isArray(settings.remoteProfiles)
+      ? settings.remoteProfiles.map((profile) => ({
+          ...profile,
+          apiKey: profile.apiKey ? "********" : ""
+        }))
+      : settings.remoteProfiles,
+    vgoAI: settings.vgoAI
+      ? { ...settings.vgoAI, accessToken: settings.vgoAI.accessToken ? "********" : "" }
+      : settings.vgoAI
+  };
+}
+
+function maskProfiles(profiles) {
+  if (!Array.isArray(profiles)) {
+    return [];
+  }
+  return profiles.map((profile) => ({
+    ...profile,
+    apiKey: profile.apiKey ? "********" : ""
+  }));
+}
+
+// Mutations (create/update/delete/select profile) are disabled by default.
+// Set VGO_MOCK_CONFIG_MUTATIONS=1 only if a local tool you control needs them.
+function configMutationsAllowed() {
+  return process.env.VGO_MOCK_CONFIG_MUTATIONS === "1";
+}
+
+function rejectMutationsDisabled(res) {
+  sendJson(res, 403, { ok: false, error: "config_mutations_disabled" });
+}
+
 async function fetchOllamaModels(baseUrl) {
   const normalized = String(baseUrl || "http://127.0.0.1:11434").replace(/\/+$/, "");
   const response = await fetch(`${normalized}/api/tags`);
@@ -76,7 +123,7 @@ function startMockServer(options = {}) {
       if (req.method === "GET" && url.pathname === "/desktop/config/state") {
         sendJson(res, 200, {
           ok: true,
-          settings: typeof options.getSettings === "function" ? options.getSettings() : null,
+          settings: maskSettings(typeof options.getSettings === "function" ? options.getSettings() : null),
           state: typeof options.serializeState === "function" ? options.serializeState() : null
         });
         return;
@@ -87,12 +134,16 @@ function startMockServer(options = {}) {
         sendJson(res, 200, {
           ok: true,
           activeRemoteProfileId: settings?.activeRemoteProfileId || "",
-          profiles: Array.isArray(settings?.remoteProfiles) ? settings.remoteProfiles : []
+          profiles: maskProfiles(settings?.remoteProfiles)
         });
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/desktop/config/profiles") {
+        if (!configMutationsAllowed()) {
+          rejectMutationsDisabled(res);
+          return;
+        }
         try {
           const body = await readJsonBody(req);
           if (typeof options.createRemoteProfile !== "function") {
@@ -107,6 +158,10 @@ function startMockServer(options = {}) {
       }
 
       if (req.method === "PUT" && url.pathname.startsWith("/desktop/config/profiles/")) {
+        if (!configMutationsAllowed()) {
+          rejectMutationsDisabled(res);
+          return;
+        }
         try {
           const profileId = decodeURIComponent(url.pathname.split("/").pop() || "");
           const body = await readJsonBody(req);
@@ -122,6 +177,10 @@ function startMockServer(options = {}) {
       }
 
       if (req.method === "DELETE" && url.pathname.startsWith("/desktop/config/profiles/")) {
+        if (!configMutationsAllowed()) {
+          rejectMutationsDisabled(res);
+          return;
+        }
         try {
           const profileId = decodeURIComponent(url.pathname.split("/").pop() || "");
           if (typeof options.deleteRemoteProfile !== "function") {
@@ -136,6 +195,10 @@ function startMockServer(options = {}) {
       }
 
       if (req.method === "POST" && url.pathname === "/desktop/config/select-profile") {
+        if (!configMutationsAllowed()) {
+          rejectMutationsDisabled(res);
+          return;
+        }
         try {
           const body = await readJsonBody(req);
           if (typeof options.selectRemoteProfile !== "function") {
