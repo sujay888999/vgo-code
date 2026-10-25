@@ -19,7 +19,7 @@ VGO CODE delivers a polished desktop application experience for managing multipl
 
 Download the latest installer from:
 
-- <https://vgoai.cn/downloads/vgo-code/VGO-CODE-Setup-1.3.0.exe>
+- <https://vgoai.cn/downloads/vgo-code/VGO-CODE-Setup-1.3.2.exe>
 
 For registration, deployment, or product updates, visit:
 
