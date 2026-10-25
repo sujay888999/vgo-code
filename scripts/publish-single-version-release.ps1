@@ -5,9 +5,10 @@ param(
   [string]$WebDownloadDir = "",
   [string]$DownloadBaseUrl = "https://vgoai.cn/downloads/vgo-code",
   [switch]$LocalOnly,
-  [string]$ServerHost = "139.180.213.100",
+  [string]$ServerHost = "177.3.41.111",
   [string]$ServerUser = "root",
   [string]$SshKeyPath = "C:\Users\one\.ssh\id_ed25519_vgo_ai",
+  [string]$SshPort = "22222",
   [string]$RemoteDownloadDir = "/opt/vgo-ai/downloads/vgo-code",
   [string]$ServedDownloadDir = "/var/www/html/downloads/vgo-code"
 )
@@ -138,11 +139,11 @@ if ($LocalOnly) {
 }
 
 $remoteTarget = "${ServerUser}@${ServerHost}:${RemoteDownloadDir}/"
-scp -i $SshKeyPath $webInstallerPath $remoteTarget | Out-Null
-scp -i $SshKeyPath $webBlockMapPath $remoteTarget | Out-Null
-scp -i $SshKeyPath $webLatestYmlPath $remoteTarget | Out-Null
-scp -i $SshKeyPath $versionJsonPath $remoteTarget | Out-Null
-scp -i $SshKeyPath $readmePath $remoteTarget | Out-Null
+scp -P $SshPort -i $SshKeyPath $webInstallerPath $remoteTarget | Out-Null
+scp -P $SshPort -i $SshKeyPath $webBlockMapPath $remoteTarget | Out-Null
+scp -P $SshPort -i $SshKeyPath $webLatestYmlPath $remoteTarget | Out-Null
+scp -P $SshPort -i $SshKeyPath $versionJsonPath $remoteTarget | Out-Null
+scp -P $SshPort -i $SshKeyPath $readmePath $remoteTarget | Out-Null
 
 $remoteScript = @"
 set -e
@@ -162,7 +163,7 @@ ls -lah
 ls -lah $ServedDownloadDir
 "@
 
-ssh -i $SshKeyPath "${ServerUser}@${ServerHost}" $remoteScript
+ssh -p $SshPort -i $SshKeyPath "${ServerUser}@${ServerHost}" $remoteScript
 
 $versionJsonUrl = "$DownloadBaseUrl/version.json"
 $latestYmlUrl = "$DownloadBaseUrl/latest.yml"
