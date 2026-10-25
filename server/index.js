@@ -1,9 +1,22 @@
+// LOCAL-ONLY mock/template server. Its /auth endpoints issue tokens for any
+// displayName and /chat answers without checking a token, so this server must
+// never be reachable beyond the local machine. The guard below enforces that:
+// a non-loopback VGO_AI_HOST is refused instead of silently exposing the API.
 const http = require("node:http");
 const { createMockDatabase } = require("./lib/mockDatabase");
 const { makeChatResponse } = require("./lib/handlers");
 
 const PORT = Number(process.env.VGO_AI_PORT || 3210);
 const HOST = process.env.VGO_AI_HOST || "127.0.0.1";
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+if (!LOOPBACK_HOSTS.has(HOST)) {
+  console.error(
+    `Refusing to start: VGO_AI_HOST="${HOST}" is not a loopback address. ` +
+      `This mock server has no real authentication and must only listen on 127.0.0.1.`
+  );
+  process.exit(1);
+}
 
 const db = createMockDatabase();
 
